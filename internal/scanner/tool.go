@@ -13,12 +13,13 @@ import (
 // them by name via tool_query.
 type ToolQuery func(ctx context.Context) ([]engine.Item, error)
 
-// DefaultQueries returns the built-in query registry. Phase 3G adds
-// hf and ollama here.
+// DefaultQueries returns the built-in query registry.
 func DefaultQueries() map[string]ToolQuery {
 	return map[string]ToolQuery{
 		"docker-reclaimable":         queryDockerReclaimable,
 		"docker-volumes":             queryDockerVolumes,
+		"hf-hub":                     queryHFHub,
+		"ollama-models":              queryOllamaModels,
 		"simctl-devices":             querySimctlDevices,
 		"simctl-devices-unavailable": querySimctlDevicesUnavailable,
 		"simctl-runtimes":            querySimctlRuntimes,
