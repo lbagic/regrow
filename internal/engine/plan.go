@@ -61,7 +61,7 @@ func BuildPlan(host Host, findings []Finding, selected map[string]bool) Plan {
 		if selected != nil && !selected[f.Rule.ID] {
 			continue
 		}
-		if f.Rule.Risk == RiskSurfaceOnly {
+		if !f.Rule.Risk.Actionable() {
 			plan.Skipped = append(plan.Skipped, Skip{f.Rule.ID, "surface-only: report, never delete"})
 			continue
 		}
@@ -84,7 +84,7 @@ func BuildPlan(host Host, findings []Finding, selected map[string]bool) Plan {
 			plan.Actions = append(plan.Actions, Action{
 				RuleID:  f.Rule.ID,
 				Kind:    ActionTrash,
-				Command: trashCommand(it.Path),
+				Command: trash.PreviewCommand(it.Path),
 				Path:    it.Path,
 				Bytes:   it.Bytes,
 			})
@@ -137,12 +137,4 @@ func withSudo(sudo bool, argv []string) []string {
 		return argv
 	}
 	return append([]string{"sudo"}, argv...)
-}
-
-// trashCommand is the exact command the executor would run today:
-// Finder handles the move so the OS "Put Back" works. Phase 2 wraps
-// this with a staging-dir fallback and the oplog.
-func trashCommand(path string) []string {
-	script := fmt.Sprintf("tell application %q to delete POSIX file %q", "Finder", path)
-	return []string{"osascript", "-e", script}
 }

@@ -27,6 +27,14 @@ func (r Risk) valid() bool {
 	return false
 }
 
+// Actionable reports whether the class may ever produce plan actions.
+// Surface-only is report-only by architecture (invariant 5); the
+// planner, the schema, and the UI all ask this one method instead of
+// re-deriving it.
+func (r Risk) Actionable() bool {
+	return r != RiskSurfaceOnly
+}
+
 // PathEntry is one known target path, optionally constrained to an
 // inclusive host OS version range (paths move between OS releases —
 // see docs/research/02 §14). In YAML an entry is either a bare string
@@ -179,7 +187,7 @@ func (r Rule) Validate() error {
 			errs = append(errs, "native_command must not contain empty arguments")
 		}
 	}
-	if r.Risk == RiskSurfaceOnly && len(r.NativeCommand) > 0 {
+	if !r.Risk.Actionable() && len(r.NativeCommand) > 0 {
 		errs = append(errs, "surface-only rules must not carry a native_command")
 	}
 	if len(errs) > 0 {

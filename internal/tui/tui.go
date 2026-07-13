@@ -218,7 +218,7 @@ func (m Model) currentFinding() *engine.Finding {
 // toggleable: surface-only is never selectable (invariant 5), and a
 // row with nothing to reclaim has nothing to toggle.
 func toggleable(f engine.Finding) bool {
-	return f.Rule.Risk != engine.RiskSurfaceOnly && len(f.Items) > 0
+	return f.Rule.Risk.Actionable() && len(f.Items) > 0
 }
 
 // buildRows filters findings to those with substance (items or a scan
