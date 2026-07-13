@@ -2,9 +2,8 @@
 // explains what everything is and how it comes back, and reclaims
 // space reversibly (dry-run → trash → undo).
 //
-// Phase 1C surface (the TUI lands in Phase 1D):
-//
-//	regrow [scan] [--rules-dir DIR] [--json]   measure every rule
+//	regrow [scan] [--rules-dir DIR] [--json]   interactive checklist on a TTY;
+//	                                           plain listing when piped or --json
 //	regrow plan [id ...] [--json]              dry-run: exact command list
 //	regrow rules                               list the catalog
 //	regrow version
@@ -21,6 +20,7 @@ import (
 
 	"github.com/lbagic/regrow/internal/engine"
 	"github.com/lbagic/regrow/internal/scanner"
+	"github.com/lbagic/regrow/internal/tui"
 )
 
 // version is overridden at release time via -ldflags.
@@ -61,6 +61,11 @@ func run(args []string) error {
 	case "rules":
 		return printRules(catalog, *asJSON)
 	case "scan":
+		if !*asJSON && isTTY() {
+			return tui.Run(host, version, func(ctx context.Context) []engine.Finding {
+				return scanner.New(host).Scan(ctx, catalog)
+			})
+		}
 		findings := scanner.New(host).Scan(context.Background(), catalog)
 		return printFindings(findings, *asJSON)
 	case "plan":
@@ -123,20 +128,20 @@ func printFindings(findings []engine.Finding, asJSON bool) error {
 	for _, c := range categories {
 		group := byCategory[c]
 		sort.Slice(group, func(i, j int) bool { return group[i].TotalBytes() > group[j].TotalBytes() })
-		fmt.Printf("%s  %s\n", strings.ToUpper(c), humanBytes(categoryBytes(group)))
+		fmt.Printf("%s  %s\n", strings.ToUpper(c), tui.HumanBytes(categoryBytes(group)))
 		for _, f := range group {
 			total += f.TotalBytes()
 			switch {
 			case f.Err != "":
-				fmt.Printf("  ! %-32s %10s  %s (%s)\n", f.Rule.Title, humanBytes(f.TotalBytes()), f.Rule.Risk, f.Err)
+				fmt.Printf("  ! %-32s %10s  %s (%s)\n", f.Rule.Title, tui.HumanBytes(f.TotalBytes()), f.Rule.Risk, f.Err)
 			case len(f.Items) == 0:
 				fmt.Printf("  - %-32s %10s  not found\n", f.Rule.Title, "")
 			default:
-				fmt.Printf("  • %-32s %10s  %-12s %s\n", f.Rule.Title, humanBytes(f.TotalBytes()), f.Rule.Risk, f.Rule.Regen.Story)
+				fmt.Printf("  • %-32s %10s  %-12s %s\n", f.Rule.Title, tui.HumanBytes(f.TotalBytes()), f.Rule.Risk, f.Rule.Regen.Story)
 			}
 		}
 	}
-	fmt.Printf("\nTotal found: %s. Dry-run: `regrow plan` shows the exact commands; nothing was deleted.\n", humanBytes(total))
+	fmt.Printf("\nTotal found: %s. Dry-run: `regrow plan` shows the exact commands; nothing was deleted.\n", tui.HumanBytes(total))
 	return nil
 }
 
@@ -150,12 +155,12 @@ func printPlan(plan engine.Plan, asJSON bool) error {
 	}
 	fmt.Println("DRY RUN — commands that WOULD run (nothing executed):")
 	for _, a := range plan.Actions {
-		fmt.Printf("  [%s] %-24s %10s  %s\n", a.Kind, a.RuleID, humanBytes(a.Bytes), shellJoin(a.Command))
+		fmt.Printf("  [%s] %-24s %10s  %s\n", a.Kind, a.RuleID, tui.HumanBytes(a.Bytes), tui.ShellJoin(a.Command))
 	}
 	for _, s := range plan.Skipped {
 		fmt.Printf("  [skip] %-22s %s\n", s.RuleID, s.Reason)
 	}
-	fmt.Printf("\nWould reclaim: %s\n", humanBytes(plan.TotalBytes()))
+	fmt.Printf("\nWould reclaim: %s\n", tui.HumanBytes(plan.TotalBytes()))
 	return nil
 }
 
@@ -167,30 +172,15 @@ func categoryBytes(group []engine.Finding) int64 {
 	return n
 }
 
-func humanBytes(n int64) string {
-	const unit = 1024
-	if n < unit {
-		return fmt.Sprintf("%d B", n)
-	}
-	div, exp := int64(unit), 0
-	for m := n / unit; m >= unit; m /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
-}
-
-// shellJoin renders argv for display, quoting args with spaces.
-func shellJoin(argv []string) string {
-	parts := make([]string, len(argv))
-	for i, a := range argv {
-		if strings.ContainsAny(a, " \t\"'") {
-			parts[i] = fmt.Sprintf("%q", a)
-		} else {
-			parts[i] = a
+// isTTY: the interactive UI needs a terminal on both ends.
+func isTTY() bool {
+	for _, f := range []*os.File{os.Stdin, os.Stdout} {
+		info, err := f.Stat()
+		if err != nil || info.Mode()&os.ModeCharDevice == 0 {
+			return false
 		}
 	}
-	return strings.Join(parts, " ")
+	return true
 }
 
 func emitJSON(v any) error {
