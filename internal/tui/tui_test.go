@@ -199,6 +199,22 @@ func TestCursorNoteShowsRegen(t *testing.T) {
 	}
 }
 
+func TestWindowFollowsCursor(t *testing.T) {
+	m := newTestModel(t)
+	// Height 8 leaves a 2-line body (6 lines of chrome): the list must
+	// scroll so the cursor row stays visible.
+	next, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 8})
+	m = next.(Model)
+	m = press(t, m, "j", "j", "j")
+	view := m.View()
+	if !strings.Contains(view, "iOS device backups") {
+		t.Fatalf("cursor row must stay visible in a short window, got:\n%s", view)
+	}
+	if strings.Contains(view, "Go build cache") {
+		t.Fatalf("rows above the window must scroll off, got:\n%s", view)
+	}
+}
+
 func TestQuitKeys(t *testing.T) {
 	m := newTestModel(t)
 	_, cmd := m.Update(key("q"))
