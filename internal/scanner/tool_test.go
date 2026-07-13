@@ -7,33 +7,6 @@ import (
 	"github.com/lbagic/regrow/internal/engine"
 )
 
-func TestParseDockerDF(t *testing.T) {
-	out := "Images\t7.5GB (85%)\n" +
-		"Containers\t0B (0%)\n" +
-		"Local Volumes\t2.1GB (100%)\n" +
-		"Build Cache\t512.4MB\n"
-	rows := parseDockerDF(out)
-	want := map[string]int64{
-		"Images":        7_500_000_000,
-		"Containers":    0,
-		"Local Volumes": 2_100_000_000,
-		"Build Cache":   512_400_000,
-	}
-	for typ, bytes := range want {
-		if rows[typ] != bytes {
-			t.Errorf("%s: got %d, want %d", typ, rows[typ], bytes)
-		}
-	}
-}
-
-func TestParseDockerSizeRejectsGarbage(t *testing.T) {
-	for _, s := range []string{"", "GB", "1.5XB", "-"} {
-		if _, ok := parseDockerSize(s); ok {
-			t.Errorf("parseDockerSize(%q) should fail", s)
-		}
-	}
-}
-
 func TestParseSimDevices(t *testing.T) {
 	data := []byte(`{
 	  "devices": {

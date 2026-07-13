@@ -1,0 +1,9 @@
+[
+  {"Name": "dakr_timescaledb_data", "CreatedAt": "2026-03-01T10:00:00Z", "Driver": "local", "Labels": {"com.docker.compose.project": "dakr", "com.docker.compose.volume": "timescaledb_data", "com.docker.compose.version": "2.32.4"}, "Scope": "local"},
+  {"Name": "dakr_chroma_data", "CreatedAt": "2026-03-01T10:00:00Z", "Driver": "local", "Labels": {"com.docker.compose.project": "dakr", "com.docker.compose.volume": "chroma_data"}, "Scope": "local"},
+  {"Name": "bigvol", "CreatedAt": "2026-01-01T00:00:00Z", "Driver": "local", "Labels": null, "Scope": "local"},
+  {"Name": "keepme_data", "CreatedAt": "2026-01-01T00:00:00Z", "Driver": "local", "Labels": {}, "Scope": "local"},
+  {"Name": "3685b211a66b882aa99c01f75c8bab33b94075917037132f7c18c7765a6f2651", "CreatedAt": "2026-04-01T00:00:00Z", "Driver": "local", "Labels": {"com.docker.volume.anonymous": ""}, "Scope": "local"},
+  {"Name": "c8cb75aa6a34791fa5b3f69e8a940a0283072d1de4541191fa994a051fc3c45d", "CreatedAt": "2026-07-07T15:55:46Z", "Driver": "local", "Labels": {"com.docker.volume.anonymous": ""}, "Scope": "local"},
+  {"Name": "aabbccdd6a34791fa5b3f69e8a940a0283072d1de4541191fa994a051fc3c45d", "CreatedAt": "2026-07-10T00:00:00Z", "Driver": "local", "Labels": {"com.docker.volume.anonymous": ""}, "Scope": "local"}
+]

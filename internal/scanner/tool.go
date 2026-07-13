@@ -15,9 +15,7 @@ type ToolQuery func(ctx context.Context) ([]engine.Item, error)
 
 // DefaultQueries returns the built-in query registry.
 func DefaultQueries() map[string]ToolQuery {
-	return map[string]ToolQuery{
-		"docker-reclaimable":         queryDockerReclaimable,
-		"docker-volumes":             queryDockerVolumes,
+	queries := map[string]ToolQuery{
 		"hf-hub":                     queryHFHub,
 		"ollama-models":              queryOllamaModels,
 		"simctl-devices":             querySimctlDevices,
@@ -25,6 +23,10 @@ func DefaultQueries() map[string]ToolQuery {
 		"simctl-runtimes":            querySimctlRuntimes,
 		"tm-snapshots":               queryTMSnapshots,
 	}
+	for name, q := range dockerQueries() {
+		queries[name] = q
+	}
+	return queries
 }
 
 // runTool executes a tool and returns stdout. A tool missing from

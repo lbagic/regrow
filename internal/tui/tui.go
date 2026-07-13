@@ -637,7 +637,7 @@ func (m Model) viewPlan() string {
 	}
 	for _, a := range m.plan.Actions {
 		fmt.Fprintf(&b, "  [%s] %-24s %10s  %s\n",
-			a.Kind, a.RuleID, HumanBytes(a.Bytes), ShellJoin(a.Command))
+			a.Kind, a.RuleID, HumanBytes(a.Bytes), ActionCommand(a))
 	}
 	for _, s := range m.plan.Skipped {
 		b.WriteString(styleFaint.Render(fmt.Sprintf("  [skip]   %-22s %s", s.RuleID, s.Reason)) + "\n")

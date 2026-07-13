@@ -78,11 +78,14 @@ func TestUndoableReverseOrderAndExcludesUndone(t *testing.T) {
 		{Run: "r1", Seq: 3, Event: EventDone}, // native: no receipt, not undoable
 		{Run: "r1", Seq: 4, Event: EventFail},
 		{Run: "r1", Seq: 5, Event: EventDone, Receipt: rc("/c")},
+		{Run: "r1", Seq: 6, Event: EventDone, Receipt: &trash.Receipt{
+			Original: "docker volume vol", To: "/t/vol.tar", Method: trash.MethodExport,
+		}}, // export tarball: recovery pointer, never auto-restored
 		{Run: "r1", Seq: 2, Event: EventUndo}, // /b already restored
 	}}
 	got := r.Undoable()
 	if len(got) != 2 || got[0].Receipt.Original != "/c" || got[1].Receipt.Original != "/a" {
-		t.Fatalf("want [/c /a] (reverse order, /b undone, native skipped), got %+v", got)
+		t.Fatalf("want [/c /a] (reverse order, /b undone, native and export skipped), got %+v", got)
 	}
 
 	// A failed undo attempt does not mark the action as undone.

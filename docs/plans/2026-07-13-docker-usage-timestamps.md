@@ -1,6 +1,6 @@
 # Docker usage timestamps — research
 
-**Status:** research done, scheduled as Prompt G2 in PLAN.md Phase 3 (after Prompt G0 item-identity groundwork — candidate 5 in [2026-07-13-architecture-review.md](2026-07-13-architecture-review.md)).
+**Status:** shipped 2026-07-13 as Prompt G2 (`internal/docker` provider, usage ledger, tiered rules, volume export pre-action). Decisions and deviations in the ARCHITECTURE.md decisions log; this doc stays as the evidence base.
 
 **Question:** can regrow attach/derive timestamps for Docker volumes, images, networks, build cache to classify what's safe to remove vs. precious project data (e.g. named DB volumes)?
 

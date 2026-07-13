@@ -123,6 +123,123 @@ func TestExecuteStopsOnCancel(t *testing.T) {
 	}
 }
 
+func exportPlan() engine.Plan {
+	return engine.Plan{Actions: []engine.Action{{
+		RuleID: "docker-volumes-named", ItemKey: "dakr_db", Kind: engine.ActionNative,
+		Command: []string{"docker", "volume", "rm", "dakr_db"}, Bytes: 500,
+		PreAction: engine.PreActionVolumeExport,
+	}}}
+}
+
+func TestExecutePreActionRunsBeforeCommand(t *testing.T) {
+	log := &memLog{}
+	var order []string
+	e := &Executor{Log: log, Now: fixedNow,
+		PreActions: map[string]PreAction{
+			engine.PreActionVolumeExport: func(_ context.Context, a engine.Action) (*trash.Receipt, error) {
+				order = append(order, "export:"+a.ItemKey)
+				return &trash.Receipt{Original: "docker volume " + a.ItemKey, To: "/staging/dakr_db.tar", Method: trash.MethodExport}, nil
+			},
+		},
+		RunNative: func(_ context.Context, argv []string) error {
+			order = append(order, "native:"+strings.Join(argv, " "))
+			return nil
+		}}
+	res, err := e.Execute(context.Background(), exportPlan())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Done != 1 || res.Failed != 0 {
+		t.Fatalf("result wrong: %+v", res)
+	}
+	want := "export:dakr_db,native:docker volume rm dakr_db"
+	if strings.Join(order, ",") != want {
+		t.Fatalf("order = %v, want export before rm", order)
+	}
+	if log.entries[1].Receipt == nil || log.entries[1].Receipt.Method != trash.MethodExport {
+		t.Fatalf("done entry must carry the export receipt: %+v", log.entries[1])
+	}
+}
+
+func TestExecutePreActionFailureBlocksCommand(t *testing.T) {
+	log := &memLog{}
+	nativeRan := false
+	e := &Executor{Log: log, Now: fixedNow,
+		PreActions: map[string]PreAction{
+			engine.PreActionVolumeExport: func(context.Context, engine.Action) (*trash.Receipt, error) {
+				return nil, errors.New("export failed, refusing to remove")
+			},
+		},
+		RunNative: func(context.Context, []string) error { nativeRan = true; return nil }}
+	res, err := e.Execute(context.Background(), exportPlan())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nativeRan {
+		t.Fatal("no backup, no deletion: the command must not run after a failed pre-action")
+	}
+	if res.Failed != 1 || log.entries[1].Event != oplog.EventFail {
+		t.Fatalf("failed pre-action must fail the action: %+v, %+v", res, log.entries[1])
+	}
+}
+
+func TestExecutePreActionReceiptJournaledOnCommandFailure(t *testing.T) {
+	// Export succeeded, rm then failed: the journal must still say
+	// where the backup landed.
+	log := &memLog{}
+	e := &Executor{Log: log, Now: fixedNow,
+		PreActions: map[string]PreAction{
+			engine.PreActionVolumeExport: func(context.Context, engine.Action) (*trash.Receipt, error) {
+				return &trash.Receipt{Original: "docker volume dakr_db", To: "/staging/dakr_db.tar", Method: trash.MethodExport}, nil
+			},
+		},
+		RunNative: func(context.Context, []string) error { return errors.New("daemon died") }}
+	res, err := e.Execute(context.Background(), exportPlan())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Failed != 1 {
+		t.Fatalf("result wrong: %+v", res)
+	}
+	fail := log.entries[1]
+	if fail.Event != oplog.EventFail || fail.Receipt == nil || fail.Receipt.To != "/staging/dakr_db.tar" {
+		t.Fatalf("fail entry must keep the export receipt: %+v", fail)
+	}
+}
+
+func TestExecuteUnregisteredPreActionFails(t *testing.T) {
+	log := &memLog{}
+	nativeRan := false
+	e := &Executor{Log: log, Now: fixedNow,
+		RunNative: func(context.Context, []string) error { nativeRan = true; return nil }}
+	res, err := e.Execute(context.Background(), exportPlan())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nativeRan || res.Failed != 1 {
+		t.Fatalf("an unregistered pre-action must never run the command bare: %+v", res)
+	}
+}
+
+func TestUndoCountsExportReceipts(t *testing.T) {
+	log := &memLog{}
+	e := &Executor{Log: log, Now: fixedNow}
+	run := oplog.Run{ID: "r1", Entries: []oplog.Entry{
+		{Run: "r1", Seq: 1, Event: oplog.EventDone, RuleID: "docker-volumes-named",
+			Receipt: &trash.Receipt{Original: "docker volume dakr_db", To: "/staging/dakr_db.tar", Method: trash.MethodExport}},
+	}}
+	res, err := e.Undo(run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.ExportSkipped != 1 || res.Restored != 0 || res.Failed != 0 {
+		t.Fatalf("export receipts are counted, never restored: %+v", res)
+	}
+	if len(log.entries) != 0 {
+		t.Fatal("nothing to journal when nothing was restored")
+	}
+}
+
 func TestUndoRestoresReverseAndJournals(t *testing.T) {
 	// Build a real staged move so Restore has something to rename.
 	staging := t.TempDir()

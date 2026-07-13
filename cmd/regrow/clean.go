@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lbagic/regrow/internal/config"
+	"github.com/lbagic/regrow/internal/docker"
 	"github.com/lbagic/regrow/internal/engine"
 	"github.com/lbagic/regrow/internal/executor"
 	"github.com/lbagic/regrow/internal/oplog"
@@ -48,7 +50,7 @@ func runClean(host engine.Host, catalog []engine.Rule, ids []string, yes bool) e
 
 	fmt.Println("About to execute:")
 	for _, a := range plan.Actions {
-		fmt.Printf("  [%s] %-24s %10s  %s\n", a.Kind, a.RuleID, tui.HumanBytes(a.Bytes), tui.ShellJoin(a.Command))
+		fmt.Printf("  [%s] %-24s %10s  %s\n", a.Kind, a.RuleID, tui.HumanBytes(a.Bytes), tui.ActionCommand(a))
 	}
 	for _, s := range plan.Skipped {
 		fmt.Printf("  [skip] %-22s %s\n", s.RuleID, s.Reason)
@@ -78,11 +80,26 @@ func runClean(host engine.Host, catalog []engine.Rule, ids []string, yes bool) e
 	// lose at close.
 	defer func() { _ = log.Close() }()
 
+	// The volume export cap comes from user config; a broken config
+	// must block execution, not silently fall back to defaults.
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	capBytes, err := cfg.Docker.ExportCapBytes()
+	if err != nil {
+		return err
+	}
+
 	runID := executor.NewRunID(time.Now())
 	stateDir := filepath.Dir(logPath)
+	stagingDir := filepath.Join(stateDir, "staging", runID)
 	exec := &executor.Executor{
-		Trash: &trash.Mover{Home: host.Home, StagingDir: filepath.Join(stateDir, "staging", runID)},
+		Trash: &trash.Mover{Home: host.Home, StagingDir: stagingDir},
 		Log:   log,
+		PreActions: map[string]executor.PreAction{
+			engine.PreActionVolumeExport: (&docker.Exporter{StagingDir: stagingDir, CapBytes: capBytes}).PreAction,
+		},
 		RunID: runID,
 	}
 	res, err := exec.Execute(context.Background(), plan)
@@ -164,6 +181,9 @@ func runUndo(args []string) error {
 	}
 	if res.NativeSkipped > 0 {
 		fmt.Printf("  %d native command(s) are not undoable — their data comes back via the regen story (`regrow rules`).\n", res.NativeSkipped)
+	}
+	if res.ExportSkipped > 0 {
+		fmt.Printf("  %d docker volume(s) are not auto-restorable — the tarball in regrow staging is the recovery copy (`regrow history` shows where).\n", res.ExportSkipped)
 	}
 	return nil
 }

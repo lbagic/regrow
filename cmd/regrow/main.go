@@ -146,7 +146,7 @@ func printFindings(findings []engine.Finding, asJSON bool) error {
 	for _, c := range categories {
 		group := byCategory[c]
 		sort.Slice(group, func(i, j int) bool { return group[i].TotalBytes() > group[j].TotalBytes() })
-		fmt.Printf("%s  %s\n", strings.ToUpper(c), tui.HumanBytes(categoryBytes(group)))
+		fmt.Printf("%s  %s\n", strings.ToUpper(strings.ReplaceAll(c, "-", " ")), tui.HumanBytes(categoryBytes(group)))
 		for _, f := range group {
 			total += f.TotalBytes()
 			switch {
@@ -176,7 +176,7 @@ func printPlan(plan engine.Plan, asJSON bool) error {
 	}
 	fmt.Println("DRY RUN — commands that WOULD run (nothing executed):")
 	for _, a := range plan.Actions {
-		fmt.Printf("  [%s] %-24s %10s  %s\n", a.Kind, a.RuleID, tui.HumanBytes(a.Bytes), tui.ShellJoin(a.Command))
+		fmt.Printf("  [%s] %-24s %10s  %s\n", a.Kind, a.RuleID, tui.HumanBytes(a.Bytes), tui.ActionCommand(a))
 	}
 	for _, s := range plan.Skipped {
 		fmt.Printf("  [skip] %-22s %s\n", s.RuleID, s.Reason)
