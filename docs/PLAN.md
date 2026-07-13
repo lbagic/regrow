@@ -14,6 +14,7 @@ Each phase = one or a few Claude sessions with a ready prompt. Milestones (M1–
 - [x] Architecture review + Prompt-F groundwork (2026-07-13): trash seam, per-rule golden fixtures, scan cancellation — [review doc](plans/2026-07-13-architecture-review.md)
 - [x] P2-F safety hardening (2026-07-13): clean/undo/history, trash+staging+receipts, oplog, placeholder validation, --beta-rules, GoReleaser+release CI — code done; **M2 needs manual publish** (tap repo, TAP_GITHUB_TOKEN secret, tag v0.1.0)
 - [x] P3-G0 item identity (2026-07-13): `ruleID/key` ids, per-item plan/clean selectors + `Plan.Unmatched` typo guard, TUI expandable item rows (all/partial/none), `--json` keys, refits: sim devices/runtimes, xcode-archives (per-archive glob), tm-snapshots (per-snapshot delete) — [design doc](plans/2026-07-13-item-identity.md)
+- [ ] **M2 publish (manual, deferred — no code coupling, do before sharing):** decide/confirm name (P0-A revisit), create `lbagic/homebrew-tap`, add `TAP_GITHUB_TOKEN` secret, `git tag v0.1.0 && git push --tags`, buy regrow.sh
 - [ ] P3-G ML models module
 - [ ] P3-G2 docker detection + targeting
 - [ ] P3-H doctor + phantom space → **M3 launchable**
