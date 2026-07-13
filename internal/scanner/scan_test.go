@@ -38,6 +38,9 @@ func TestScanStaticPaths(t *testing.T) {
 	if findings[0].Items[0].LastUsed.IsZero() {
 		t.Error("LastUsed not set")
 	}
+	if findings[0].Items[0].Key != "~/Library/Caches/go-build" {
+		t.Errorf("path item key = %q, want tilde-abbreviated path", findings[0].Items[0].Key)
+	}
 	if len(findings[1].Items) != 0 || findings[1].Err != "" {
 		t.Errorf("absent path must yield empty finding without error: %+v", findings[1])
 	}
@@ -57,6 +60,9 @@ func TestScanToolQuery(t *testing.T) {
 	findings := s.Scan(context.Background(), []engine.Rule{rule})
 	if len(findings[0].Items) != 1 || findings[0].Items[0].Bytes != 500 {
 		t.Fatalf("tool items wrong: %+v", findings[0])
+	}
+	if findings[0].Items[0].Key != "image:latest" {
+		t.Errorf("tool item key = %q, want the arg", findings[0].Items[0].Key)
 	}
 
 	s.Queries["fake"] = func(ctx context.Context) ([]engine.Item, error) {

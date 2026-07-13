@@ -227,6 +227,15 @@ type Rule struct {
 	Fixture *Fixture `yaml:"fixture" json:"-"`
 }
 
+// PerItemActionable reports whether individual items of this rule can
+// be acted on separately: trash rules (one move per item) and native
+// commands with per-item placeholders qualify; a whole-rule command
+// (`go clean -cache`) cannot honor a partial selection. The planner
+// and the TUI both consult this one derivation.
+func (r Rule) PerItemActionable() bool {
+	return r.Risk.Actionable() && (len(r.NativeCommand) == 0 || r.NativeCommand.PerItem())
+}
+
 var idRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
 // Validate checks structural invariants a rule must satisfy before it

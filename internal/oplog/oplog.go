@@ -33,6 +33,7 @@ type Entry struct {
 	Seq     int            `json:"seq"`
 	Event   string         `json:"event"`
 	RuleID  string         `json:"rule_id,omitempty"`
+	ItemKey string         `json:"item_key,omitempty"`
 	Kind    string         `json:"kind,omitempty"`
 	Command []string       `json:"command,omitempty"`
 	Path    string         `json:"path,omitempty"`

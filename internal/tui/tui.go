@@ -61,15 +61,18 @@ type rowKind int
 const (
 	rowHeader rowKind = iota
 	rowFinding
+	rowItem
 )
 
-// row is one rendered line of the checklist: a category header or a
-// finding. The cursor only ever rests on findings.
+// row is one rendered line of the checklist: a category header, a
+// finding, or (when the finding is expanded) one of its items. The
+// cursor rests on findings and items, never headers.
 type row struct {
 	kind     rowKind
 	category string
 	bytes    int64 // header: category total
-	finding  int   // index into model.findings for rowFinding
+	finding  int   // index into model.findings for rowFinding/rowItem
+	item     int   // index into finding.Items for rowItem
 }
 
 type scanDoneMsg struct{ findings []engine.Finding }
@@ -93,8 +96,14 @@ type Model struct {
 	frame    int
 	findings []engine.Finding
 	rows     []row
-	cursor   int // index into rows; always a rowFinding
+	cursor   int // index into rows; always a rowFinding or rowItem
+	// selected holds item atoms only ("ruleID/key") — the rule
+	// checkbox is derived (all/partial/none), so there is a single
+	// source of truth. BuildPlan accepts the atoms as-is.
 	selected map[string]bool
+	// expanded tracks which rules show their per-item rows. Collapsed
+	// per-rule rows are the default UX; expansion is opt-in (G0).
+	expanded map[string]bool
 	plan     engine.Plan
 
 	width  int
@@ -109,6 +118,7 @@ func New(host engine.Host, version string, scan func(context.Context) []engine.F
 		version:  version,
 		scan:     scan,
 		selected: map[string]bool{},
+		expanded: map[string]bool{},
 		width:    80,
 		height:   24,
 	}
@@ -143,13 +153,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case scanDoneMsg:
 		m.findings = msg.findings
-		m.rows = buildRows(m.findings)
-		m.cursor = firstFinding(m.rows)
+		// Items may arrive keyless from injected scans; identity is
+		// required before selection atoms can exist.
+		for i := range m.findings {
+			m.findings[i].FillItemKeys(m.host.Home)
+		}
+		m.rows = buildRows(m.findings, m.expanded)
+		m.cursor = firstCursorable(m.rows)
 		// Safe findings start selected (PRODUCT.md pillar 2: auto-clean
 		// class); caution needs a human tick; surface-only never.
 		for _, f := range m.findings {
 			if f.Rule.Risk == engine.RiskSafe && len(f.Items) > 0 && f.Err == "" {
-				m.selected[f.Rule.ID] = true
+				m.selectAllItems(f)
 			}
 		}
 		m.state = stateList
@@ -174,13 +189,31 @@ func (m Model) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "up", "k":
 		if m.state == stateList {
-			m.cursor = nextFinding(m.rows, m.cursor, -1)
+			m.cursor = nextCursorable(m.rows, m.cursor, -1)
 		}
 		return m, nil
 
 	case "down", "j":
 		if m.state == stateList {
-			m.cursor = nextFinding(m.rows, m.cursor, +1)
+			m.cursor = nextCursorable(m.rows, m.cursor, +1)
+		}
+		return m, nil
+
+	case "right", "l":
+		if m.state == stateList {
+			if f := m.currentFinding(); f != nil && len(f.Items) > 0 && !m.expanded[f.Rule.ID] {
+				m.expanded[f.Rule.ID] = true
+				m.rebuildRows(f.Rule.ID)
+			}
+		}
+		return m, nil
+
+	case "left", "h":
+		if m.state == stateList {
+			if f := m.currentFinding(); f != nil && m.expanded[f.Rule.ID] {
+				delete(m.expanded, f.Rule.ID)
+				m.rebuildRows(f.Rule.ID)
+			}
 		}
 		return m, nil
 
@@ -188,12 +221,31 @@ func (m Model) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.state != stateList {
 			return m, nil
 		}
-		if f := m.currentFinding(); f != nil && toggleable(*f) {
-			if m.selected[f.Rule.ID] {
-				delete(m.selected, f.Rule.ID)
-			} else {
-				m.selected[f.Rule.ID] = true
+		f := m.currentFinding()
+		if f == nil || !toggleable(*f) {
+			return m, nil
+		}
+		if it := m.currentItem(); it != nil {
+			// Item toggle: only when the planner can honor it — a
+			// whole-rule command acts on everything at once, so its
+			// item rows are view-only.
+			if f.Rule.PerItemActionable() {
+				id := engine.ItemID(f.Rule.ID, it.Key)
+				if m.selected[id] {
+					delete(m.selected, id)
+				} else {
+					m.selected[id] = true
+				}
 			}
+			return m, nil
+		}
+		// Rule toggle: all ↔ none.
+		if sel, total := m.selectionCount(*f); sel == total {
+			for _, it := range f.Items {
+				delete(m.selected, engine.ItemID(f.Rule.ID, it.Key))
+			}
+		} else {
+			m.selectAllItems(*f)
 		}
 		return m, nil
 
@@ -208,11 +260,56 @@ func (m Model) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// currentFinding returns the finding under the cursor — for an item
+// row, the item's parent finding.
 func (m Model) currentFinding() *engine.Finding {
-	if m.cursor < 0 || m.cursor >= len(m.rows) || m.rows[m.cursor].kind != rowFinding {
+	if m.cursor < 0 || m.cursor >= len(m.rows) {
 		return nil
 	}
-	return &m.findings[m.rows[m.cursor].finding]
+	r := m.rows[m.cursor]
+	if r.kind != rowFinding && r.kind != rowItem {
+		return nil
+	}
+	return &m.findings[r.finding]
+}
+
+// currentItem returns the item under the cursor, nil on rule rows.
+func (m Model) currentItem() *engine.Item {
+	if m.cursor < 0 || m.cursor >= len(m.rows) || m.rows[m.cursor].kind != rowItem {
+		return nil
+	}
+	r := m.rows[m.cursor]
+	return &m.findings[r.finding].Items[r.item]
+}
+
+func (m *Model) selectAllItems(f engine.Finding) {
+	for _, it := range f.Items {
+		m.selected[engine.ItemID(f.Rule.ID, it.Key)] = true
+	}
+}
+
+// selectionCount reports how many of the finding's items are selected.
+func (m Model) selectionCount(f engine.Finding) (selected, total int) {
+	for _, it := range f.Items {
+		if m.selected[engine.ItemID(f.Rule.ID, it.Key)] {
+			selected++
+		}
+	}
+	return selected, len(f.Items)
+}
+
+// rebuildRows re-derives rows after an expand/collapse and parks the
+// cursor on the toggled rule's row (collapsing from an item row must
+// not strand the cursor).
+func (m *Model) rebuildRows(ruleID string) {
+	m.rows = buildRows(m.findings, m.expanded)
+	for i, r := range m.rows {
+		if r.kind == rowFinding && m.findings[r.finding].Rule.ID == ruleID {
+			m.cursor = i
+			return
+		}
+	}
+	m.cursor = firstCursorable(m.rows)
 }
 
 // toggleable: surface-only is never selectable (invariant 5), and a
@@ -222,8 +319,9 @@ func toggleable(f engine.Finding) bool {
 }
 
 // buildRows filters findings to those with substance (items or a scan
-// error), groups by category, and size-ranks both levels.
-func buildRows(findings []engine.Finding) []row {
+// error), groups by category, and size-ranks both levels. Expanded
+// findings contribute item rows, size-ranked, key as tiebreak.
+func buildRows(findings []engine.Finding, expanded map[string]bool) []row {
 	byCategory := map[string][]int{}
 	for i, f := range findings {
 		if len(f.Items) == 0 && f.Err == "" {
@@ -262,25 +360,45 @@ func buildRows(findings []engine.Finding) []row {
 		rows = append(rows, row{kind: rowHeader, category: c, bytes: totals[c]})
 		for _, i := range idxs {
 			rows = append(rows, row{kind: rowFinding, category: c, finding: i})
+			if !expanded[findings[i].Rule.ID] {
+				continue
+			}
+			items := findings[i].Items
+			order := make([]int, len(items))
+			for j := range order {
+				order[j] = j
+			}
+			sort.Slice(order, func(a, b int) bool {
+				ia, ib := items[order[a]], items[order[b]]
+				if ia.Bytes != ib.Bytes {
+					return ia.Bytes > ib.Bytes
+				}
+				return ia.Key < ib.Key
+			})
+			for _, j := range order {
+				rows = append(rows, row{kind: rowItem, category: c, finding: i, item: j})
+			}
 		}
 	}
 	return rows
 }
 
-func firstFinding(rows []row) int {
+func cursorable(r row) bool { return r.kind == rowFinding || r.kind == rowItem }
+
+func firstCursorable(rows []row) int {
 	for i, r := range rows {
-		if r.kind == rowFinding {
+		if cursorable(r) {
 			return i
 		}
 	}
 	return -1
 }
 
-// nextFinding moves the cursor over finding rows only, skipping
+// nextCursorable moves the cursor over finding and item rows, skipping
 // headers, clamped at both ends.
-func nextFinding(rows []row, from, dir int) int {
+func nextCursorable(rows []row, from, dir int) int {
 	for i := from + dir; i >= 0 && i < len(rows); i += dir {
-		if rows[i].kind == rowFinding {
+		if cursorable(rows[i]) {
 			return i
 		}
 	}
@@ -310,7 +428,7 @@ func (m Model) viewScanning() string {
 }
 
 func (m Model) viewList() string {
-	if firstFinding(m.rows) == -1 {
+	if firstCursorable(m.rows) == -1 {
 		return m.header() + "\n  Nothing found: no rule matched anything on this machine.\n\n" +
 			styleFaint.Render("  q quit") + "\n"
 	}
@@ -326,6 +444,11 @@ func (m Model) viewList() string {
 		if i == m.cursor {
 			cursorLine = len(lines)
 		}
+		if r.kind == rowItem {
+			f := m.findings[r.finding]
+			lines = append(lines, m.itemLine(f, f.Items[r.item], i == m.cursor))
+			continue
+		}
 		lines = append(lines, m.findingLine(m.findings[r.finding], i == m.cursor))
 	}
 
@@ -335,7 +458,11 @@ func (m Model) viewList() string {
 
 // findingLine renders one checklist row:
 //
-//	› [x] Go build cache             20.1 GiB  safe     go clean -cache
+//	› [x] ▸ Go build cache           20.1 GiB  safe     go clean -cache
+//
+// The chevron marks expandability (▸ collapsed, ▾ expanded); the
+// checkbox is derived from the item atoms: [x] all, [~] partial, [ ]
+// none.
 func (m Model) findingLine(f engine.Finding, atCursor bool) string {
 	marker := " "
 	if atCursor {
@@ -343,19 +470,28 @@ func (m Model) findingLine(f engine.Finding, atCursor bool) string {
 	}
 
 	box := "   "
-	switch {
-	case f.Rule.Risk == engine.RiskSurfaceOnly:
-		box = " ▸ "
-	case toggleable(f):
-		if m.selected[f.Rule.ID] {
+	if toggleable(f) {
+		switch sel, total := m.selectionCount(f); {
+		case sel == total:
 			box = "[x]"
-		} else {
+		case sel > 0:
+			box = "[~]"
+		default:
 			box = "[ ]"
 		}
 	}
 
+	chevron := " "
+	if len(f.Items) > 0 {
+		if m.expanded[f.Rule.ID] {
+			chevron = "▾"
+		} else {
+			chevron = "▸"
+		}
+	}
+
 	if f.Err != "" && len(f.Items) == 0 {
-		return styleErr.Render(fmt.Sprintf("%s !   %-30s scan failed: %s", marker, f.Rule.Title, f.Err))
+		return styleErr.Render(fmt.Sprintf("%s !     %-30s scan failed: %s", marker, f.Rule.Title, f.Err))
 	}
 
 	note := ShellJoin(f.Rule.NativeCommand)
@@ -363,26 +499,86 @@ func (m Model) findingLine(f engine.Finding, atCursor bool) string {
 		note = f.Rule.Regen.Story
 	}
 	if n := len(f.Items); n > 1 {
-		note = fmt.Sprintf("%d locations · %s", n, note)
+		note = fmt.Sprintf("%d items · %s", n, note)
 	}
 
 	title := f.Rule.Title
 	if atCursor {
 		title = styleTitle.Render(title)
 	}
-	return fmt.Sprintf("%s %s %-30s %10s  %s  %s",
-		marker, box, title,
+	return fmt.Sprintf("%s %s %s %-30s %10s  %s  %s",
+		marker, box, chevron, title,
 		HumanBytes(f.TotalBytes()),
 		riskStyle(f.Rule.Risk).Render(fmt.Sprintf("%-8s", riskLabel(f.Rule.Risk))),
-		styleFaint.Render(truncate(note, m.width-62)),
+		styleFaint.Render(truncate(note, m.width-64)),
 	)
 }
 
-// listFooter: the note for the row under the cursor, then keys.
+// itemLine renders one expanded item row, nested under its rule:
+//
+//	[x] iPhone 15 (iOS 17.0)      4.0 GiB  caution  unused 84d
+//
+// The checkbox appears only when the planner could honor a per-item
+// pick; whole-rule commands and surface-only rules show plain rows.
+func (m Model) itemLine(f engine.Finding, it engine.Item, atCursor bool) string {
+	marker := " "
+	if atCursor {
+		marker = "›"
+	}
+
+	box := "   "
+	if toggleable(f) && f.Rule.PerItemActionable() {
+		if m.selected[engine.ItemID(f.Rule.ID, it.Key)] {
+			box = "[x]"
+		} else {
+			box = "[ ]"
+		}
+	}
+
+	label := it.Label
+	if label == "" {
+		label = it.Key
+	}
+	if atCursor {
+		label = styleTitle.Render(truncate(label, 28))
+	} else {
+		label = truncate(label, 28)
+	}
+
+	recency := ""
+	if !it.LastUsed.IsZero() {
+		if d := int(time.Since(it.LastUsed).Hours() / 24); d > 0 {
+			recency = fmt.Sprintf("unused %dd", d)
+		} else {
+			recency = "used today"
+		}
+	}
+	return fmt.Sprintf("%s     %s %-28s %10s  %s  %s",
+		marker, box, label,
+		HumanBytes(it.Bytes),
+		riskStyle(f.Rule.Risk).Render(fmt.Sprintf("%-8s", riskLabel(f.Rule.Risk))),
+		styleFaint.Render(recency),
+	)
+}
+
+// listFooter: the note for the row under the cursor, then keys. An
+// item row's note leads with its full ID — the exact string
+// `regrow clean` accepts.
 func (m Model) listFooter() string {
 	var note string
 	if f := m.currentFinding(); f != nil {
-		switch {
+		switch it := m.currentItem(); {
+		case it != nil:
+			note = "id: " + engine.ItemID(f.Rule.ID, it.Key)
+			if f.Rule.Risk == engine.RiskSurfaceOnly {
+				note += " · surface-only: regrow never deletes this"
+			} else if !f.Rule.PerItemActionable() {
+				note += " · rule acts as a whole — toggle the rule row"
+			}
+			note += fmt.Sprintf(" · regen: %s", f.Rule.Regen.Story)
+			if f.Rule.Note != "" {
+				note = f.Rule.Note + " · " + note
+			}
 		case f.Err != "":
 			note = "error: " + f.Err
 		case f.Rule.Risk == engine.RiskSurfaceOnly:
@@ -401,16 +597,18 @@ func (m Model) listFooter() string {
 	var selCount int
 	var selBytes int64
 	for _, f := range m.findings {
-		if m.selected[f.Rule.ID] {
-			selCount++
-			selBytes += f.TotalBytes()
+		for _, it := range f.Items {
+			if m.selected[engine.ItemID(f.Rule.ID, it.Key)] {
+				selCount++
+				selBytes += it.Bytes
+			}
 		}
 	}
 
 	return styleFaint.Render(strings.Repeat("─", min(m.width, 72))) + "\n" +
 		styleFaint.Render(truncate("  "+note, m.width)) + "\n" +
 		fmt.Sprintf("  selected %d · ~%s   ", selCount, HumanBytes(selBytes)) +
-		styleFaint.Render("space toggle · enter plan · ↑↓ move · q quit") + "\n"
+		styleFaint.Render("space toggle · →← expand · enter plan · ↑↓ move · q quit") + "\n"
 }
 
 // daysUnused: most recent LastUsed across items, in whole days ago.

@@ -1,6 +1,6 @@
 # Docker usage timestamps — research
 
-**Status:** research done, implementation parked for Phase 3 (rides the per-item selection work, candidate 5 in [2026-07-13-architecture-review.md](2026-07-13-architecture-review.md)).
+**Status:** research done, scheduled as Prompt G2 in PLAN.md Phase 3 (after Prompt G0 item-identity groundwork — candidate 5 in [2026-07-13-architecture-review.md](2026-07-13-architecture-review.md)).
 
 **Question:** can regrow attach/derive timestamps for Docker volumes, images, networks, build cache to classify what's safe to remove vs. precious project data (e.g. named DB volumes)?
 

@@ -28,6 +28,19 @@ func runClean(host engine.Host, catalog []engine.Rule, ids []string, yes bool) e
 		sel = safeSelection(findings)
 	}
 	plan := engine.BuildPlan(host, findings, sel)
+	if len(plan.Unmatched) > 0 {
+		// A typo'd selector must never quietly execute less (or, for a
+		// rule atom, more) than the user meant.
+		hint := "`regrow scan` lists rules and item ids"
+		for _, u := range plan.Unmatched {
+			if strings.HasPrefix(u, "-") {
+				hint = "flags go before ids: `regrow clean --yes id ...`"
+				break
+			}
+		}
+		return fmt.Errorf("selector(s) matched nothing in this scan: %s\n(%s)",
+			strings.Join(plan.Unmatched, ", "), hint)
+	}
 	if len(plan.Actions) == 0 {
 		fmt.Println("Nothing to clean: no selected rule found anything.")
 		return nil

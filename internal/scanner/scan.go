@@ -85,6 +85,9 @@ func (s *Scanner) scanRule(ctx context.Context, r engine.Rule) engine.Finding {
 		}
 	}
 
+	// Every item leaves the scanner with its stable key (Prompt G0):
+	// "ruleID/key" is how selection atoms and --json address it.
+	f.FillItemKeys(s.Host.Home)
 	return f
 }
 

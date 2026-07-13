@@ -103,6 +103,20 @@ func TestParseTMSnapshots(t *testing.T) {
 	if items[0].Label != "com.apple.TimeMachine.2026-07-12-090000.local" {
 		t.Errorf("label wrong: %q", items[0].Label)
 	}
+	// The embedded date is the delete handle and the recency signal.
+	if items[0].Arg != "2026-07-12-090000" {
+		t.Errorf("arg wrong: %q", items[0].Arg)
+	}
+	if want := time.Date(2026, 7, 12, 9, 0, 0, 0, time.Local); !items[0].LastUsed.Equal(want) {
+		t.Errorf("LastUsed = %v, want %v", items[0].LastUsed, want)
+	}
+}
+
+func TestParseTMSnapshotsUnrecognizedNameHasNoArg(t *testing.T) {
+	items := parseTMSnapshots("com.apple.TimeMachine.weird-name.local\n")
+	if len(items) != 1 || items[0].Arg != "" {
+		t.Fatalf("unparseable snapshot must carry no delete handle, got %+v", items)
+	}
 }
 
 // Every tool_query named by the shipped catalog must resolve in the

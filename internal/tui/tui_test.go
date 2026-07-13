@@ -52,6 +52,18 @@ func fixtureFindings(home string) []engine.Finding {
 				Risk: engine.RiskSafe,
 			},
 		},
+		{
+			Rule: engine.Rule{
+				ID: "sim-devices", Title: "iOS simulator devices", Category: "xcode",
+				Risk: engine.RiskCaution, ToolQuery: "simctl-devices",
+				NativeCommand: engine.Argv{"xcrun", "simctl", "delete", "{arg}"},
+				Regen:         engine.Regen{Story: "Recreate via simctl create.", Cost: "sim contents gone"},
+			},
+			Items: []engine.Item{
+				{Label: "iPhone 15 (iOS 17.0)", Arg: "AAA-111", Bytes: 4 << 30},
+				{Label: "iPhone 16 (iOS 18.0)", Arg: "CCC-333", Bytes: 3 << 30},
+			},
+		},
 	}
 }
 
@@ -113,40 +125,144 @@ func TestListGroupsAndRanks(t *testing.T) {
 	}
 }
 
+// Selection state is item atoms ("ruleID/key"); the rule checkbox is
+// derived. These are the atoms the fixture findings produce.
+const (
+	atomGoBuild = "go-build-cache/~/Library/Caches/go-build"
+	atomGoMod   = "go-mod-cache/~/go/pkg/mod"
+)
+
 func TestDefaultSelectionAndToggle(t *testing.T) {
 	m := newTestModel(t)
 
-	if !m.selected["go-build-cache"] {
-		t.Fatal("safe finding should start selected")
+	if !m.selected[atomGoBuild] {
+		t.Fatal("safe finding's items should start selected")
 	}
-	if m.selected["go-mod-cache"] {
+	if m.selected[atomGoMod] {
 		t.Fatal("caution finding must not start selected")
 	}
-	if m.selected["docker-cache"] {
-		t.Fatal("errored finding must not start selected")
+	if len(m.selected) != 1 {
+		t.Fatalf("only the safe item should be selected, got %v", m.selected)
 	}
 
 	// Cursor starts on the first finding; move to the caution row, toggle.
 	m = press(t, m, "j", " ")
-	if !m.selected["go-mod-cache"] {
+	if !m.selected[atomGoMod] {
 		t.Fatal("space should select the caution finding under the cursor")
 	}
 	m = press(t, m, " ")
-	if m.selected["go-mod-cache"] {
+	if m.selected[atomGoMod] {
 		t.Fatal("space should toggle selection off")
 	}
 }
 
 func TestSurfaceOnlyNotToggleable(t *testing.T) {
 	m := newTestModel(t)
-	// Walk to the end: the surface row is the last finding.
-	m = press(t, m, "j", "j", "j", "j", " ")
-	if m.selected["ios-backups"] {
+	// Walk to the surface row: build → mod → docker(err) → ios-backups.
+	m = press(t, m, "j", "j", "j", " ")
+	before := len(m.selected)
+	if f := m.currentFinding(); f == nil || f.Rule.ID != "ios-backups" {
+		t.Fatalf("cursor not on the surface row, at %+v", m.currentFinding())
+	}
+	if len(m.selected) != before {
 		t.Fatal("surface-only must never be selectable")
 	}
 	view := m.View()
 	if !strings.Contains(view, "regrow never deletes this") {
 		t.Fatalf("cursor note should explain surface-only, got:\n%s", view)
+	}
+}
+
+func TestExpandCollapseAndItemToggle(t *testing.T) {
+	m := newTestModel(t)
+	// Collapsed by default: no item labels on screen.
+	if strings.Contains(m.View(), "iPhone 15") {
+		t.Fatalf("items must be collapsed by default, got:\n%s", m.View())
+	}
+
+	// Walk to sim-devices (last finding) and expand.
+	m = press(t, m, "j", "j", "j", "j", "l")
+	view := m.View()
+	if !strings.Contains(view, "iPhone 15 (iOS 17.0)") || !strings.Contains(view, "iPhone 16 (iOS 18.0)") {
+		t.Fatalf("expand should reveal item rows, got:\n%s", view)
+	}
+
+	// First item row (largest first), toggle it.
+	m = press(t, m, "j")
+	if it := m.currentItem(); it == nil || it.Arg != "AAA-111" {
+		t.Fatalf("cursor should sit on the biggest item, got %+v", m.currentItem())
+	}
+	// Footer shows the copy-pasteable id.
+	if !strings.Contains(m.View(), "id: sim-devices/AAA-111") {
+		t.Fatalf("item footer must show the item id, got:\n%s", m.View())
+	}
+	m = press(t, m, " ")
+	if !m.selected["sim-devices/AAA-111"] {
+		t.Fatal("space on an item row should select that item")
+	}
+	if m.selected["sim-devices/CCC-333"] {
+		t.Fatal("sibling item must stay unselected")
+	}
+	// Partial selection renders [~] on the rule row.
+	if !strings.Contains(m.View(), "[~]") {
+		t.Fatalf("partial selection should render [~], got:\n%s", m.View())
+	}
+
+	// Plan carries exactly the selected item.
+	planned := press(t, m, "enter")
+	view = planned.View()
+	if !strings.Contains(view, "xcrun simctl delete AAA-111") {
+		t.Fatalf("plan must include the selected item's command, got:\n%s", view)
+	}
+	if strings.Contains(view, "CCC-333") {
+		t.Fatalf("unselected item must not be planned, got:\n%s", view)
+	}
+
+	// Collapse from the item row: rows fold, cursor lands on the rule.
+	m = press(t, m, "h")
+	if strings.Contains(m.View(), "iPhone 16") {
+		t.Fatalf("collapse should hide item rows, got:\n%s", m.View())
+	}
+	if f := m.currentFinding(); f == nil || f.Rule.ID != "sim-devices" || m.currentItem() != nil {
+		t.Fatal("collapse should park the cursor on the rule row")
+	}
+}
+
+func TestRuleToggleCascadesToItems(t *testing.T) {
+	m := newTestModel(t)
+	// sim-devices: select the whole rule from the collapsed row.
+	m = press(t, m, "j", "j", "j", "j", " ")
+	if !m.selected["sim-devices/AAA-111"] || !m.selected["sim-devices/CCC-333"] {
+		t.Fatalf("rule toggle should select every item, got %v", m.selected)
+	}
+	// From partial, space selects all; from all, clears all.
+	m = press(t, m, "l", "j", " ") // expand, drop first item → partial
+	if m.selected["sim-devices/AAA-111"] {
+		t.Fatal("item toggle should deselect")
+	}
+	m = press(t, m, "k", " ") // back on rule row: partial → all
+	if !m.selected["sim-devices/AAA-111"] || !m.selected["sim-devices/CCC-333"] {
+		t.Fatalf("rule toggle from partial should select all, got %v", m.selected)
+	}
+	m = press(t, m, " ") // all → none
+	if m.selected["sim-devices/AAA-111"] || m.selected["sim-devices/CCC-333"] {
+		t.Fatalf("rule toggle from all should clear, got %v", m.selected)
+	}
+}
+
+func TestWholeRuleCommandItemsAreViewOnly(t *testing.T) {
+	m := newTestModel(t)
+	// go-build-cache runs `go clean -cache` — items expand for
+	// inspection but cannot be individually toggled.
+	m = press(t, m, "l", "j", " ")
+	if it := m.currentItem(); it == nil {
+		t.Fatal("cursor should be on the expanded item row")
+	}
+	if !m.selected[atomGoBuild] {
+		t.Fatal("space on a view-only item row must not change selection")
+	}
+	if !strings.Contains(m.View(), "rule acts as a whole") {
+		t.Fatalf("footer should explain why the item is view-only, got:\n%s", m.View())
 	}
 }
 

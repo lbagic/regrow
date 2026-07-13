@@ -84,7 +84,7 @@ func (e *Executor) Execute(ctx context.Context, plan engine.Plan) (Result, error
 		}
 		entry := oplog.Entry{
 			Time: now(), Run: res.RunID, Seq: seq + 1, Event: oplog.EventStart,
-			RuleID: a.RuleID, Kind: string(a.Kind), Command: a.Command, Path: a.Path, Bytes: a.Bytes,
+			RuleID: a.RuleID, ItemKey: a.ItemKey, Kind: string(a.Kind), Command: a.Command, Path: a.Path, Bytes: a.Bytes,
 		}
 		if err := e.Log.Append(entry); err != nil {
 			// Journal down = no action: the invariant is not optional.

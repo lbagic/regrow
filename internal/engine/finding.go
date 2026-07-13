@@ -11,6 +11,10 @@ type Item struct {
 	// Label is the human name shown in the UI (model name, sim
 	// runtime, ...). Defaults to Path when empty.
 	Label string `json:"label,omitempty"`
+	// Key is the item's stable identity within its rule (see
+	// identity.go). "ruleID/key" addresses this item in selection
+	// atoms and `regrow clean`/`plan` arguments.
+	Key string `json:"key,omitempty"`
 	// Arg substitutes {arg} in the rule's native command (a model id
 	// for `ollama rm {arg}`, a runtime id for simctl).
 	Arg string `json:"arg,omitempty"`

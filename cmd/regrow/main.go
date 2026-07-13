@@ -6,6 +6,10 @@
 //	                                           plain listing when piped or --json
 //	regrow plan [id ...] [--json]              dry-run: exact command list
 //	regrow clean [id ...] [--yes]              execute: no ids = safe rules only
+//
+// Ids are rule ids ("sim-devices") or item ids ("sim-devices/AAA-111",
+// as listed by scan output and the TUI footer).
+//
 //	regrow undo [run-id]                       restore the last (or given) run
 //	regrow history [--json]                    past runs from the oplog
 //	regrow rules                               list the catalog
@@ -152,6 +156,9 @@ func printFindings(findings []engine.Finding, asJSON bool) error {
 				fmt.Printf("  - %-32s %10s  not found\n", f.Rule.Title, "")
 			default:
 				fmt.Printf("  • %-32s %10s  %-12s %s\n", f.Rule.Title, tui.HumanBytes(f.TotalBytes()), f.Rule.Risk, f.Rule.Regen.Story)
+				for _, it := range f.Items {
+					fmt.Printf("      %10s  %s\n", tui.HumanBytes(it.Bytes), engine.ItemID(f.Rule.ID, it.Key))
+				}
 			}
 		}
 	}
@@ -163,7 +170,7 @@ func printPlan(plan engine.Plan, asJSON bool) error {
 	if asJSON {
 		return emitJSON(plan)
 	}
-	if len(plan.Actions) == 0 && len(plan.Skipped) == 0 {
+	if len(plan.Actions) == 0 && len(plan.Skipped) == 0 && len(plan.Unmatched) == 0 {
 		fmt.Println("Nothing to plan: no selected rule found anything.")
 		return nil
 	}
@@ -173,6 +180,9 @@ func printPlan(plan engine.Plan, asJSON bool) error {
 	}
 	for _, s := range plan.Skipped {
 		fmt.Printf("  [skip] %-22s %s\n", s.RuleID, s.Reason)
+	}
+	for _, u := range plan.Unmatched {
+		fmt.Printf("  [unmatched] %-17s selector matched nothing in this scan\n", u)
 	}
 	fmt.Printf("\nWould reclaim: %s\n", tui.HumanBytes(plan.TotalBytes()))
 	return nil

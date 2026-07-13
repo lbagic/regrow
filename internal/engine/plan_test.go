@@ -120,6 +120,102 @@ func TestPlanTotalBytes(t *testing.T) {
 	}
 }
 
+func TestBuildPlanItemAtomSubset(t *testing.T) {
+	f := Finding{
+		Rule: Rule{ID: "sim-devices", Risk: RiskCaution, ToolQuery: "q", NativeCommand: Argv{"xcrun", "simctl", "delete", "{arg}"}},
+		Items: []Item{
+			{Label: "iPhone 15", Arg: "AAA-111", Key: "AAA-111", Bytes: 10},
+			{Label: "iPhone 16", Arg: "CCC-333", Key: "CCC-333", Bytes: 20},
+		},
+	}
+	plan := BuildPlan(testHost, []Finding{f}, map[string]bool{"sim-devices/CCC-333": true})
+	if len(plan.Actions) != 1 || plan.Actions[0].ItemKey != "CCC-333" {
+		t.Fatalf("item atom should plan exactly one item, got %+v", plan.Actions)
+	}
+	if plan.Actions[0].Command[len(plan.Actions[0].Command)-1] != "CCC-333" {
+		t.Errorf("command targets wrong item: %v", plan.Actions[0].Command)
+	}
+	if len(plan.Unmatched) != 0 {
+		t.Errorf("matched atom reported unmatched: %v", plan.Unmatched)
+	}
+}
+
+func TestBuildPlanItemAtomDerivesMissingKeys(t *testing.T) {
+	// Hand-built findings without keys must still match item atoms.
+	f := Finding{
+		Rule:  Rule{ID: "xcode-archives", Risk: RiskCaution},
+		Items: []Item{{Path: "/Users/t/Library/Archives/A.xcarchive", Bytes: 1}, {Path: "/Users/t/Library/Archives/B.xcarchive", Bytes: 2}},
+	}
+	plan := BuildPlan(testHost, []Finding{f}, map[string]bool{"xcode-archives/~/Library/Archives/B.xcarchive": true})
+	if len(plan.Actions) != 1 || plan.Actions[0].Path != "/Users/t/Library/Archives/B.xcarchive" {
+		t.Fatalf("tilde-key atom should match, got %+v", plan.Actions)
+	}
+	if plan.Actions[0].ItemKey != "~/Library/Archives/B.xcarchive" {
+		t.Errorf("action must carry the item key, got %q", plan.Actions[0].ItemKey)
+	}
+}
+
+func TestBuildPlanWholeRuleCommandRefusesPartialSelection(t *testing.T) {
+	f := Finding{
+		Rule: Rule{ID: "go-build-cache", Risk: RiskSafe, NativeCommand: Argv{"go", "clean", "-cache"}},
+		Items: []Item{
+			{Path: "/Users/t/Library/Caches/go-build", Key: "~/Library/Caches/go-build", Bytes: 100},
+			{Path: "/Users/t/other/go-build", Key: "~/other/go-build", Bytes: 50},
+		},
+	}
+	plan := BuildPlan(testHost, []Finding{f}, map[string]bool{"go-build-cache/~/other/go-build": true})
+	if len(plan.Actions) != 0 {
+		t.Fatalf("partial selection on a whole-rule command must never act: %+v", plan.Actions)
+	}
+	if len(plan.Skipped) != 1 || !strings.Contains(plan.Skipped[0].Reason, "whole-rule command") {
+		t.Fatalf("want whole-rule skip with reason, got %+v", plan.Skipped)
+	}
+
+	// Selecting every item extensionally equals the whole rule.
+	full := BuildPlan(testHost, []Finding{f}, map[string]bool{
+		"go-build-cache/~/Library/Caches/go-build": true,
+		"go-build-cache/~/other/go-build":          true,
+	})
+	if len(full.Actions) != 1 || full.Actions[0].Bytes != 150 || full.Actions[0].ItemKey != "" {
+		t.Fatalf("all-item atoms should plan the whole command once, got %+v", full.Actions)
+	}
+}
+
+func TestBuildPlanUnmatchedSelectors(t *testing.T) {
+	findings := []Finding{
+		{Rule: Rule{ID: "sim-devices", Risk: RiskCaution, ToolQuery: "q", NativeCommand: Argv{"xcrun", "simctl", "delete", "{arg}"}},
+			Items: []Item{{Label: "iPhone", Arg: "AAA-111", Key: "AAA-111", Bytes: 1}}},
+		{Rule: Rule{ID: "empty-rule", Risk: RiskSafe}},
+	}
+	plan := BuildPlan(testHost, findings, map[string]bool{
+		"sim-devices/AAA-111": true,
+		"sim-devices/TYPO":    true,
+		"no-such-rule":        true,
+		"empty-rule":          true, // rule exists, found nothing: not a typo
+	})
+	want := []string{"no-such-rule", "sim-devices/TYPO"}
+	if !reflect.DeepEqual(plan.Unmatched, want) {
+		t.Fatalf("Unmatched = %v, want %v", plan.Unmatched, want)
+	}
+	if len(plan.Actions) != 1 {
+		t.Fatalf("valid atom must still plan, got %+v", plan.Actions)
+	}
+}
+
+func TestBuildPlanSurfaceOnlyItemAtomStillSkips(t *testing.T) {
+	f := Finding{
+		Rule:  Rule{ID: "ios-backups", Risk: RiskSurfaceOnly},
+		Items: []Item{{Path: "/Users/t/Library/Backup/x", Key: "~/Library/Backup/x", Bytes: 1}},
+	}
+	plan := BuildPlan(testHost, []Finding{f}, map[string]bool{"ios-backups/~/Library/Backup/x": true})
+	if len(plan.Actions) != 0 {
+		t.Fatalf("surface-only item atom produced actions: %+v", plan.Actions)
+	}
+	if len(plan.Skipped) != 1 || !strings.Contains(plan.Skipped[0].Reason, "surface-only") {
+		t.Fatalf("want surface-only skip, got %+v", plan.Skipped)
+	}
+}
+
 func TestBuildPlanSkipsItemWithEmptyPlaceholderValue(t *testing.T) {
 	f := Finding{
 		Rule: Rule{ID: "sim-runtimes", Risk: RiskCaution, ToolQuery: "q", NativeCommand: Argv{"xcrun", "simctl", "runtime", "delete", "{arg}"}},
