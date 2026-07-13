@@ -15,12 +15,12 @@ Each phase = one or a few Claude sessions with a ready prompt. Milestones (M1–
 - [x] P2-F safety hardening (2026-07-13): clean/undo/history, trash+staging+receipts, oplog, placeholder validation, --beta-rules, GoReleaser+release CI — code done; **M2 needs manual publish** (tap repo, TAP_GITHUB_TOKEN secret, tag v0.1.0)
 - [x] P3-G0 item identity (2026-07-13): `ruleID/key` ids, per-item plan/clean selectors + `Plan.Unmatched` typo guard, TUI expandable item rows (all/partial/none), `--json` keys, refits: sim devices/runtimes, xcode-archives (per-archive glob), tm-snapshots (per-snapshot delete) — [design doc](plans/2026-07-13-item-identity.md)
 - [ ] **M2 publish (manual, deferred — no code coupling, do before sharing):** decide/confirm name (P0-A revisit), create `lbagic/homebrew-tap`, add `TAP_GITHUB_TOKEN` secret, `git tag v0.1.0 && git push --tags`, buy regrow.sh
-- [ ] P3-G ML models module
-- [ ] P3-G2 docker detection + targeting
-- [ ] P3-H doctor + phantom space → **M3 launchable**
+- [x] P3-G ML models module (2026-07-13): 12 `ai` rules (HF hub/datasets/xet, ollama, LM Studio, torch/whisper/llama.cpp/keras/gpt4all/wandb, SD libraries surface-only), hf + ollama walkers with dedup-aware sizes + last-used, all beta — [design doc](plans/2026-07-13-ml-module.md)
+- [x] P3-G2 docker detection + targeting (2026-07-13): `internal/docker` provider (one snapshot/scan, recorded-JSON tests), volume last-used join + usage ledger, 6 tiered beta rules (kept tier surface-only with reasons; volume rm exports a tarball to staging first via the new `pre_action` seam, 10 GiB cap), config file with docker keep-list; retired aggregate docker-prune/docker-volumes — verified live: the 3 dakr timescale volumes land in caution-named
+- [x] P3-H doctor + phantom space (2026-07-13): `regrow doctor` (hero-bug `doctor:` rule metadata + phantom-space category), new rules claude-code-cache / playwright-cache / apfs-purgeable (JXA Finder-vs-df probe), tm-snapshots + docker-vm-disk moved to phantom-space, docker-vm-disk real-vs-sparse label; docker rules graduated from beta — [design doc](plans/2026-07-13-doctor-phantom.md). **M3 check, honest status:** this machine is healthy — no hero flag fired (flagged rendering verified via lowered threshold); phantom section explains 60.8 GiB (25.3 purgeable + 35.5 real of 1 TiB sparse Docker VM). "Dramatic on ≥1 real machine" still wants a machine with a live runaway.
 - [ ] P4-I launch kit → **M4 public**
 
-**Now:** Prompt G (ML models) or G2 (docker) — both unblocked by G0. Still pending manual: publish v0.1 (create `lbagic/homebrew-tap` repo, add `TAP_GITHUB_TOKEN` secret, `git tag v0.1.0 && git push --tags`); buy regrow.sh; revisit the `regrow` name before tagging (P0-A said revisit before M2).
+**Now:** Prompt I (launch kit → M4). Still pending manual: publish v0.1 (create `lbagic/homebrew-tap` repo, add `TAP_GITHUB_TOKEN` secret, `git tag v0.1.0 && git push --tags`); buy regrow.sh; revisit the `regrow` name before tagging (P0-A said revisit before M2); run `regrow doctor` on a second real machine for the M3 screenshot.
 
 ```mermaid
 flowchart TD
