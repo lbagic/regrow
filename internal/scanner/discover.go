@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	"context"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -27,7 +28,8 @@ var builtinExcludes = map[string]bool{
 // the discover spec: base name (if set) plus every marker file
 // present. Missing roots are skipped; that lets rules list
 // conventional project locations. Results are sorted for determinism.
-func discover(host engine.Host, spec engine.Discover) []string {
+// Cancelling ctx stops the walk; hits found so far are returned.
+func discover(ctx context.Context, host engine.Host, spec engine.Discover) []string {
 	maxDepth := spec.MaxDepth
 	if maxDepth <= 0 {
 		maxDepth = defaultMaxDepth
@@ -44,6 +46,9 @@ func discover(host engine.Host, spec engine.Discover) []string {
 			continue
 		}
 		_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+			if cerr := ctx.Err(); cerr != nil {
+				return cerr // cancelled: abort this root's walk
+			}
 			if err != nil {
 				return nil // unreadable: skip, keep walking siblings
 			}

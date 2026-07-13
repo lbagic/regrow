@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	"context"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -12,7 +13,10 @@ import (
 // report what deletion actually reclaims (research/02 §15,
 // "dedup-aware sizing"). Symlinks are not followed. Unreadable
 // subtrees are skipped, not fatal: a partial size beats no size.
-func DirSize(path string) (int64, error) {
+// Cancelling ctx stops the walk mid-tree — hung filesystems (network
+// mounts) can't wedge a scan — and returns the partial total with
+// ctx's error, the one walk failure DirSize does report.
+func DirSize(ctx context.Context, path string) (int64, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
 		return 0, err
@@ -25,7 +29,10 @@ func DirSize(path string) (int64, error) {
 	// (~/.Trash, CoreSpotlight) Lstat fine but refuse ReadDir without
 	// Full Disk Access. The target exists — report it with whatever
 	// size was measurable, exactly like `du 2>/dev/null`.
-	_ = filepath.WalkDir(path, func(p string, d fs.DirEntry, err error) error {
+	walkErr := filepath.WalkDir(path, func(p string, d fs.DirEntry, err error) error {
+		if cerr := ctx.Err(); cerr != nil {
+			return cerr
+		}
 		if err != nil {
 			return nil
 		}
@@ -36,7 +43,7 @@ func DirSize(path string) (int64, error) {
 		total += physicalSize(fi)
 		return nil
 	})
-	return total, nil
+	return total, walkErr
 }
 
 // physicalSize prefers allocated blocks (512-byte units, the stat

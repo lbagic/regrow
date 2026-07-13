@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -36,7 +37,7 @@ func TestDiscoverNameAndMarker(t *testing.T) {
 		Name:    "target",
 		Markers: []string{"CACHEDIR.TAG"},
 	}
-	got := discover(host, spec)
+	got := discover(context.Background(), host, spec)
 	want := []string{filepath.Join(home, "workspace", "proj-a", "target")}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("discover = %v, want %v", got, want)
@@ -50,7 +51,7 @@ func TestDiscoverByNameMatchesInsideBuiltinExcludeList(t *testing.T) {
 	touch(t, filepath.Join(home, "app", "node_modules", "left-pad", "index.js"))
 
 	host := engine.Host{OS: "darwin", Home: home}
-	got := discover(host, engine.Discover{Roots: []string{"~"}, Name: "node_modules"})
+	got := discover(context.Background(), host, engine.Discover{Roots: []string{"~"}, Name: "node_modules"})
 	want := []string{filepath.Join(home, "app", "node_modules")}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("discover = %v, want %v", got, want)
@@ -63,12 +64,12 @@ func TestDiscoverMaxDepth(t *testing.T) {
 
 	host := engine.Host{OS: "darwin", Home: home}
 	spec := engine.Discover{Roots: []string{"~"}, Name: "target", Markers: []string{"CACHEDIR.TAG"}, MaxDepth: 2}
-	if got := discover(host, spec); len(got) != 0 {
+	if got := discover(context.Background(), host, spec); len(got) != 0 {
 		t.Errorf("depth-limited discover found %v", got)
 	}
 
 	spec.MaxDepth = 4
-	if got := discover(host, spec); len(got) != 1 {
+	if got := discover(context.Background(), host, spec); len(got) != 1 {
 		t.Errorf("discover at sufficient depth found %v", got)
 	}
 }
@@ -80,7 +81,7 @@ func TestDiscoverRuleExcludeWins(t *testing.T) {
 
 	host := engine.Host{OS: "darwin", Home: home}
 	spec := engine.Discover{Roots: []string{"~"}, Name: "target", Markers: []string{"CACHEDIR.TAG"}, Exclude: []string{"vendor"}}
-	got := discover(host, spec)
+	got := discover(context.Background(), host, spec)
 	want := []string{filepath.Join(home, "src", "target")}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("discover = %v, want %v", got, want)

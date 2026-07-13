@@ -50,7 +50,7 @@ func (s *Scanner) scanRule(ctx context.Context, r engine.Rule) engine.Finding {
 
 	for _, path := range s.Host.ResolvePaths(r) {
 		for _, p := range expandGlob(path) {
-			item, ok, err := s.measure(p)
+			item, ok, err := s.measure(ctx, p)
 			if err != nil {
 				f.Err = joinErr(f.Err, err)
 				continue
@@ -62,8 +62,8 @@ func (s *Scanner) scanRule(ctx context.Context, r engine.Rule) engine.Finding {
 	}
 
 	if r.Discover != nil {
-		for _, path := range discover(s.Host, *r.Discover) {
-			item, ok, err := s.measure(path)
+		for _, path := range discover(ctx, s.Host, *r.Discover) {
+			item, ok, err := s.measure(ctx, path)
 			if err != nil {
 				f.Err = joinErr(f.Err, err)
 				continue
@@ -90,7 +90,7 @@ func (s *Scanner) scanRule(ctx context.Context, r engine.Rule) engine.Finding {
 
 // measure stats and sizes one path. Absent paths are not an error:
 // most rules simply do not apply to a given machine.
-func (s *Scanner) measure(path string) (engine.Item, bool, error) {
+func (s *Scanner) measure(ctx context.Context, path string) (engine.Item, bool, error) {
 	info, err := os.Lstat(path)
 	if os.IsNotExist(err) {
 		return engine.Item{}, false, nil
@@ -98,7 +98,7 @@ func (s *Scanner) measure(path string) (engine.Item, bool, error) {
 	if err != nil {
 		return engine.Item{}, false, err
 	}
-	bytes, err := DirSize(path)
+	bytes, err := DirSize(ctx, path)
 	if err != nil {
 		return engine.Item{}, false, err
 	}

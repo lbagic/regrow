@@ -1,6 +1,8 @@
 package scanner
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -21,7 +23,7 @@ func TestDirSize(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "a.bin"), 10_000)
 	writeFile(t, filepath.Join(dir, "sub", "b.bin"), 20_000)
 
-	got, err := DirSize(dir)
+	got, err := DirSize(context.Background(), dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +41,7 @@ func TestDirSizeSingleFile(t *testing.T) {
 	dir := t.TempDir()
 	f := filepath.Join(dir, "one.bin")
 	writeFile(t, f, 5_000)
-	got, err := DirSize(f)
+	got, err := DirSize(context.Background(), f)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +60,7 @@ func TestDirSizeDoesNotFollowSymlinks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := DirSize(dir)
+	got, err := DirSize(context.Background(), dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +70,18 @@ func TestDirSizeDoesNotFollowSymlinks(t *testing.T) {
 }
 
 func TestDirSizeMissingPath(t *testing.T) {
-	if _, err := DirSize(filepath.Join(t.TempDir(), "nope")); err == nil {
+	if _, err := DirSize(context.Background(), filepath.Join(t.TempDir(), "nope")); err == nil {
 		t.Fatal("want error for missing path")
+	}
+}
+
+func TestDirSizeCancelled(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "a.bin"), 10_000)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := DirSize(ctx, dir); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled walk must report ctx error, got %v", err)
 	}
 }
