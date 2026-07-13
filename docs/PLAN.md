@@ -2,6 +2,22 @@
 
 Each phase = one or a few Claude sessions with a ready prompt. Milestones (M1–M4) mark when the thing becomes *usable*, *shareable*, *launchable*, *fundable*.
 
+## Status
+
+<!-- Living tracker. Every session that finishes a prompt ticks its box and moves the "Now" line. Enforced via CLAUDE.md session rules. -->
+
+- [x] P0-A name → **regrow** (2026-07-13)
+- [x] P0-B scaffold — repo pushed, CI green (2026-07-13, github.com/lbagic/regrow)
+- [ ] P1-C engine + schema
+- [ ] P1-D TUI
+- [ ] P1-E port clean.sh + Tier-S rules → **M1 usable**
+- [ ] P2-F safety hardening + brew tap → **M2 shareable**
+- [ ] P3-G ML models module
+- [ ] P3-H doctor + phantom space → **M3 launchable**
+- [ ] P4-I launch kit → **M4 public**
+
+**Now:** Prompt C, fresh session. **Manual TODO:** buy regrow.sh.
+
 ```mermaid
 flowchart TD
     P0[Phase 0: Decisions<br/>name · repo · license] --> P1[Phase 1: Skeleton<br/>engine + TUI + 15 safe rules]
@@ -74,4 +90,4 @@ Order by issue traffic: Android/JVM rules → JetBrains/VSCode/Cursor → Rust t
 
 ## Session cadence
 
-Each prompt ≈ one focused session. Phases 0–1 ≈ a weekend of evenings. Keep every session ending with: tests green, CHANGELOG line, one dogfood run on the real machine.
+Each prompt ≈ one focused session. Phases 0–1 ≈ a weekend of evenings. Keep every session ending with: tests green, CHANGELOG line, one dogfood run on the real machine, Status block above ticked.
