@@ -10,6 +10,7 @@
 // Ids are rule ids ("sim-devices") or item ids ("sim-devices/AAA-111",
 // as listed by scan output and the TUI footer).
 //
+//	regrow doctor [--json]                     hero-bug scan + phantom-space report
 //	regrow undo [run-id]                       restore the last (or given) run
 //	regrow history [--json]                    past runs from the oplog
 //	regrow rules                               list the catalog
@@ -86,12 +87,14 @@ func run(args []string) error {
 		return printPlan(plan, *asJSON)
 	case "clean":
 		return runClean(host, catalog, fs.Args(), *yes)
+	case "doctor":
+		return runDoctor(host, catalog, *asJSON)
 	case "undo":
 		return runUndo(fs.Args())
 	case "history":
 		return runHistory(*asJSON)
 	default:
-		return fmt.Errorf("unknown command %q (scan, plan, clean, undo, history, rules, version)", cmd)
+		return fmt.Errorf("unknown command %q (scan, plan, clean, doctor, undo, history, rules, version)", cmd)
 	}
 }
 

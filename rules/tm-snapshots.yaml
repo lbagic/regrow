@@ -1,12 +1,12 @@
 # Local Time Machine snapshots — the big chunk of "System Data"
-# phantom space (docs/research/02 §10). Per-snapshot deletion by the
-# date embedded in the name (Prompt G0 refit; was thinlocalsnapshots —
-# decision logged in ARCHITECTURE.md). External TM backups are
-# untouched. OS-update snapshots (com.apple.os.update-*) are
-# system-managed and not listed.
+# phantom space (docs/research/02 §10, Prompt H: phantom-space is its
+# own category). Per-snapshot deletion by the date embedded in the
+# name (Prompt G0 refit; was thinlocalsnapshots — decision logged in
+# ARCHITECTURE.md). External TM backups are untouched. OS-update
+# snapshots (com.apple.os.update-*) are system-managed and not listed.
 id: tm-snapshots
 title: Time Machine local snapshots
-category: macos
+category: phantom-space
 risk: caution
 tool_query: tm-snapshots
 native_command: tmutil deletelocalsnapshots {arg}

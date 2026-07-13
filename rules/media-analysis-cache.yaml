@@ -12,6 +12,9 @@ regen:
   story: The photo-analysis daemon rebuilds its cache in the background.
   cost: some background CPU; photos and analysis results unaffected
 sudo: false
+doctor:
+  flag_above: 2GB
+  story: Sequoia 15.1 leak filled disks with up to 143GB of mediaanalysisd cache (fixed in 15.2). Healthy caches stay around 100MB.
 fixture:
   files:
     - ~/Library/Containers/com.apple.mediaanalysisd/Data/Library/Caches/blob

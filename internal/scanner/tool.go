@@ -16,6 +16,7 @@ type ToolQuery func(ctx context.Context) ([]engine.Item, error)
 // DefaultQueries returns the built-in query registry.
 func DefaultQueries() map[string]ToolQuery {
 	queries := map[string]ToolQuery{
+		"apfs-purgeable":             queryAPFSPurgeable,
 		"hf-hub":                     queryHFHub,
 		"ollama-models":              queryOllamaModels,
 		"simctl-devices":             querySimctlDevices,

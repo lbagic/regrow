@@ -14,6 +14,9 @@ regen:
   story: mdutil erases the index and macOS rebuilds it automatically.
   cost: hours of background indexing; search degraded meanwhile
 sudo: true
+doctor:
+  flag_above: 20GB
+  story: Sequoia bug grows the Spotlight index without bound on node_modules-heavy disks — 233GB observed. Normal indexes run 1–10GB.
 fixture:
   files:
     - ~/Library/Metadata/CoreSpotlight/index.spotlightV3/store
