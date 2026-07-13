@@ -1,0 +1,17 @@
+# Placeholder rule documenting the intended schema (docs/PRODUCT.md §6,
+# PLAN.md Prompt C). Replaced by the real catalog in Phase 1.
+id: example
+title: Example rule (does nothing)
+category: dev-caches
+risk: safe # safe | caution | surface-only
+paths:
+  darwin:
+    - ~/Library/Caches/example
+  linux:
+    - ~/.cache/example
+markers: [] # e.g. CACHEDIR.TAG, pyvenv.cfg
+native_command: "" # preferred steward command, e.g. `go clean -cache`
+regen:
+  story: Rebuilt automatically on next use.
+  cost: minutes, no network
+sudo: false
