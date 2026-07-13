@@ -446,7 +446,7 @@ func (m Model) viewPlan() string {
 	}
 
 	b.WriteString(fmt.Sprintf("\n  Would reclaim: %s\n", styleTitle.Render(HumanBytes(m.plan.TotalBytes()))))
-	b.WriteString(styleFaint.Render("  Execution ships in Phase 2 — today this screen is the whole story.") + "\n\n")
+	b.WriteString(styleFaint.Render("  Execute with `regrow clean [id ...]` — trash first, `regrow undo` restores.") + "\n\n")
 	b.WriteString(styleFaint.Render("  esc back · q quit") + "\n")
 	return b.String()
 }
