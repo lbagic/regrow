@@ -1,1 +1,1 @@
-[trash] xcode-archives: osascript -e tell application "Finder" to delete POSIX file "~/Library/Developer/Xcode/Archives"
+[trash] xcode-archives: osascript -e tell application "Finder" to return POSIX path of ((delete POSIX file "~/Library/Developer/Xcode/Archives") as alias)

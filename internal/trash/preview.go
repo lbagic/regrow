@@ -2,12 +2,15 @@ package trash
 
 import "fmt"
 
-// PreviewCommand is the exact command the executor would run today to
-// trash a path: Finder handles the move so the OS "Put Back" works.
-// Phase 2 wraps the execution with a staging-dir fallback and the
-// oplog; the preview stays the primary mechanism the plan screen and
-// --json show.
+// PreviewCommand is the exact command Move runs to trash a path:
+// Finder handles the move so the OS "Put Back" works, and the script
+// returns the trashed item's POSIX path — Finder renames on collision
+// ("x 14.54.11"), so the receipt must record where the item actually
+// landed, not where we guessed. The plan screen and --json show this
+// argv verbatim; execution runs it verbatim.
 func PreviewCommand(path string) []string {
-	script := fmt.Sprintf("tell application %q to delete POSIX file %q", "Finder", path)
+	script := fmt.Sprintf(
+		"tell application %q to return POSIX path of ((delete POSIX file %q) as alias)",
+		"Finder", path)
 	return []string{"osascript", "-e", script}
 }
