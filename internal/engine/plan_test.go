@@ -119,3 +119,20 @@ func TestPlanTotalBytes(t *testing.T) {
 		t.Fatalf("TotalBytes = %d", p.TotalBytes())
 	}
 }
+
+func TestBuildPlanSkipsItemWithEmptyPlaceholderValue(t *testing.T) {
+	f := Finding{
+		Rule: Rule{ID: "sim-runtimes", Risk: RiskCaution, ToolQuery: "q", NativeCommand: Argv{"xcrun", "simctl", "runtime", "delete", "{arg}"}},
+		Items: []Item{
+			{Label: "good", Arg: "8A2C", Bytes: 10},
+			{Label: "bad-no-arg", Bytes: 20},
+		},
+	}
+	plan := BuildPlan(testHost, []Finding{f}, nil)
+	if len(plan.Actions) != 1 || plan.Actions[0].Command[len(plan.Actions[0].Command)-1] != "8A2C" {
+		t.Fatalf("want 1 action for the good item, got %+v", plan.Actions)
+	}
+	if len(plan.Skipped) != 1 || !strings.Contains(plan.Skipped[0].Reason, "{arg}") {
+		t.Fatalf("empty placeholder value must be a skip with reason, got %+v", plan.Skipped)
+	}
+}

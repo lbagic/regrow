@@ -77,3 +77,11 @@ func TestEmbeddedCatalogLoads(t *testing.T) {
 		t.Fatal("embedded catalog is empty")
 	}
 }
+
+func TestWithoutBeta(t *testing.T) {
+	catalog := []Rule{{ID: "a"}, {ID: "b", Beta: true}, {ID: "c"}}
+	got := WithoutBeta(catalog)
+	if len(got) != 2 || got[0].ID != "a" || got[1].ID != "c" {
+		t.Fatalf("WithoutBeta = %+v", got)
+	}
+}

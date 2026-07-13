@@ -64,6 +64,18 @@ func LoadEmbedded() ([]Rule, error) {
 	return LoadFS(rules.FS)
 }
 
+// WithoutBeta drops beta rules from the catalog — the default view.
+// --beta-rules keeps them (staged rollout of new rules, PRODUCT.md).
+func WithoutBeta(catalog []Rule) []Rule {
+	out := make([]Rule, 0, len(catalog))
+	for _, r := range catalog {
+		if !r.Beta {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
 func unmarshalStrict(data []byte, out *Rule) error {
 	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)

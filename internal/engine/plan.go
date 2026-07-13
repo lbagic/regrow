@@ -2,7 +2,6 @@ package engine
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/lbagic/regrow/internal/trash"
 )
@@ -69,7 +68,9 @@ func BuildPlan(host Host, findings []Finding, selected map[string]bool) Plan {
 			continue
 		}
 		if len(f.Rule.NativeCommand) > 0 {
-			plan.Actions = append(plan.Actions, nativeActions(f)...)
+			actions, skips := nativeActions(f)
+			plan.Actions = append(plan.Actions, actions...)
+			plan.Skipped = append(plan.Skipped, skips...)
 			continue
 		}
 		for _, it := range f.Items {
@@ -93,33 +94,26 @@ func BuildPlan(host Host, findings []Finding, selected map[string]bool) Plan {
 	return plan
 }
 
-// nativeActions expands the rule's native command. With a {path} or
-// {arg} placeholder the command runs once per item; otherwise once
-// for the whole rule.
-func nativeActions(f Finding) []Action {
-	argv := []string(f.Rule.NativeCommand)
-	perItem := false
-	for _, tok := range argv {
-		if strings.Contains(tok, "{path}") || strings.Contains(tok, "{arg}") {
-			perItem = true
-			break
-		}
-	}
-	if !perItem {
+// nativeActions expands the rule's native command. With a placeholder
+// the command runs once per item; otherwise once for the whole rule.
+// The placeholder convention itself (which tokens exist, refusing
+// empty substitutions) is owned by the schema (Argv).
+func nativeActions(f Finding) ([]Action, []Skip) {
+	if !f.Rule.NativeCommand.PerItem() {
 		return []Action{{
 			RuleID:  f.Rule.ID,
 			Kind:    ActionNative,
-			Command: withSudo(f.Rule.Sudo, argv),
+			Command: withSudo(f.Rule.Sudo, f.Rule.NativeCommand),
 			Bytes:   f.TotalBytes(),
-		}}
+		}}, nil
 	}
-	actions := make([]Action, 0, len(f.Items))
+	var actions []Action
+	var skips []Skip
 	for _, it := range f.Items {
-		cmd := make([]string, len(argv))
-		for i, tok := range argv {
-			tok = strings.ReplaceAll(tok, "{path}", it.Path)
-			tok = strings.ReplaceAll(tok, "{arg}", it.Arg)
-			cmd[i] = tok
+		cmd, err := f.Rule.NativeCommand.ExpandItem(it)
+		if err != nil {
+			skips = append(skips, Skip{f.Rule.ID, err.Error()})
+			continue
 		}
 		actions = append(actions, Action{
 			RuleID:  f.Rule.ID,
@@ -129,7 +123,7 @@ func nativeActions(f Finding) []Action {
 			Bytes:   it.Bytes,
 		})
 	}
-	return actions
+	return actions, skips
 }
 
 func withSudo(sudo bool, argv []string) []string {

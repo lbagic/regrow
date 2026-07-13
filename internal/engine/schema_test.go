@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -89,6 +90,16 @@ func TestValidate(t *testing.T) {
 			func(r *Rule) { r.Risk = RiskSurfaceOnly; r.NativeCommand = Argv{"rm", "-rf"} },
 			"surface-only",
 		},
+		{
+			"placeholder typo",
+			func(r *Rule) { r.ToolQuery = "q"; r.NativeCommand = Argv{"tool", "rm", "{id}"} },
+			"unknown placeholder {id}",
+		},
+		{
+			"arg placeholder without tool query",
+			func(r *Rule) { r.NativeCommand = Argv{"tool", "rm", "{arg}"} },
+			"only tool_query items supply args",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -99,5 +110,39 @@ func TestValidate(t *testing.T) {
 				t.Fatalf("want error containing %q, got %v", tt.wantErr, err)
 			}
 		})
+	}
+}
+
+func TestArgvPlaceholders(t *testing.T) {
+	a := Argv{"tool", "{arg}", "cp {path} {path}", "{}"}
+	got := a.Placeholders()
+	want := []string{"{arg}", "{path}"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Placeholders = %v, want %v", got, want)
+	}
+	if !a.PerItem() {
+		t.Fatal("command with placeholders must be per-item")
+	}
+	if (Argv{"go", "clean"}).PerItem() {
+		t.Fatal("command without placeholders must not be per-item")
+	}
+}
+
+func TestArgvExpandItem(t *testing.T) {
+	a := Argv{"tool", "rm", "{arg}", "--from", "{path}"}
+	got, err := a.ExpandItem(Item{Path: "/x/y", Arg: "m1", Label: "model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"tool", "rm", "m1", "--from", "/x/y"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ExpandItem = %v, want %v", got, want)
+	}
+}
+
+func TestArgvExpandItemRefusesEmptyValue(t *testing.T) {
+	a := Argv{"tool", "rm", "{arg}"}
+	if _, err := a.ExpandItem(Item{Label: "no-arg-item"}); err == nil {
+		t.Fatal("empty {arg} substitution must fail, not produce a blank argument")
 	}
 }

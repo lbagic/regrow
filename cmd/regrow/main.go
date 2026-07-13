@@ -42,6 +42,7 @@ func run(args []string) error {
 	fs := flag.NewFlagSet(cmd, flag.ExitOnError)
 	rulesDir := fs.String("rules-dir", "", "load rules from a directory instead of the embedded catalog")
 	asJSON := fs.Bool("json", false, "machine-readable output")
+	betaRules := fs.Bool("beta-rules", false, "include rules still in staged rollout")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -54,6 +55,9 @@ func run(args []string) error {
 	catalog, err := loadCatalog(*rulesDir)
 	if err != nil {
 		return err
+	}
+	if !*betaRules {
+		catalog = engine.WithoutBeta(catalog)
 	}
 	host := engine.DetectHost()
 

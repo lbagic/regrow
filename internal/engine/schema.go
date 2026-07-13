@@ -97,6 +97,54 @@ type Discover struct {
 // spaces — osascript scripts, find patterns.
 type Argv []string
 
+// The placeholder convention is part of the rule interface and owned
+// here: {path} and {arg} in native_command substitute per item; any
+// other {token} is a load-time error (a typo like {id} must never
+// silently downgrade a per-item command to run-once-with-a-literal).
+// Bare braces ({}, find's marker) are not placeholders.
+var placeholderRe = regexp.MustCompile(`\{[a-z_]+\}`)
+
+// Placeholders returns the placeholder tokens the command uses, in
+// order of first appearance, deduplicated.
+func (a Argv) Placeholders() []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, tok := range a {
+		for _, ph := range placeholderRe.FindAllString(tok, -1) {
+			if !seen[ph] {
+				seen[ph] = true
+				out = append(out, ph)
+			}
+		}
+	}
+	return out
+}
+
+// PerItem reports whether the command must run once per item.
+func (a Argv) PerItem() bool { return len(a.Placeholders()) > 0 }
+
+// ExpandItem substitutes the item's values into the command. It
+// refuses to expand a placeholder into an empty string — a blank
+// {path} or {arg} would silently change what the command targets
+// (`simctl delete ""`), so the caller must skip the item instead.
+func (a Argv) ExpandItem(it Item) ([]string, error) {
+	values := map[string]string{"{path}": it.Path, "{arg}": it.Arg}
+	out := make([]string, len(a))
+	for i, tok := range a {
+		for ph, v := range values {
+			if !strings.Contains(tok, ph) {
+				continue
+			}
+			if v == "" {
+				return nil, fmt.Errorf("item %q supplies no value for %s", it.Label, ph)
+			}
+			tok = strings.ReplaceAll(tok, ph, v)
+		}
+		out[i] = tok
+	}
+	return out, nil
+}
+
 func (a *Argv) UnmarshalYAML(node *yaml.Node) error {
 	if node.Kind == yaml.ScalarNode {
 		*a = Argv(strings.Fields(node.Value))
@@ -171,6 +219,10 @@ type Rule struct {
 	// prerequisites ("switch to a static wallpaper first"), warnings.
 	Note string `yaml:"note" json:"note,omitempty"`
 	Sudo bool   `yaml:"sudo" json:"sudo,omitempty"`
+	// Beta gates a rule behind --beta-rules: new rules ship beta first
+	// and graduate after a release of real-machine burn-in
+	// (PRODUCT.md: staged rollout of new rules).
+	Beta bool `yaml:"beta" json:"beta,omitempty"`
 	// Fixture is the rule's golden-test data; never serialized to JSON.
 	Fixture *Fixture `yaml:"fixture" json:"-"`
 }
@@ -217,6 +269,16 @@ func (r Rule) Validate() error {
 	for _, tok := range r.NativeCommand {
 		if tok == "" {
 			errs = append(errs, "native_command must not contain empty arguments")
+		}
+	}
+	for _, ph := range r.NativeCommand.Placeholders() {
+		switch ph {
+		case "{path}", "{arg}":
+		default:
+			errs = append(errs, fmt.Sprintf("native_command uses unknown placeholder %s (only {path} and {arg} exist)", ph))
+		}
+		if ph == "{arg}" && r.ToolQuery == "" {
+			errs = append(errs, "native_command uses {arg} but only tool_query items supply args")
 		}
 	}
 	if !r.Risk.Actionable() && len(r.NativeCommand) > 0 {
