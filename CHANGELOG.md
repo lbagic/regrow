@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- TUI execute-on-confirm: the interactive scan can now run the plan — plan screen (`enter`) → `x` → confirm screen restating the exact actions → `y`. Two explicit gates on two screens; `enter` is inert on the confirm screen so muscle memory can't execute. Confirming quits the alt-screen and executes outside the TUI (native commands keep real terminal stdio — sudo can prompt, docker can stream), reprinting the action list first so the scrollback keeps a record. Same oplog/trash/undo path as `regrow clean`.
+
 - Doctor + phantom space (Prompt H): `regrow doctor [--json]` — a fast, read-only pass over hero-bug scanners and the phantom-space category; it never plans or executes, fix lines point at `regrow clean`. Hero bugs are rule metadata (`doctor: {flag_above, story}`): flagged when the measured total crosses the healthy line, printed with the bug story and the exact fix (steward command spelled out). Shipped scanners: Claude Code debug-log loop (new `claude-code-cache` rule; `~/.claude/projects` never listed), Playwright transform-cache bug (new `playwright-cache` rule), mediaanalysisd leak, Spotlight runaway index. Phantom space is now its own category with why-Finder-lags copy: `tm-snapshots` and `docker-vm-disk` moved in; new `apfs-purgeable` rule measures the Finder-vs-df gap via a JXA Foundation probe (no TCC prompt, no CGo — diskutil/system_profiler cannot see purgeable); `docker-vm-disk` became a tool query labeling real-vs-sparse ("35.5 GiB real of 1.0 TiB sparse"), daemon not required. `HumanBytes` moved to engine (scanner labels format sizes too; tui delegates).
 
 - Docker rules graduated from beta after first real-machine burn-in: the 6 per-item docker rules now show without `--beta-rules`. ML (`ai`) rules stay beta.

@@ -48,14 +48,7 @@ func runClean(host engine.Host, catalog []engine.Rule, ids []string, yes bool) e
 		return nil
 	}
 
-	fmt.Println("About to execute:")
-	for _, a := range plan.Actions {
-		fmt.Printf("  [%s] %-24s %10s  %s\n", a.Kind, a.RuleID, tui.HumanBytes(a.Bytes), tui.ActionCommand(a))
-	}
-	for _, s := range plan.Skipped {
-		fmt.Printf("  [skip] %-22s %s\n", s.RuleID, s.Reason)
-	}
-	fmt.Printf("Total: %s → Trash (undo: `regrow undo`)\n", tui.HumanBytes(plan.TotalBytes()))
+	printPlanActions(plan)
 	if !yes {
 		if !isTTY() {
 			return fmt.Errorf("refusing to execute without a terminal; pass --yes to confirm")
@@ -67,7 +60,28 @@ func runClean(host engine.Host, catalog []engine.Rule, ids []string, yes bool) e
 			return nil
 		}
 	}
+	return executePlan(host, plan)
+}
 
+// printPlanActions prints the about-to-run action list — before the
+// clean prompt, and after a TUI-confirmed run so the terminal
+// scrollback keeps a record of what executed once the alt-screen is
+// gone.
+func printPlanActions(plan engine.Plan) {
+	fmt.Println("About to execute:")
+	for _, a := range plan.Actions {
+		fmt.Printf("  [%s] %-24s %10s  %s\n", a.Kind, a.RuleID, tui.HumanBytes(a.Bytes), tui.ActionCommand(a))
+	}
+	for _, s := range plan.Skipped {
+		fmt.Printf("  [skip] %-22s %s\n", s.RuleID, s.Reason)
+	}
+	fmt.Printf("Total: %s → Trash (undo: `regrow undo`)\n", tui.HumanBytes(plan.TotalBytes()))
+}
+
+// executePlan runs an already-confirmed plan: oplog first, then the
+// executor. Both confirmation paths (clean prompt, TUI plan → x → y)
+// land here.
+func executePlan(host engine.Host, plan engine.Plan) error {
 	logPath, err := oplog.DefaultPath()
 	if err != nil {
 		return err

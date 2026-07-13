@@ -290,6 +290,54 @@ func TestPlanScreen(t *testing.T) {
 	}
 }
 
+func TestExecuteConfirmFlow(t *testing.T) {
+	m := press(t, newTestModel(t), "enter", "x")
+	if m.state != stateConfirm {
+		t.Fatalf("x on the plan screen should open the confirm screen, state=%d", m.state)
+	}
+	view := m.View()
+	if !strings.Contains(view, "CONFIRM") || !strings.Contains(view, "go clean -cache") {
+		t.Fatalf("confirm screen must restate the actions, got:\n%s", view)
+	}
+
+	// esc backs out without confirming; so does n.
+	if out := press(t, m, "esc"); out.state != statePlan || out.confirmed {
+		t.Fatalf("esc must return to plan unconfirmed, state=%d confirmed=%v", out.state, out.confirmed)
+	}
+	if out := press(t, m, "n"); out.state != statePlan || out.confirmed {
+		t.Fatalf("n must return to plan unconfirmed, state=%d confirmed=%v", out.state, out.confirmed)
+	}
+
+	// enter is inert on the confirm screen: plan-screen muscle memory
+	// must not execute.
+	if out := press(t, m, "enter"); out.state != stateConfirm || out.confirmed {
+		t.Fatal("enter must not confirm execution")
+	}
+
+	// y confirms and quits; the caller reads plan+confirmed off the model.
+	next, cmd := m.Update(key("y"))
+	m = next.(Model)
+	if !m.confirmed {
+		t.Fatal("y should mark the plan confirmed")
+	}
+	if cmd == nil || cmd() != tea.Quit() {
+		t.Fatal("y should quit so the caller can execute")
+	}
+}
+
+func TestExecuteNeedsActions(t *testing.T) {
+	m := newTestModel(t)
+	m.selected = map[string]bool{} // nothing selected → empty plan
+	m = press(t, m, "enter", "x")
+	if m.state != statePlan {
+		t.Fatalf("x must be inert on an empty plan, state=%d", m.state)
+	}
+	// y outside the confirm screen must never confirm.
+	if out := press(t, m, "y"); out.confirmed {
+		t.Fatal("y outside the confirm screen must not confirm")
+	}
+}
+
 func TestSurfaceOnlySkippedInPlan(t *testing.T) {
 	// Select everything selectable, then plan: surface-only must show
 	// as a skip, never an action (invariant 5 lives in the planner).

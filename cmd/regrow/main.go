@@ -75,9 +75,16 @@ func run(args []string) error {
 		return printRules(catalog, *asJSON)
 	case "scan":
 		if !*asJSON && isTTY() {
-			return tui.Run(host, version, func(ctx context.Context) []engine.Finding {
+			plan, confirmed, err := tui.Run(host, version, func(ctx context.Context) []engine.Finding {
 				return scanner.New(host).Scan(ctx, catalog)
 			})
+			if err != nil || !confirmed {
+				return err
+			}
+			// Confirmed twice in the TUI (plan → x → confirm → y);
+			// execute here so native commands get real terminal stdio.
+			printPlanActions(plan)
+			return executePlan(host, plan)
 		}
 		findings := scanner.New(host).Scan(context.Background(), catalog)
 		return printFindings(findings, *asJSON)
