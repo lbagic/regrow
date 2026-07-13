@@ -1,0 +1,1 @@
+[native] docker-prune: docker system prune -f

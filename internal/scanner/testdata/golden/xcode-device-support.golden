@@ -1,0 +1,2 @@
+[trash] xcode-device-support: osascript -e tell application "Finder" to delete POSIX file "~/Library/Developer/Xcode/iOS DeviceSupport"
+[trash] xcode-device-support: osascript -e tell application "Finder" to delete POSIX file "~/Library/Developer/Xcode/watchOS DeviceSupport"

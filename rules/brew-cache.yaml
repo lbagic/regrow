@@ -14,3 +14,6 @@ regen:
   story: Homebrew re-downloads bottles on the next install/upgrade.
   cost: next upgrades re-download; network
 sudo: false
+fixture:
+  files:
+    - ~/Library/Caches/Homebrew/bottle.tar.gz

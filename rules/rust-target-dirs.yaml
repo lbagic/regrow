@@ -20,3 +20,9 @@ regen:
   story: cargo rebuilds the project on the next cargo build.
   cost: minutes to tens of minutes per project; no network
 sudo: false
+fixture:
+  # decoy target/ without CACHEDIR.TAG must NOT match
+  files:
+    - ~/workspace/proj/target/CACHEDIR.TAG
+    - ~/workspace/proj/target/debug/bin
+    - ~/workspace/decoy/target/notes.txt

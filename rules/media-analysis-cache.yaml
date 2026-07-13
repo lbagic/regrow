@@ -12,3 +12,6 @@ regen:
   story: The photo-analysis daemon rebuilds its cache in the background.
   cost: some background CPU; photos and analysis results unaffected
 sudo: false
+fixture:
+  files:
+    - ~/Library/Containers/com.apple.mediaanalysisd/Data/Library/Caches/blob

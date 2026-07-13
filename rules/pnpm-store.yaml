@@ -17,3 +17,6 @@ regen:
   story: Only unreferenced packages are pruned; anything needed re-downloads.
   cost: re-download if an old project resurfaces; network
 sudo: false
+fixture:
+  files:
+    - ~/Library/pnpm/store/v3/files/blob

@@ -19,3 +19,6 @@ regen:
   story: npm/yarn/pnpm install recreates it from the project lockfile.
   cost: minutes per project; network
 sudo: false
+fixture:
+  files:
+    - ~/workspace/webapp/node_modules/lodash/index.js

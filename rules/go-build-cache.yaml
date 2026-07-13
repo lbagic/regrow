@@ -14,3 +14,6 @@ regen:
   story: Repopulated automatically by the next go build.
   cost: next builds slower once; no network
 sudo: false
+fixture:
+  files:
+    - ~/Library/Caches/go-build/00/hash

@@ -13,3 +13,9 @@ regen:
   story: Images re-pull and build cache rebuilds on the next docker build/run.
   cost: next builds slower; network for re-pulled layers
 sudo: false
+fixture:
+  items:
+    - label: dangling images
+      bytes: 7500000000
+    - label: build cache
+      bytes: 512000000

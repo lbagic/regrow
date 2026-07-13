@@ -11,3 +11,6 @@ regen:
   story: Xcode rebuilds intermediates and re-indexes on the next build.
   cost: first build per project slower; no network
 sudo: false
+fixture:
+  files:
+    - ~/Library/Developer/Xcode/DerivedData/MyApp-abc/Build/x.o

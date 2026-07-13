@@ -10,3 +10,8 @@ regen:
   story: Nothing to regenerate — these simulators reference SDKs that are gone.
   cost: none
 sudo: false
+fixture:
+  items:
+    - label: iPhone 14 (iOS 16.4)
+      arg: BBB-222
+      bytes: 900000000

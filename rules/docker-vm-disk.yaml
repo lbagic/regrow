@@ -15,3 +15,6 @@ regen:
   story: Shrinks itself after pruning (Docker.raw, 4.28+); last resort is Docker Desktop ▸ Troubleshoot ▸ Purge Data.
   cost: n/a — regrow never touches this file
 sudo: false
+fixture:
+  files:
+    - ~/Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw

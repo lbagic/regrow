@@ -1,0 +1,1 @@
+[native] docker-volumes: docker volume prune -f

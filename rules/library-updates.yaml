@@ -12,3 +12,6 @@ regen:
   story: Check `softwareupdate -l` first; payloads re-download if an update still needs them.
   cost: n/a — regrow never deletes here
 sudo: false
+fixture:
+  files:
+    - /Library/Updates/092-12345/payload

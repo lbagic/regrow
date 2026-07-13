@@ -15,3 +15,6 @@ regen:
   story: uv re-populates the cache as environments are built.
   cost: next installs re-download; network
 sudo: false
+fixture:
+  files:
+    - ~/.cache/uv/wheels/whl

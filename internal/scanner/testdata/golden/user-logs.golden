@@ -1,0 +1,2 @@
+[trash] user-logs: osascript -e tell application "Finder" to delete POSIX file "~/Library/Logs/DiagnosticReports"
+[trash] user-logs: osascript -e tell application "Finder" to delete POSIX file "~/Library/Logs/CrashReporter"

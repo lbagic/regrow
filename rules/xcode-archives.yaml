@@ -12,3 +12,6 @@ regen:
   story: Not regenerable — each archive is a build artifact of a past release.
   cost: symbolication of old crash reports lost unless dSYMs live elsewhere
 sudo: false
+fixture:
+  files:
+    - ~/Library/Developer/Xcode/Archives/2026/App.xcarchive/Info.plist

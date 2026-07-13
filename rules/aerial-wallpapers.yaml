@@ -24,3 +24,6 @@ regen:
   story: macOS re-downloads any aerial still selected as wallpaper/screensaver.
   cost: multi-GB download per video in use
 sudo: true
+fixture:
+  files:
+    - /Library/Application Support/com.apple.idleassetsd/Customer/4KSDR240FPS/a.mov

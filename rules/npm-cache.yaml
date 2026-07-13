@@ -13,3 +13,6 @@ regen:
   story: npm re-fetches packages into the cache as installs need them.
   cost: next installs re-download; network
 sudo: false
+fixture:
+  files:
+    - ~/.npm/_cacache/blob

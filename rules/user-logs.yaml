@@ -12,3 +12,7 @@ regen:
   story: macOS recreates the directories and writes new reports as crashes happen.
   cost: history of past crashes is gone
 sudo: false
+fixture:
+  files:
+    - ~/Library/Logs/DiagnosticReports/app.crash
+    - ~/Library/Logs/CrashReporter/app.crash

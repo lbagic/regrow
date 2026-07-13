@@ -110,6 +110,36 @@ func (a *Argv) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
+// FixtureItem is one fake tool-query result the golden harness feeds
+// the rule (a docker df row, a simctl device).
+type FixtureItem struct {
+	Label string `yaml:"label"`
+	Arg   string `yaml:"arg"`
+	Bytes int64  `yaml:"bytes"`
+}
+
+// FixtureHost overrides the fake host a rule's golden test runs
+// against (default darwin/15.5) — for version-gated paths and, later,
+// linux rules.
+type FixtureHost struct {
+	OS      string `yaml:"os"`
+	Version string `yaml:"version"`
+}
+
+// Fixture is the rule's own test data: the golden harness plants Files
+// in a fixture home and feeds Items to the rule's tool query as its
+// fake result. File paths use rule path syntax (~ = fixture home,
+// absolute = under the fixture root). Test-only: the scanner never
+// reads it and it is excluded from JSON output. Every embedded rule
+// must carry one (CLAUDE.md: every rule gets a golden test) — enforced
+// by the harness rather than Validate, so --rules-dir users are not
+// forced to write fixtures.
+type Fixture struct {
+	Files []string      `yaml:"files"`
+	Items []FixtureItem `yaml:"items"`
+	Host  *FixtureHost  `yaml:"host"`
+}
+
 // Regen is the regeneration story shown next to every finding: what
 // brings the data back and what that costs (PRODUCT.md pillar 1).
 type Regen struct {
@@ -141,6 +171,8 @@ type Rule struct {
 	// prerequisites ("switch to a static wallpaper first"), warnings.
 	Note string `yaml:"note" json:"note,omitempty"`
 	Sudo bool   `yaml:"sudo" json:"sudo,omitempty"`
+	// Fixture is the rule's golden-test data; never serialized to JSON.
+	Fixture *Fixture `yaml:"fixture" json:"-"`
 }
 
 var idRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)

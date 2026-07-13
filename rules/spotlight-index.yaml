@@ -14,3 +14,6 @@ regen:
   story: mdutil erases the index and macOS rebuilds it automatically.
   cost: hours of background indexing; search degraded meanwhile
 sudo: true
+fixture:
+  files:
+    - ~/Library/Metadata/CoreSpotlight/index.spotlightV3/store

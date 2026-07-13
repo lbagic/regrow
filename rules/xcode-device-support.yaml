@@ -14,3 +14,7 @@ regen:
   story: Xcode re-extracts symbols the next time each device is connected.
   cost: a few minutes per device on next connect; no network
 sudo: false
+fixture:
+  files:
+    - ~/Library/Developer/Xcode/iOS DeviceSupport/17.0/dsc
+    - ~/Library/Developer/Xcode/watchOS DeviceSupport/10.0/dsc

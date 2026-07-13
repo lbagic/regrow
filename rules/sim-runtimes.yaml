@@ -12,3 +12,8 @@ regen:
   story: Xcode re-downloads a runtime on demand (Settings ▸ Components).
   cost: multi-GB download per runtime
 sudo: false
+fixture:
+  items:
+    - label: iOS 17.0 (21A328)
+      arg: 11111111-2222
+      bytes: 7000000000

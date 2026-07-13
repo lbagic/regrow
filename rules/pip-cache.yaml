@@ -13,3 +13,6 @@ regen:
   story: pip re-downloads wheels as installs need them.
   cost: next installs re-download; network
 sudo: false
+fixture:
+  files:
+    - ~/Library/Caches/pip/wheels/whl

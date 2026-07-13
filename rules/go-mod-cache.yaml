@@ -14,3 +14,6 @@ regen:
   story: Modules re-download on the next build of each project.
   cost: network + minutes; offline builds break until re-fetched
 sudo: false
+fixture:
+  files:
+    - ~/go/pkg/mod/example.com/pkg@v1/go.mod

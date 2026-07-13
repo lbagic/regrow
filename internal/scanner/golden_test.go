@@ -1,10 +1,12 @@
 package scanner
 
-// The golden harness runs the real embedded catalog against a fixture
-// $HOME and snapshots the dry-run command list — the contract PLAN.md
-// Prompt C promises and every future rule extends (CLAUDE.md: every
-// rule gets a golden test). Sizes and temp paths are normalized out;
-// the command list is the artifact. Refresh with:
+// Every embedded rule owns its test data: the `fixture:` block in the
+// rule YAML. The harness builds an isolated fake machine per rule,
+// scans just that rule, plans, and snapshots the normalized command
+// list in testdata/golden/<rule-id>.golden. Coverage is enforced, not
+// hoped for: a missing fixture, a scan error, or zero matched items
+// fails the rule's subtest — silent path rot turns red instead of
+// quietly dropping lines from a shared snapshot. Refresh with:
 //
 //	go test ./internal/scanner -run Golden -update
 
@@ -22,85 +24,41 @@ import (
 
 var update = flag.Bool("update", false, "rewrite golden files")
 
-// buildFixture creates a fake machine: a home directory plus a fake
-// filesystem root (Host.Root) so rules targeting /Library and
-// /Applications get golden coverage too. Every path rule in the
-// catalog has its target present here.
-func buildFixture(t *testing.T) engine.Host {
+// fixtureHost builds the rule's isolated fake machine: a temp root
+// (Host.Root re-anchors /Library, /Applications) containing a home,
+// with every fixture file planted using the same path syntax rules use
+// (~ = home, absolute = under root). Default host is darwin/15.5;
+// fixture.host overrides for version-gated paths and future linux rules.
+func fixtureHost(t *testing.T, r engine.Rule) engine.Host {
 	t.Helper()
 	root := t.TempDir()
-	home := filepath.Join(root, "Users/dev")
-
-	forHome := []string{
-		"Library/Developer/Xcode/DerivedData/MyApp-abc/Build/x.o", // xcode-derived-data
-		"Library/Developer/Xcode/iOS DeviceSupport/17.0/dsc",      // xcode-device-support
-		"Library/Developer/Xcode/watchOS DeviceSupport/10.0/dsc",
-		"Library/Developer/Xcode/Archives/2026/App.xcarchive/Info.plist", // xcode-archives
-		"Library/Developer/CoreSimulator/Caches/dyld/blob",               // sim-caches
-		"Library/Caches/go-build/00/hash",                                // go-build-cache (+ library-caches)
-		"go/pkg/mod/example.com/pkg@v1/go.mod",                           // go-mod-cache
-		".npm/_cacache/blob",                                             // npm-cache
-		"Library/Caches/Yarn/v6/pkg.tgz",                                 // yarn-cache
-		"Library/pnpm/store/v3/files/blob",                               // pnpm-store
-		"Library/Caches/pip/wheels/whl",                                  // pip-cache
-		".cache/uv/wheels/whl",                                           // uv-cache
-		"Library/Caches/Homebrew/bottle.tar.gz",                          // brew-cache
-		"workspace/webapp/node_modules/lodash/index.js",                  // node-modules-dirs
-		"Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw",       // docker-vm-disk
-		"Library/Containers/com.apple.mediaanalysisd/Data/Library/Caches/blob",  // media-analysis-cache
-		"Library/Logs/DiagnosticReports/app.crash",                              // user-logs
-		"Library/Logs/CrashReporter/app.crash",
-		"Library/Metadata/CoreSpotlight/index.spotlightV3/store", // spotlight-index
-		".Trash/old-file",                                        // trash-empty
-		"Library/Application Support/MobileSync/Backup/UDID/Manifest.db", // ios-backups
-		// rust-target-dirs: one real hit, one decoy without marker
-		"workspace/proj/target/CACHEDIR.TAG",
-		"workspace/proj/target/debug/bin",
-		"workspace/decoy/target/notes.txt",
+	host := engine.Host{OS: "darwin", Version: "15.5", Home: filepath.Join(root, "Users/dev"), Root: root}
+	if fh := r.Fixture.Host; fh != nil {
+		if fh.OS != "" {
+			host.OS = fh.OS
+		}
+		if fh.Version != "" {
+			host.Version = fh.Version
+		}
 	}
-	for _, p := range forHome {
-		writeFile(t, filepath.Join(home, p), 1000)
+	for _, p := range r.Fixture.Files {
+		writeFile(t, host.ExpandPath(p), 1000)
 	}
-
-	forRoot := []string{
-		"Library/Application Support/com.apple.idleassetsd/Customer/4KSDR240FPS/a.mov", // aerial (Sequoia)
-		"Applications/Install macOS Sequoia.app/Contents/Info.plist",                   // macos-installers
-		"Library/Updates/092-12345/payload",                                            // library-updates
-	}
-	for _, p := range forRoot {
-		writeFile(t, filepath.Join(root, p), 1000)
-	}
-
-	return engine.Host{OS: "darwin", Version: "15.5", Home: home, Root: root}
+	return host
 }
 
-// fixedItems fakes a tool query: golden runs must never exec docker
-// or simctl, and results must be machine-independent.
+// fixedItems fakes the rule's tool query: golden runs must never exec
+// docker or simctl, and results must be machine-independent.
 func fixedItems(items ...engine.Item) ToolQuery {
 	return func(context.Context) ([]engine.Item, error) { return items, nil }
 }
 
-func fakeQueries() map[string]ToolQuery {
-	return map[string]ToolQuery{
-		"docker-reclaimable": fixedItems(
-			engine.Item{Label: "dangling images", Bytes: 7_500_000_000},
-			engine.Item{Label: "build cache", Bytes: 512_000_000},
-		),
-		"docker-volumes": fixedItems(engine.Item{Label: "unused volumes", Bytes: 2_000_000_000}),
-		"simctl-devices": fixedItems(
-			engine.Item{Label: "iPhone 15 (iOS 17.0)", Arg: "AAA-111", Bytes: 4_000_000_000},
-			engine.Item{Label: "iPhone 16 (iOS 18.0)", Arg: "CCC-333", Bytes: 3_000_000_000},
-		),
-		"simctl-devices-unavailable": fixedItems(
-			engine.Item{Label: "iPhone 14 (iOS 16.4)", Arg: "BBB-222", Bytes: 900_000_000},
-		),
-		"simctl-runtimes": fixedItems(
-			engine.Item{Label: "iOS 17.0 (21A328)", Arg: "11111111-2222", Bytes: 7_000_000_000},
-		),
-		"tm-snapshots": fixedItems(
-			engine.Item{Label: "com.apple.TimeMachine.2026-07-13-090000.local"},
-		),
+func fakeQuery(r engine.Rule) map[string]ToolQuery {
+	items := make([]engine.Item, 0, len(r.Fixture.Items))
+	for _, it := range r.Fixture.Items {
+		items = append(items, engine.Item{Label: it.Label, Arg: it.Arg, Bytes: it.Bytes})
 	}
+	return map[string]ToolQuery{r.ToolQuery: fixedItems(items...)}
 }
 
 func renderPlanForGolden(plan engine.Plan, host engine.Host) string {
@@ -122,33 +80,76 @@ func renderPlanForGolden(plan engine.Plan, host engine.Host) string {
 	return b.String()
 }
 
-func TestGoldenPlanEmbeddedCatalog(t *testing.T) {
-	host := buildFixture(t)
-
+func TestGoldenPerRule(t *testing.T) {
 	catalog, err := engine.LoadEmbedded()
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := New(host)
-	s.Queries = fakeQueries()
-	findings := s.Scan(context.Background(), catalog)
-	plan := engine.BuildPlan(host, findings, nil)
-	got := renderPlanForGolden(plan, host)
+	for _, r := range catalog {
+		t.Run(r.ID, func(t *testing.T) {
+			if r.Fixture == nil {
+				t.Fatal("rule has no fixture: block — every rule gets a golden test (CLAUDE.md)")
+			}
+			host := fixtureHost(t, r)
+			s := New(host)
+			s.Queries = nil // never exec real tools in tests
+			if r.ToolQuery != "" {
+				s.Queries = fakeQuery(r)
+			}
 
-	goldenPath := filepath.Join("testdata", "golden", "plan.golden")
-	if *update {
-		if err := os.MkdirAll(filepath.Dir(goldenPath), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(goldenPath, []byte(got), 0o644); err != nil {
-			t.Fatal(err)
-		}
+			findings := s.Scan(context.Background(), []engine.Rule{r})
+			f := findings[0]
+			if f.Err != "" {
+				t.Fatalf("scan error: %s", f.Err)
+			}
+			if len(f.Items) == 0 {
+				t.Fatal("rule matched nothing in its own fixture — path rot or a stale fixture")
+			}
+
+			plan := engine.BuildPlan(host, findings, nil)
+			got := renderPlanForGolden(plan, host)
+			if got == "" {
+				t.Fatal("rule produced no plan lines")
+			}
+
+			goldenPath := filepath.Join("testdata", "golden", r.ID+".golden")
+			if *update {
+				if err := os.MkdirAll(filepath.Dir(goldenPath), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(goldenPath, []byte(got), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			want, err := os.ReadFile(goldenPath)
+			if err != nil {
+				t.Fatalf("read golden (run with -update to create): %v", err)
+			}
+			if got != string(want) {
+				t.Errorf("plan drifted from golden.\n--- got ---\n%s--- want ---\n%s", got, want)
+			}
+		})
 	}
-	want, err := os.ReadFile(goldenPath)
+}
+
+// TestGoldenNoStrays fails when testdata/golden holds snapshots for
+// rules that no longer exist — deleting a rule must delete its golden.
+func TestGoldenNoStrays(t *testing.T) {
+	catalog, err := engine.LoadEmbedded()
 	if err != nil {
-		t.Fatalf("read golden (run with -update to create): %v", err)
+		t.Fatal(err)
 	}
-	if got != string(want) {
-		t.Errorf("plan drifted from golden.\n--- got ---\n%s--- want ---\n%s", got, want)
+	known := make(map[string]bool, len(catalog))
+	for _, r := range catalog {
+		known[r.ID+".golden"] = true
+	}
+	entries, err := os.ReadDir(filepath.Join("testdata", "golden"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if !known[e.Name()] {
+			t.Errorf("stray golden %s: no rule with that id in the embedded catalog", e.Name())
+		}
 	}
 }

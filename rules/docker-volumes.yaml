@@ -12,3 +12,7 @@ regen:
   story: Not regenerable — volume contents are user data, not cache.
   cost: data in unused volumes is gone for good
 sudo: false
+fixture:
+  items:
+    - label: unused volumes
+      bytes: 2000000000
