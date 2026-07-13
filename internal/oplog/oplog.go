@@ -98,7 +98,8 @@ func Read(path string) ([]Entry, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	// Read-only handle: a close error cannot corrupt anything.
+	defer func() { _ = f.Close() }()
 
 	var out []Entry
 	sc := bufio.NewScanner(f)

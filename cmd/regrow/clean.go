@@ -74,7 +74,9 @@ func runClean(host engine.Host, catalog []engine.Rule, ids []string, yes bool) e
 	if err != nil {
 		return err
 	}
-	defer log.Close()
+	// Journal entries fsync per Append (invariant 6); nothing left to
+	// lose at close.
+	defer func() { _ = log.Close() }()
 
 	runID := executor.NewRunID(time.Now())
 	stateDir := filepath.Dir(logPath)
@@ -147,7 +149,9 @@ func runUndo(args []string) error {
 	if err != nil {
 		return err
 	}
-	defer log.Close()
+	// Journal entries fsync per Append (invariant 6); nothing left to
+	// lose at close.
+	defer func() { _ = log.Close() }()
 
 	exec := &executor.Executor{Log: log}
 	res, err := exec.Undo(*target)

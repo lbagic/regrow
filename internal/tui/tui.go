@@ -636,14 +636,14 @@ func (m Model) viewPlan() string {
 		b.WriteString("  Nothing selected found anything to reclaim.\n")
 	}
 	for _, a := range m.plan.Actions {
-		b.WriteString(fmt.Sprintf("  [%s] %-24s %10s  %s\n",
-			a.Kind, a.RuleID, HumanBytes(a.Bytes), ShellJoin(a.Command)))
+		fmt.Fprintf(&b, "  [%s] %-24s %10s  %s\n",
+			a.Kind, a.RuleID, HumanBytes(a.Bytes), ShellJoin(a.Command))
 	}
 	for _, s := range m.plan.Skipped {
 		b.WriteString(styleFaint.Render(fmt.Sprintf("  [skip]   %-22s %s", s.RuleID, s.Reason)) + "\n")
 	}
 
-	b.WriteString(fmt.Sprintf("\n  Would reclaim: %s\n", styleTitle.Render(HumanBytes(m.plan.TotalBytes()))))
+	fmt.Fprintf(&b, "\n  Would reclaim: %s\n", styleTitle.Render(HumanBytes(m.plan.TotalBytes())))
 	b.WriteString(styleFaint.Render("  Execute with `regrow clean [id ...]` — trash first, `regrow undo` restores.") + "\n\n")
 	b.WriteString(styleFaint.Render("  esc back · q quit") + "\n")
 	return b.String()
