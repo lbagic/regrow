@@ -12,12 +12,12 @@ Each phase = one or a few Claude sessions with a ready prompt. Milestones (M1–
 - [x] P1-D TUI (2026-07-13)
 - [x] P1-E port clean.sh + Tier-S rules → **M1 usable** (2026-07-13, 30 rules, real scan found 158.8 GiB)
 - [x] Architecture review + Prompt-F groundwork (2026-07-13): trash seam, per-rule golden fixtures, scan cancellation — [review doc](plans/2026-07-13-architecture-review.md)
-- [ ] P2-F safety hardening + brew tap → **M2 shareable**
+- [x] P2-F safety hardening (2026-07-13): clean/undo/history, trash+staging+receipts, oplog, placeholder validation, --beta-rules, GoReleaser+release CI — code done; **M2 needs manual publish** (tap repo, TAP_GITHUB_TOKEN secret, tag v0.1.0)
 - [ ] P3-G ML models module
 - [ ] P3-H doctor + phantom space → **M3 launchable**
 - [ ] P4-I launch kit → **M4 public**
 
-**Now:** Prompt F (safety hardening: execution, trash, oplog, undo), fresh session. Groundwork done 2026-07-13: trash seam placed + per-rule golden harness (see [docs/plans/2026-07-13-architecture-review.md](plans/2026-07-13-architecture-review.md)). **Manual TODO:** buy regrow.sh.
+**Now:** publish v0.1 (manual: create `lbagic/homebrew-tap` repo, add `TAP_GITHUB_TOKEN` secret, `git tag v0.1.0 && git push --tags`), then Prompt G (ML models module). **Manual TODO:** buy regrow.sh; revisit the `regrow` name before tagging (P0-A said revisit before M2).
 
 ```mermaid
 flowchart TD
@@ -74,6 +74,8 @@ Pre-done (2026-07-13, [architecture review](plans/2026-07-13-architecture-review
 > Implement AI-model support per research/02 §9: HF hub via `hf`/scan-cache (dedup-aware sizes, last-used, delete via CLI), ollama list/rm, LM Studio dir detection, ComfyUI/SD surface-only. Show per-model rows w/ last-used.
 
 Known wall: selection is per-rule (`map[ruleID]bool`) — per-model toggles need item identity in the selection interface first; parked as candidate 5 in [architecture review](plans/2026-07-13-architecture-review.md).
+
+Same phase: docker per-volume provider + usage ledger (safe-vs-precious classification) rides the same item-identity work — researched in [docker usage timestamps](plans/2026-07-13-docker-usage-timestamps.md).
 
 **Prompt H — doctor + phantom:**
 > `regrow doctor`: hero-bug scanners (~/.claude/debug, mediaanalysisd, .Spotlight-V100, Playwright transform cache) + phantom-space category (TM snapshots, Docker VM real-vs-logical, purgeable) with explainer copy.

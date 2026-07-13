@@ -9,7 +9,7 @@ Deepening opportunities surfaced by an architecture review (vocabulary: module /
 - [x] Candidate 1 — trash seam (implemented 2026-07-13)
 - [x] Candidate 2 — golden harness owns rule coverage (implemented 2026-07-13)
 - [ ] Candidate 3 — inventory view (parked, unrouted)
-- [ ] Candidate 4 — placeholder validation (routed into Prompt F scope)
+- [x] Candidate 4 — placeholder validation (implemented 2026-07-13 in Prompt F: schema owns `Placeholders/PerItem/ExpandItem`, Validate rejects unknown tokens and unsuppliable `{arg}`, empty values skip the item)
 - [ ] Candidate 5 — per-item selection (deferred by design; noted at Prompt G)
 - [x] Friction: scan ctx cancellation in `DirSize`/`discover` (fixed 2026-07-13)
 - [x] Friction: `Risk.Actionable()` replaces three inline checks (fixed 2026-07-13)
