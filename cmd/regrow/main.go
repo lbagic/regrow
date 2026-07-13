@@ -5,6 +5,9 @@
 //	regrow [scan] [--rules-dir DIR] [--json]   interactive checklist on a TTY;
 //	                                           plain listing when piped or --json
 //	regrow plan [id ...] [--json]              dry-run: exact command list
+//	regrow clean [id ...] [--yes]              execute: no ids = safe rules only
+//	regrow undo [run-id]                       restore the last (or given) run
+//	regrow history [--json]                    past runs from the oplog
 //	regrow rules                               list the catalog
 //	regrow version
 package main
@@ -43,6 +46,7 @@ func run(args []string) error {
 	rulesDir := fs.String("rules-dir", "", "load rules from a directory instead of the embedded catalog")
 	asJSON := fs.Bool("json", false, "machine-readable output")
 	betaRules := fs.Bool("beta-rules", false, "include rules still in staged rollout")
+	yes := fs.Bool("yes", false, "clean: skip the confirmation prompt")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -76,8 +80,14 @@ func run(args []string) error {
 		findings := scanner.New(host).Scan(context.Background(), catalog)
 		plan := engine.BuildPlan(host, findings, selection(fs.Args()))
 		return printPlan(plan, *asJSON)
+	case "clean":
+		return runClean(host, catalog, fs.Args(), *yes)
+	case "undo":
+		return runUndo(fs.Args())
+	case "history":
+		return runHistory(*asJSON)
 	default:
-		return fmt.Errorf("unknown command %q (scan, plan, rules, version)", cmd)
+		return fmt.Errorf("unknown command %q (scan, plan, clean, undo, history, rules, version)", cmd)
 	}
 }
 

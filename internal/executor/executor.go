@@ -40,6 +40,9 @@ type Executor struct {
 	RunNative func(ctx context.Context, argv []string) error
 	// Now is injectable for deterministic journal timestamps in tests.
 	Now func() time.Time
+	// RunID names the run in the journal; empty means mint one. The
+	// caller may pre-mint it to point staging at a per-run directory.
+	RunID string
 }
 
 // Result summarises one executed run.
@@ -71,7 +74,10 @@ func (e *Executor) Execute(ctx context.Context, plan engine.Plan) (Result, error
 		runNative = execNative
 	}
 
-	res := Result{RunID: NewRunID(now())}
+	res := Result{RunID: e.RunID}
+	if res.RunID == "" {
+		res.RunID = NewRunID(now())
+	}
 	for seq, a := range plan.Actions {
 		if ctx.Err() != nil {
 			return res, ctx.Err()
