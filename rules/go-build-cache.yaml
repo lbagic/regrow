@@ -1,0 +1,16 @@
+# Go compiler build cache (GOCACHE). 1–15GB typical
+# (docs/research/02 §3). Steward command over raw rm.
+id: go-build-cache
+title: Go build cache
+category: dev-caches
+risk: safe
+paths:
+  darwin:
+    - ~/Library/Caches/go-build
+  linux:
+    - ~/.cache/go-build
+native_command: go clean -cache
+regen:
+  story: Repopulated automatically by the next go build.
+  cost: next builds slower once; no network
+sudo: false

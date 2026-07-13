@@ -8,7 +8,7 @@ Each phase = one or a few Claude sessions with a ready prompt. Milestones (M1–
 
 - [x] P0-A name → **regrow** (2026-07-13)
 - [x] P0-B scaffold — repo pushed, CI green (2026-07-13, github.com/lbagic/regrow)
-- [ ] P1-C engine + schema
+- [x] P1-C engine + schema (2026-07-13)
 - [ ] P1-D TUI
 - [ ] P1-E port clean.sh + Tier-S rules → **M1 usable**
 - [ ] P2-F safety hardening + brew tap → **M2 shareable**
@@ -16,7 +16,7 @@ Each phase = one or a few Claude sessions with a ready prompt. Milestones (M1–
 - [ ] P3-H doctor + phantom space → **M3 launchable**
 - [ ] P4-I launch kit → **M4 public**
 
-**Now:** Prompt C, fresh session. **Manual TODO:** buy regrow.sh.
+**Now:** Prompt D, fresh session. **Manual TODO:** buy regrow.sh.
 
 ```mermaid
 flowchart TD

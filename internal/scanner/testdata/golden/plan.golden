@@ -1,0 +1,3 @@
+[native] go-build-cache: go clean -cache
+[trash] rust-target-dirs: osascript -e tell application "Finder" to delete POSIX file "~/workspace/proj/target"
+[trash] xcode-derived-data: osascript -e tell application "Finder" to delete POSIX file "~/Library/Developer/Xcode/DerivedData"

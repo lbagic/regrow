@@ -1,0 +1,163 @@
+package engine
+
+import (
+	"fmt"
+	"regexp"
+	"strings"
+
+	"gopkg.in/yaml.v3"
+)
+
+// Risk classes are architectural, not cosmetic (ARCHITECTURE.md
+// invariant 5): safe rules may be auto-selected, caution rules are
+// review-and-select, surface-only rules are never deletable through us.
+type Risk string
+
+const (
+	RiskSafe        Risk = "safe"
+	RiskCaution     Risk = "caution"
+	RiskSurfaceOnly Risk = "surface-only"
+)
+
+func (r Risk) valid() bool {
+	switch r {
+	case RiskSafe, RiskCaution, RiskSurfaceOnly:
+		return true
+	}
+	return false
+}
+
+// PathEntry is one known target path, optionally constrained to an
+// inclusive host OS version range (paths move between OS releases —
+// see docs/research/02 §14). In YAML an entry is either a bare string
+// or a map: {path, os_min, os_max}.
+type PathEntry struct {
+	Path  string `json:"path"`
+	OSMin string `json:"os_min,omitempty"`
+	OSMax string `json:"os_max,omitempty"`
+}
+
+func (p *PathEntry) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind == yaml.ScalarNode {
+		p.Path = node.Value
+		return nil
+	}
+	var raw struct {
+		Path  string `yaml:"path"`
+		OSMin string `yaml:"os_min"`
+		OSMax string `yaml:"os_max"`
+	}
+	if err := node.Decode(&raw); err != nil {
+		return err
+	}
+	p.Path, p.OSMin, p.OSMax = raw.Path, raw.OSMin, raw.OSMax
+	return nil
+}
+
+// matches reports whether the entry applies to the given host version.
+func (p PathEntry) matches(version string) bool {
+	if p.OSMin != "" && compareVersion(version, p.OSMin) < 0 {
+		return false
+	}
+	if p.OSMax != "" && compareVersion(version, p.OSMax) > 0 {
+		return false
+	}
+	return true
+}
+
+// Discover describes marker-file discovery for targets that live in
+// arbitrary project directories (rust target/ via CACHEDIR.TAG, .venv
+// via pyvenv.cfg, node_modules by name).
+type Discover struct {
+	// Roots to walk; ~ expands to the host home. Missing roots are
+	// skipped silently so rules can list conventional locations.
+	Roots []string `yaml:"roots" json:"roots"`
+	// Name, if set, requires the directory base name to match.
+	Name string `yaml:"name" json:"name,omitempty"`
+	// Markers are file names that must all exist directly inside a
+	// candidate directory for it to count as a hit.
+	Markers []string `yaml:"markers" json:"markers,omitempty"`
+	// MaxDepth bounds the walk below each root (0 = scanner default).
+	MaxDepth int `yaml:"max_depth" json:"max_depth,omitempty"`
+	// Exclude lists directory base names never descended into, in
+	// addition to the scanner's built-in excludes.
+	Exclude []string `yaml:"exclude" json:"exclude,omitempty"`
+}
+
+// Regen is the regeneration story shown next to every finding: what
+// brings the data back and what that costs (PRODUCT.md pillar 1).
+type Regen struct {
+	Story string `yaml:"story" json:"story"`
+	Cost  string `yaml:"cost" json:"cost"`
+}
+
+// Rule is one declarative cleaning target (PRODUCT.md §6). Exactly
+// the data a community PR edits; code handles only the weird cases
+// via named tool queries.
+type Rule struct {
+	ID       string `yaml:"id" json:"id"`
+	Title    string `yaml:"title" json:"title"`
+	Category string `yaml:"category" json:"category"`
+	Risk     Risk   `yaml:"risk" json:"risk"`
+	// Paths maps GOOS (darwin, linux) to version-aware known paths.
+	Paths map[string][]PathEntry `yaml:"paths" json:"paths,omitempty"`
+	// Discover enables marker-file discovery.
+	Discover *Discover `yaml:"discover" json:"discover,omitempty"`
+	// ToolQuery names a built-in scanner query (docker-df, simctl,
+	// hf-scan-cache, ...) for targets only a tool can enumerate.
+	ToolQuery string `yaml:"tool_query" json:"tool_query,omitempty"`
+	// NativeCommand is the steward command preferred over raw
+	// deletion. Placeholders {path} and {arg} are substituted per
+	// item; without a placeholder the command runs once per rule.
+	NativeCommand string `yaml:"native_command" json:"native_command,omitempty"`
+	Regen         Regen  `yaml:"regen" json:"regen"`
+	Sudo          bool   `yaml:"sudo" json:"sudo,omitempty"`
+}
+
+var idRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
+
+// Validate checks structural invariants a rule must satisfy before it
+// enters the catalog.
+func (r Rule) Validate() error {
+	var errs []string
+	if !idRe.MatchString(r.ID) {
+		errs = append(errs, fmt.Sprintf("id %q must be kebab-case", r.ID))
+	}
+	if r.Title == "" {
+		errs = append(errs, "title is required")
+	}
+	if r.Category == "" {
+		errs = append(errs, "category is required")
+	}
+	if !r.Risk.valid() {
+		errs = append(errs, fmt.Sprintf("risk %q must be one of safe, caution, surface-only", r.Risk))
+	}
+	if len(r.Paths) == 0 && r.Discover == nil && r.ToolQuery == "" {
+		errs = append(errs, "rule needs at least one of paths, discover, tool_query")
+	}
+	for osName, entries := range r.Paths {
+		if osName != "darwin" && osName != "linux" {
+			errs = append(errs, fmt.Sprintf("unknown paths os %q", osName))
+		}
+		for _, e := range entries {
+			if e.Path == "" {
+				errs = append(errs, fmt.Sprintf("empty path under os %q", osName))
+			}
+		}
+	}
+	if r.Discover != nil {
+		if len(r.Discover.Roots) == 0 {
+			errs = append(errs, "discover.roots is required")
+		}
+		if r.Discover.Name == "" && len(r.Discover.Markers) == 0 {
+			errs = append(errs, "discover needs a name or markers")
+		}
+	}
+	if r.Risk == RiskSurfaceOnly && r.NativeCommand != "" {
+		errs = append(errs, "surface-only rules must not carry a native_command")
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("rule %s: %s", r.ID, strings.Join(errs, "; "))
+	}
+	return nil
+}
