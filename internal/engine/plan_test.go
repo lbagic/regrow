@@ -43,6 +43,21 @@ func TestBuildPlanNativePerItemPlaceholders(t *testing.T) {
 	}
 }
 
+func TestBuildPlanCarriesPreAction(t *testing.T) {
+	f := Finding{
+		Rule: Rule{
+			ID: "docker-volumes-named", Risk: RiskCaution,
+			NativeCommand: Argv{"docker", "volume", "rm", "{arg}"},
+			PreAction:     PreActionVolumeExport,
+		},
+		Items: []Item{{Label: "dakr_db", Arg: "dakr_db", Bytes: 10}},
+	}
+	plan := BuildPlan(testHost, []Finding{f}, nil)
+	if len(plan.Actions) != 1 || plan.Actions[0].PreAction != PreActionVolumeExport {
+		t.Fatalf("action must carry the rule's pre-action, got %+v", plan.Actions)
+	}
+}
+
 func TestBuildPlanTrashFallback(t *testing.T) {
 	f := Finding{
 		Rule: Rule{ID: "xcode-derived-data", Risk: RiskSafe},

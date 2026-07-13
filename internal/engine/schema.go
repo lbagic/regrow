@@ -3,6 +3,7 @@ package engine
 import (
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -159,10 +160,13 @@ func (a *Argv) UnmarshalYAML(node *yaml.Node) error {
 }
 
 // FixtureItem is one fake tool-query result the golden harness feeds
-// the rule (a docker df row, a simctl device).
+// the rule (a docker df row, a simctl device). Path uses rule path
+// syntax (~ = fixture home) for queries whose items are trashed by
+// path rather than addressed by a native command (hf-hub).
 type FixtureItem struct {
 	Label string `yaml:"label"`
 	Arg   string `yaml:"arg"`
+	Path  string `yaml:"path"`
 	Bytes int64  `yaml:"bytes"`
 }
 
@@ -195,6 +199,49 @@ type Regen struct {
 	Cost  string `yaml:"cost" json:"cost"`
 }
 
+// ByteSize is a byte count written human-first in YAML ("20GB",
+// "500MB"). Units are binary (1024-based) to match every size the
+// product displays; "GB" and "GiB" mean the same thing here — doctor
+// thresholds are order-of-magnitude lines, not accounting.
+type ByteSize int64
+
+var byteSizeRe = regexp.MustCompile(`^([0-9]+(?:\.[0-9]+)?)\s*([KMGT]?)I?B?$`)
+
+func ParseByteSize(s string) (ByteSize, error) {
+	m := byteSizeRe.FindStringSubmatch(strings.ToUpper(strings.TrimSpace(s)))
+	if m == nil {
+		return 0, fmt.Errorf("byte size %q: want a number with B/KB/MB/GB/TB", s)
+	}
+	n, err := strconv.ParseFloat(m[1], 64)
+	if err != nil {
+		return 0, fmt.Errorf("byte size %q: %w", s, err)
+	}
+	shift := map[string]uint{"": 0, "K": 10, "M": 20, "G": 30, "T": 40}[m[2]]
+	return ByteSize(n * float64(int64(1)<<shift)), nil
+}
+
+func (b *ByteSize) UnmarshalYAML(node *yaml.Node) error {
+	v, err := ParseByteSize(node.Value)
+	if err != nil {
+		return err
+	}
+	*b = v
+	return nil
+}
+
+// Doctor marks a rule as a hero-bug scanner: a known runaway bug whose
+// signature is this rule's target growing past a size no healthy
+// machine reaches. `regrow doctor` scans exactly the rules that carry
+// this block and flags any whose total exceeds FlagAbove (PRODUCT.md
+// §3 "hero-bug scanners"; catalog research/02 Tier B).
+type Doctor struct {
+	// FlagAbove is the healthy/runaway line: below it doctor reports
+	// "normal", above it the rule is flagged with its Story.
+	FlagAbove ByteSize `yaml:"flag_above" json:"flag_above"`
+	// Story is the one-line bug explainer shown when flagged.
+	Story string `yaml:"story" json:"story"`
+}
+
 // Rule is one declarative cleaning target (PRODUCT.md §6). Exactly
 // the data a community PR edits; code handles only the weird cases
 // via named tool queries.
@@ -213,8 +260,13 @@ type Rule struct {
 	// NativeCommand is the steward command preferred over raw
 	// deletion. Placeholders {path} and {arg} are substituted per
 	// item; without a placeholder the command runs once per rule.
-	NativeCommand Argv  `yaml:"native_command" json:"native_command,omitempty"`
-	Regen         Regen `yaml:"regen" json:"regen"`
+	NativeCommand Argv `yaml:"native_command" json:"native_command,omitempty"`
+	// PreAction names a registered executor hook that must succeed
+	// before each item's native command runs (docker volume export to
+	// staging). It is how a native command whose target cannot reach
+	// the Trash still honors trash-not-rm (invariant 2).
+	PreAction string `yaml:"pre_action" json:"pre_action,omitempty"`
+	Regen     Regen  `yaml:"regen" json:"regen"`
 	// Note is a caveat shown alongside the regen story: footguns,
 	// prerequisites ("switch to a static wallpaper first"), warnings.
 	Note string `yaml:"note" json:"note,omitempty"`
@@ -223,6 +275,8 @@ type Rule struct {
 	// and graduate after a release of real-machine burn-in
 	// (PRODUCT.md: staged rollout of new rules).
 	Beta bool `yaml:"beta" json:"beta,omitempty"`
+	// Doctor marks the rule as a hero-bug scanner for `regrow doctor`.
+	Doctor *Doctor `yaml:"doctor" json:"doctor,omitempty"`
 	// Fixture is the rule's golden-test data; never serialized to JSON.
 	Fixture *Fixture `yaml:"fixture" json:"-"`
 }
@@ -235,6 +289,14 @@ type Rule struct {
 func (r Rule) PerItemActionable() bool {
 	return r.Risk.Actionable() && (len(r.NativeCommand) == 0 || r.NativeCommand.PerItem())
 }
+
+// PreActionVolumeExport tarballs a docker volume into staging before
+// `docker volume rm` runs. The registry of hook names lives here so a
+// typo'd pre_action fails at load, like a typo'd placeholder; the
+// implementations are registered on the executor.
+const PreActionVolumeExport = "docker-volume-export"
+
+var knownPreActions = map[string]bool{PreActionVolumeExport: true}
 
 var idRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
@@ -292,6 +354,22 @@ func (r Rule) Validate() error {
 	}
 	if !r.Risk.Actionable() && len(r.NativeCommand) > 0 {
 		errs = append(errs, "surface-only rules must not carry a native_command")
+	}
+	if r.Doctor != nil {
+		if r.Doctor.FlagAbove <= 0 {
+			errs = append(errs, "doctor.flag_above must be a positive size")
+		}
+		if r.Doctor.Story == "" {
+			errs = append(errs, "doctor.story is required — the flagged report explains the bug with it")
+		}
+	}
+	if r.PreAction != "" {
+		if !knownPreActions[r.PreAction] {
+			errs = append(errs, fmt.Sprintf("unknown pre_action %q", r.PreAction))
+		}
+		if !r.NativeCommand.PerItem() {
+			errs = append(errs, "pre_action requires a per-item native_command — the hook runs once per item")
+		}
 	}
 	if len(errs) > 0 {
 		return fmt.Errorf("rule %s: %s", r.ID, strings.Join(errs, "; "))

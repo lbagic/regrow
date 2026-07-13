@@ -27,6 +27,9 @@ type Action struct {
 	Kind    ActionKind `json:"kind"`
 	// Command is the exact argv, sudo included when the rule needs it.
 	Command []string `json:"command"`
+	// PreAction names the executor hook that must succeed before
+	// Command runs (docker volume export to staging).
+	PreAction string `json:"pre_action,omitempty"`
 	// Path is the filesystem target for trash actions.
 	Path  string `json:"path,omitempty"`
 	Bytes int64  `json:"bytes"`
@@ -238,12 +241,13 @@ func nativeActions(r Rule, items []Item, partial bool) ([]Action, []Skip) {
 			continue
 		}
 		actions = append(actions, Action{
-			RuleID:  r.ID,
-			ItemKey: it.Key,
-			Kind:    ActionNative,
-			Command: withSudo(r.Sudo, cmd),
-			Path:    it.Path,
-			Bytes:   it.Bytes,
+			RuleID:    r.ID,
+			ItemKey:   it.Key,
+			Kind:      ActionNative,
+			Command:   withSudo(r.Sudo, cmd),
+			PreAction: r.PreAction,
+			Path:      it.Path,
+			Bytes:     it.Bytes,
 		})
 	}
 	return actions, skips

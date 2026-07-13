@@ -53,10 +53,14 @@ func fixedItems(items ...engine.Item) ToolQuery {
 	return func(context.Context) ([]engine.Item, error) { return items, nil }
 }
 
-func fakeQuery(r engine.Rule) map[string]ToolQuery {
+func fakeQuery(host engine.Host, r engine.Rule) map[string]ToolQuery {
 	items := make([]engine.Item, 0, len(r.Fixture.Items))
 	for _, it := range r.Fixture.Items {
-		items = append(items, engine.Item{Label: it.Label, Arg: it.Arg, Bytes: it.Bytes})
+		item := engine.Item{Label: it.Label, Arg: it.Arg, Bytes: it.Bytes}
+		if it.Path != "" {
+			item.Path = host.ExpandPath(it.Path)
+		}
+		items = append(items, item)
 	}
 	return map[string]ToolQuery{r.ToolQuery: fixedItems(items...)}
 }
@@ -72,7 +76,11 @@ func renderPlanForGolden(plan engine.Plan, host engine.Host) string {
 		for i, tok := range a.Command {
 			cmd[i] = normalize(tok)
 		}
-		fmt.Fprintf(&b, "[%s] %s: %s\n", a.Kind, a.RuleID, strings.Join(cmd, " "))
+		pre := ""
+		if a.PreAction != "" {
+			pre = fmt.Sprintf("  (pre: %s)", a.PreAction)
+		}
+		fmt.Fprintf(&b, "[%s] %s: %s%s\n", a.Kind, a.RuleID, strings.Join(cmd, " "), pre)
 	}
 	for _, s := range plan.Skipped {
 		fmt.Fprintf(&b, "[skip] %s: %s\n", s.RuleID, normalize(s.Reason))
@@ -94,7 +102,7 @@ func TestGoldenPerRule(t *testing.T) {
 			s := New(host)
 			s.Queries = nil // never exec real tools in tests
 			if r.ToolQuery != "" {
-				s.Queries = fakeQuery(r)
+				s.Queries = fakeQuery(host, r)
 			}
 
 			findings := s.Scan(context.Background(), []engine.Rule{r})
