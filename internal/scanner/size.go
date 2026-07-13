@@ -21,12 +21,13 @@ func DirSize(path string) (int64, error) {
 		return physicalSize(info), nil
 	}
 	var total int64
-	walkErr := filepath.WalkDir(path, func(p string, d fs.DirEntry, err error) error {
+	// Walk errors are never fatal, root included: TCC-protected dirs
+	// (~/.Trash, CoreSpotlight) Lstat fine but refuse ReadDir without
+	// Full Disk Access. The target exists — report it with whatever
+	// size was measurable, exactly like `du 2>/dev/null`.
+	_ = filepath.WalkDir(path, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
-			if p == path {
-				return err
-			}
-			return nil // skip unreadable entries
+			return nil
 		}
 		fi, err := d.Info()
 		if err != nil {
@@ -35,9 +36,6 @@ func DirSize(path string) (int64, error) {
 		total += physicalSize(fi)
 		return nil
 	})
-	if walkErr != nil {
-		return total, walkErr
-	}
 	return total, nil
 }
 

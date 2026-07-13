@@ -358,7 +358,7 @@ func (m Model) findingLine(f engine.Finding, atCursor bool) string {
 		return styleErr.Render(fmt.Sprintf("%s !   %-30s scan failed: %s", marker, f.Rule.Title, f.Err))
 	}
 
-	note := f.Rule.NativeCommand
+	note := ShellJoin(f.Rule.NativeCommand)
 	if note == "" {
 		note = f.Rule.Regen.Story
 	}
@@ -391,6 +391,9 @@ func (m Model) listFooter() string {
 			note = fmt.Sprintf("regen: %s · cost: %s", f.Rule.Regen.Story, f.Rule.Regen.Cost)
 			if d := daysUnused(*f); d > 0 {
 				note += fmt.Sprintf(" · unused %dd", d)
+			}
+			if f.Rule.Note != "" {
+				note = f.Rule.Note + " · " + note
 			}
 		}
 	}

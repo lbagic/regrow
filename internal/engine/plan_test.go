@@ -10,7 +10,7 @@ var testHost = Host{OS: "darwin", Version: "15.5", Home: "/Users/t"}
 
 func TestBuildPlanNativeWholeRule(t *testing.T) {
 	f := Finding{
-		Rule: Rule{ID: "go-build-cache", Risk: RiskSafe, NativeCommand: "go clean -cache"},
+		Rule: Rule{ID: "go-build-cache", Risk: RiskSafe, NativeCommand: Argv{"go", "clean", "-cache"}},
 		Items: []Item{
 			{Path: "/Users/t/Library/Caches/go-build", Bytes: 100},
 		},
@@ -27,7 +27,7 @@ func TestBuildPlanNativeWholeRule(t *testing.T) {
 
 func TestBuildPlanNativePerItemPlaceholders(t *testing.T) {
 	f := Finding{
-		Rule: Rule{ID: "sim-runtimes", Risk: RiskCaution, NativeCommand: "xcrun simctl runtime delete {arg}", Sudo: true},
+		Rule: Rule{ID: "sim-runtimes", Risk: RiskCaution, NativeCommand: Argv{"xcrun", "simctl", "runtime", "delete", "{arg}"}, Sudo: true},
 		Items: []Item{
 			{Label: "iOS 17.5", Arg: "8A2C", Bytes: 10},
 			{Label: "iOS 18.0", Arg: "9B3D", Bytes: 20},

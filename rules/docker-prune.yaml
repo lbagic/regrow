@@ -1,0 +1,15 @@
+# Reclaimable per `docker system df`: dangling images, stopped
+# containers, build cache. Volumes are deliberately a separate rule —
+# they hold data. Docker tracks last-used only for build cache, so
+# items are per-type aggregates for now (docs/research/02 §7).
+id: docker-prune
+title: Docker dangling images, stopped containers, build cache
+category: docker
+risk: caution
+tool_query: docker-reclaimable
+native_command: docker system prune -f
+note: Also removes stopped containers — if you keep stopped containers around to restart later, skip this.
+regen:
+  story: Images re-pull and build cache rebuilds on the next docker build/run.
+  cost: next builds slower; network for re-pulled layers
+sudo: false

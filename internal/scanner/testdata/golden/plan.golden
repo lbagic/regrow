@@ -1,3 +1,33 @@
+[native] aerial-wallpapers: sudo find /Library/Application Support/com.apple.idleassetsd/Customer -type f -name *.mov -delete
+[native] brew-cache: brew cleanup -s --prune=all
+[native] docker-prune: docker system prune -f
+[native] docker-volumes: docker volume prune -f
 [native] go-build-cache: go clean -cache
+[native] go-mod-cache: go clean -modcache
+[trash] macos-installers: osascript -e tell application "Finder" to delete POSIX file "/Applications/Install macOS Sequoia.app"
+[trash] media-analysis-cache: osascript -e tell application "Finder" to delete POSIX file "~/Library/Containers/com.apple.mediaanalysisd/Data/Library/Caches"
+[trash] node-modules-dirs: osascript -e tell application "Finder" to delete POSIX file "~/workspace/webapp/node_modules"
+[native] npm-cache: npm cache clean --force
+[native] pip-cache: pip3 cache purge
+[native] pnpm-store: pnpm store prune
 [trash] rust-target-dirs: osascript -e tell application "Finder" to delete POSIX file "~/workspace/proj/target"
+[trash] sim-caches: osascript -e tell application "Finder" to delete POSIX file "~/Library/Developer/CoreSimulator/Caches"
+[native] sim-devices: xcrun simctl delete AAA-111
+[native] sim-devices: xcrun simctl delete CCC-333
+[native] sim-devices-unavailable: xcrun simctl delete unavailable
+[native] sim-runtimes: xcrun simctl runtime delete 11111111-2222
+[native] spotlight-index: sudo mdutil -E /
+[native] tm-snapshots: sudo tmutil thinlocalsnapshots / 9999999999999 4
+[native] trash-empty: osascript -e tell application "Finder" to empty trash
+[trash] user-logs: osascript -e tell application "Finder" to delete POSIX file "~/Library/Logs/DiagnosticReports"
+[trash] user-logs: osascript -e tell application "Finder" to delete POSIX file "~/Library/Logs/CrashReporter"
+[native] uv-cache: uv cache prune
+[trash] xcode-archives: osascript -e tell application "Finder" to delete POSIX file "~/Library/Developer/Xcode/Archives"
 [trash] xcode-derived-data: osascript -e tell application "Finder" to delete POSIX file "~/Library/Developer/Xcode/DerivedData"
+[trash] xcode-device-support: osascript -e tell application "Finder" to delete POSIX file "~/Library/Developer/Xcode/iOS DeviceSupport"
+[trash] xcode-device-support: osascript -e tell application "Finder" to delete POSIX file "~/Library/Developer/Xcode/watchOS DeviceSupport"
+[native] yarn-cache: yarn cache clean
+[skip] docker-vm-disk: surface-only: report, never delete
+[skip] ios-backups: surface-only: report, never delete
+[skip] library-caches: surface-only: report, never delete
+[skip] library-updates: surface-only: report, never delete

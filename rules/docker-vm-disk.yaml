@@ -1,0 +1,17 @@
+# The Docker Desktop VM disk file — the "pruned but disk still full"
+# phantom (docs/research/02 §7). Surface-only: deleting it destroys
+# every image/container/volume; shrinking is Docker's job (TRIM on
+# Docker.raw) or Troubleshoot ▸ Purge Data. We report physical blocks,
+# so the sparse-file real usage is what shows.
+id: docker-vm-disk
+title: Docker Desktop VM disk
+category: docker
+risk: surface-only
+paths:
+  darwin:
+    - ~/Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw
+    - ~/Library/Containers/com.docker.docker/Data/vms/0/data/Docker.qcow2
+regen:
+  story: Shrinks itself after pruning (Docker.raw, 4.28+); last resort is Docker Desktop ▸ Troubleshoot ▸ Purge Data.
+  cost: n/a — regrow never touches this file
+sudo: false

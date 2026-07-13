@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 
 	"github.com/lbagic/regrow/internal/engine"
@@ -47,13 +49,15 @@ func (s *Scanner) scanRule(ctx context.Context, r engine.Rule) engine.Finding {
 	f := engine.Finding{Rule: r}
 
 	for _, path := range s.Host.ResolvePaths(r) {
-		item, ok, err := s.measure(path)
-		if err != nil {
-			f.Err = joinErr(f.Err, err)
-			continue
-		}
-		if ok {
-			f.Items = append(f.Items, item)
+		for _, p := range expandGlob(path) {
+			item, ok, err := s.measure(p)
+			if err != nil {
+				f.Err = joinErr(f.Err, err)
+				continue
+			}
+			if ok {
+				f.Items = append(f.Items, item)
+			}
 		}
 	}
 
@@ -99,6 +103,21 @@ func (s *Scanner) measure(path string) (engine.Item, bool, error) {
 		return engine.Item{}, false, err
 	}
 	return engine.Item{Path: path, Bytes: bytes, LastUsed: info.ModTime()}, true, nil
+}
+
+// expandGlob resolves glob metacharacters against the filesystem so
+// rules can target patterns like /Applications/Install macOS*.app.
+// Literal paths pass through untouched; a pattern with no matches
+// yields nothing — the target is simply absent on this machine.
+func expandGlob(path string) []string {
+	if !strings.ContainsAny(path, "*?[") {
+		return []string{path}
+	}
+	matches, err := filepath.Glob(path) // returns sorted matches
+	if err != nil {
+		return nil
+	}
+	return matches
 }
 
 func joinErr(existing string, err error) string {

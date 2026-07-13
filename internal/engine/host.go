@@ -14,6 +14,11 @@ type Host struct {
 	OS      string // GOOS: darwin, linux
 	Version string // OS release, e.g. "15.5" (sw_vers) or "" if unknown
 	Home    string // home directory; ~ in rules expands to this
+	// Root re-anchors absolute rule paths (/Library, /Applications)
+	// so fixture tests can fake the system tree. Empty or "/" means
+	// the real filesystem. Home is never re-anchored: it is already
+	// a concrete path.
+	Root string
 }
 
 // DetectHost inspects the running machine.
@@ -28,13 +33,17 @@ func DetectHost() Host {
 	return h
 }
 
-// ExpandPath resolves a leading ~ against the host home.
+// ExpandPath resolves a leading ~ against the host home and anchors
+// absolute paths under Root when one is set.
 func (h Host) ExpandPath(p string) string {
 	if p == "~" {
 		return h.Home
 	}
 	if strings.HasPrefix(p, "~/") {
 		return filepath.Join(h.Home, p[2:])
+	}
+	if h.Root != "" && h.Root != "/" && filepath.IsAbs(p) {
+		return filepath.Join(h.Root, p)
 	}
 	return p
 }

@@ -84,6 +84,24 @@ type Discover struct {
 	Exclude []string `yaml:"exclude" json:"exclude,omitempty"`
 }
 
+// Argv is a command line. In YAML it is either a plain string (split
+// on whitespace) or an explicit argv list for arguments that contain
+// spaces — osascript scripts, find patterns.
+type Argv []string
+
+func (a *Argv) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind == yaml.ScalarNode {
+		*a = Argv(strings.Fields(node.Value))
+		return nil
+	}
+	var raw []string
+	if err := node.Decode(&raw); err != nil {
+		return err
+	}
+	*a = Argv(raw)
+	return nil
+}
+
 // Regen is the regeneration story shown next to every finding: what
 // brings the data back and what that costs (PRODUCT.md pillar 1).
 type Regen struct {
@@ -109,9 +127,12 @@ type Rule struct {
 	// NativeCommand is the steward command preferred over raw
 	// deletion. Placeholders {path} and {arg} are substituted per
 	// item; without a placeholder the command runs once per rule.
-	NativeCommand string `yaml:"native_command" json:"native_command,omitempty"`
-	Regen         Regen  `yaml:"regen" json:"regen"`
-	Sudo          bool   `yaml:"sudo" json:"sudo,omitempty"`
+	NativeCommand Argv  `yaml:"native_command" json:"native_command,omitempty"`
+	Regen         Regen `yaml:"regen" json:"regen"`
+	// Note is a caveat shown alongside the regen story: footguns,
+	// prerequisites ("switch to a static wallpaper first"), warnings.
+	Note string `yaml:"note" json:"note,omitempty"`
+	Sudo bool   `yaml:"sudo" json:"sudo,omitempty"`
 }
 
 var idRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
@@ -153,7 +174,12 @@ func (r Rule) Validate() error {
 			errs = append(errs, "discover needs a name or markers")
 		}
 	}
-	if r.Risk == RiskSurfaceOnly && r.NativeCommand != "" {
+	for _, tok := range r.NativeCommand {
+		if tok == "" {
+			errs = append(errs, "native_command must not contain empty arguments")
+		}
+	}
+	if r.Risk == RiskSurfaceOnly && len(r.NativeCommand) > 0 {
 		errs = append(errs, "surface-only rules must not carry a native_command")
 	}
 	if len(errs) > 0 {

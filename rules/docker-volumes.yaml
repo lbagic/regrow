@@ -1,0 +1,14 @@
+# Volumes not attached to any container. This deletes data (old
+# database contents etc.) — caution with a loud note, never
+# auto-selected (docs/research/02 §7).
+id: docker-volumes
+title: Docker unused volumes
+category: docker
+risk: caution
+tool_query: docker-volumes
+native_command: docker volume prune -f
+note: DELETES DATA in volumes no container references — old database data is a classic casualty. Review `docker volume ls` first.
+regen:
+  story: Not regenerable — volume contents are user data, not cache.
+  cost: data in unused volumes is gone for good
+sudo: false

@@ -1,0 +1,14 @@
+# Released builds + dSYMs. 5–30GB (docs/research/02 §6). Caution:
+# local dSYMs symbolicate crash reports of shipped builds.
+id: xcode-archives
+title: Xcode Archives (released builds + dSYMs)
+category: xcode
+risk: caution
+paths:
+  darwin:
+    - ~/Library/Developer/Xcode/Archives
+note: dSYMs here symbolicate crashes of shipped builds — fine to delete only if uploaded to App Store Connect or archived elsewhere.
+regen:
+  story: Not regenerable — each archive is a build artifact of a past release.
+  cost: symbolication of old crash reports lost unless dSYMs live elsewhere
+sudo: false

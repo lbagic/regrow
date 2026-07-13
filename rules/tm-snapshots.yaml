@@ -1,0 +1,15 @@
+# Local Time Machine snapshots — the big chunk of "System Data"
+# phantom space (docs/research/02 §10). Thinning is tmutil's job;
+# external TM backups are untouched. OS-update snapshots
+# (com.apple.os.update-*) are system-managed and survive.
+id: tm-snapshots
+title: Time Machine local snapshots
+category: macos
+risk: caution
+tool_query: tm-snapshots
+native_command: tmutil thinlocalsnapshots / 9999999999999 4
+note: Snapshot sizes are invisible until thinned — freed space shows up as purgeable, sometimes minutes later.
+regen:
+  story: macOS creates fresh local snapshots on the next backup cycle.
+  cost: point-in-time restores between backups are gone
+sudo: true

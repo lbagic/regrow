@@ -86,7 +86,7 @@ func TestValidate(t *testing.T) {
 		{"discover without matcher", func(r *Rule) { r.Discover = &Discover{Roots: []string{"~"}} }, "name or markers"},
 		{
 			"surface-only with native command",
-			func(r *Rule) { r.Risk = RiskSurfaceOnly; r.NativeCommand = "rm -rf" },
+			func(r *Rule) { r.Risk = RiskSurfaceOnly; r.NativeCommand = Argv{"rm", "-rf"} },
 			"surface-only",
 		},
 	}

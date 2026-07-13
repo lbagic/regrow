@@ -1,0 +1,26 @@
+# 4K aerial screensaver/wallpaper videos — full set ~64GB. Path moved
+# between Sequoia and Tahoe (docs/research/02 §10, §14): idleassetsd
+# system dir through macOS 15, wallpaper.agent container from 26.
+id: aerial-wallpapers
+title: Aerial wallpaper videos
+category: macos
+risk: safe
+paths:
+  darwin:
+    - path: /Library/Application Support/com.apple.idleassetsd/Customer
+      os_max: "25"
+    - path: ~/Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches
+      os_min: "26"
+native_command:
+  - find
+  - "{path}"
+  - -type
+  - f
+  - -name
+  - "*.mov"
+  - -delete
+note: Switch to a static wallpaper and screensaver first, or the OS immediately re-downloads every video.
+regen:
+  story: macOS re-downloads any aerial still selected as wallpaper/screensaver.
+  cost: multi-GB download per video in use
+sudo: true

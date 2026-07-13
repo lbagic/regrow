@@ -47,7 +47,7 @@ func TestScanToolQuery(t *testing.T) {
 	host := engine.Host{OS: "darwin", Home: t.TempDir()}
 	rule := engine.Rule{
 		ID: "fake-tool", Title: "Fake", Category: "containers", Risk: engine.RiskSafe,
-		ToolQuery: "fake", NativeCommand: "fake rm {arg}",
+		ToolQuery: "fake", NativeCommand: engine.Argv{"fake", "rm", "{arg}"},
 	}
 
 	s := New(host)

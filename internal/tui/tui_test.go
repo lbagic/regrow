@@ -18,7 +18,7 @@ func fixtureFindings(home string) []engine.Finding {
 		{
 			Rule: engine.Rule{
 				ID: "go-build-cache", Title: "Go build cache", Category: "dev-caches",
-				Risk: engine.RiskSafe, NativeCommand: "go clean -cache",
+				Risk: engine.RiskSafe, NativeCommand: engine.Argv{"go", "clean", "-cache"},
 				Regen: engine.Regen{Story: "Repopulated by the next go build.", Cost: "next builds slower once"},
 			},
 			Items: []engine.Item{{Path: home + "/Library/Caches/go-build", Bytes: 20 << 30}},
@@ -26,7 +26,7 @@ func fixtureFindings(home string) []engine.Finding {
 		{
 			Rule: engine.Rule{
 				ID: "go-mod-cache", Title: "Go module cache", Category: "dev-caches",
-				Risk: engine.RiskCaution, NativeCommand: "go clean -modcache",
+				Risk: engine.RiskCaution, NativeCommand: engine.Argv{"go", "clean", "-modcache"},
 				Regen: engine.Regen{Story: "Modules re-download on demand.", Cost: "network"},
 			},
 			Items: []engine.Item{{Path: home + "/go/pkg/mod", Bytes: 17 << 30}},
@@ -42,7 +42,7 @@ func fixtureFindings(home string) []engine.Finding {
 		{
 			Rule: engine.Rule{
 				ID: "docker-cache", Title: "Docker build cache", Category: "dev-caches",
-				Risk: engine.RiskSafe, NativeCommand: "docker builder prune -f",
+				Risk: engine.RiskSafe, NativeCommand: engine.Argv{"docker", "builder", "prune", "-f"},
 			},
 			Err: "docker: command not found",
 		},

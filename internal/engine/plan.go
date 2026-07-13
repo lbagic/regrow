@@ -68,7 +68,7 @@ func BuildPlan(host Host, findings []Finding, selected map[string]bool) Plan {
 		if len(f.Items) == 0 {
 			continue
 		}
-		if f.Rule.NativeCommand != "" {
+		if len(f.Rule.NativeCommand) > 0 {
 			plan.Actions = append(plan.Actions, nativeActions(f)...)
 			continue
 		}
@@ -97,9 +97,14 @@ func BuildPlan(host Host, findings []Finding, selected map[string]bool) Plan {
 // {arg} placeholder the command runs once per item; otherwise once
 // for the whole rule.
 func nativeActions(f Finding) []Action {
-	argv := strings.Fields(f.Rule.NativeCommand)
-	perItem := strings.Contains(f.Rule.NativeCommand, "{path}") ||
-		strings.Contains(f.Rule.NativeCommand, "{arg}")
+	argv := []string(f.Rule.NativeCommand)
+	perItem := false
+	for _, tok := range argv {
+		if strings.Contains(tok, "{path}") || strings.Contains(tok, "{arg}") {
+			perItem = true
+			break
+		}
+	}
 	if !perItem {
 		return []Action{{
 			RuleID:  f.Rule.ID,
