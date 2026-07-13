@@ -11,12 +11,13 @@ Each phase = one or a few Claude sessions with a ready prompt. Milestones (M1–
 - [x] P1-C engine + schema (2026-07-13)
 - [x] P1-D TUI (2026-07-13)
 - [x] P1-E port clean.sh + Tier-S rules → **M1 usable** (2026-07-13, 30 rules, real scan found 158.8 GiB)
+- [x] Architecture review + Prompt-F groundwork (2026-07-13): trash seam, per-rule golden fixtures, scan cancellation — [review doc](plans/2026-07-13-architecture-review.md)
 - [ ] P2-F safety hardening + brew tap → **M2 shareable**
 - [ ] P3-G ML models module
 - [ ] P3-H doctor + phantom space → **M3 launchable**
 - [ ] P4-I launch kit → **M4 public**
 
-**Now:** Prompt F (safety hardening: execution, trash, oplog, undo), fresh session. **Manual TODO:** buy regrow.sh.
+**Now:** Prompt F (safety hardening: execution, trash, oplog, undo), fresh session. Groundwork done 2026-07-13: trash seam placed + per-rule golden harness (see [docs/plans/2026-07-13-architecture-review.md](plans/2026-07-13-architecture-review.md)). **Manual TODO:** buy regrow.sh.
 
 ```mermaid
 flowchart TD
@@ -63,12 +64,16 @@ Exit: name chosen, repo pushed, CI green on hello-world.
 **Prompt F:**
 > Harden: path guards (empty//`/`/$HOME/mounts), trash-not-rm with staging fallback, oplog jsonl + `undo` + `history`, fixture-home golden tests for every rule, race/permission edge cases (read-only go mod cache, root sim runtimes), `--beta-rules` gate. Then: GoReleaser config, brew tap repo, signed release v0.1.
 
+Pre-done (2026-07-13, [architecture review](plans/2026-07-13-architecture-review.md)): per-rule golden coverage shipped; trash seam placed — `internal/trash` owns the mechanism (`PreviewCommand`), planner emits intent. Build Move/receipts/staging behind that seam; design their signatures with the executor, they were deliberately not stubbed. Also in scope now that commands execute: placeholder validation (review candidate 4 — a `{arg}` typo silently downgrades a per-item command; must fail at load, not execution).
+
 **M2 check:** friend installs via `brew install you/tap/name`, runs it, nothing scary happens. Issues template up.
 
 ## Phase 3 — Wedge → **M3: launchable**
 
 **Prompt G — ML module:**
 > Implement AI-model support per research/02 §9: HF hub via `hf`/scan-cache (dedup-aware sizes, last-used, delete via CLI), ollama list/rm, LM Studio dir detection, ComfyUI/SD surface-only. Show per-model rows w/ last-used.
+
+Known wall: selection is per-rule (`map[ruleID]bool`) — per-model toggles need item identity in the selection interface first; parked as candidate 5 in [architecture review](plans/2026-07-13-architecture-review.md).
 
 **Prompt H — doctor + phantom:**
 > `regrow doctor`: hero-bug scanners (~/.claude/debug, mediaanalysisd, .Spotlight-V100, Playwright transform cache) + phantom-space category (TM snapshots, Docker VM real-vs-logical, purgeable) with explainer copy.
