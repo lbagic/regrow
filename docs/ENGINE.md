@@ -56,7 +56,7 @@ Starting a scan makes it the engine's current scan and drops the previous scan's
 
 `finding` events arrive in completion order, not catalog order. A canceled scan sends no further `finding` and no `summary`, and cannot be planned.
 
-A Finding is `{"rule": Rule, "items": [Item], "error": "…"}`; `error` is set only for a rule-level failure (a tool missing, an unknown query). Rule is the catalog rule as `regrow rules --json` prints it. An Item is:
+A Finding is `{"rule": Rule, "items": [Item], "error": "…"}`; `error` is set only for a rule-level failure (a tool missing, an unknown query). An item with `partial` and no `path` stands for targets the scan could not enumerate, a folder behind a glob or a discover root, and its label says which; no plan acts on it. Rule is the catalog rule as `regrow rules --json` prints it. An Item is:
 
 | Field | |
 |---|---|
@@ -66,7 +66,7 @@ A Finding is `{"rule": Rule, "items": [Item], "error": "…"}`; `error` is set o
 | `arg` | the tool's handle, substituted into a per-item steward command |
 | `bytes` | physical bytes, nested items included |
 | `last_used` | RFC 3339 time, absent when unknown |
-| `partial` | `true` when `bytes` and `last_used` are lower bounds: something was unreadable or blocked |
+| `partial` | `true` when `bytes` and `last_used` are lower bounds: something was unreadable or blocked. With `bytes` 0 nothing could be measured: the item is unreadable, its size unknown |
 
 Totals, in `summary` and `plan`, split bytes by when they become free space:
 
@@ -82,7 +82,7 @@ Totals, in `summary` and `plan`, split bytes by when they become free space:
 {"type":"plan","id":"p1","scan_id":"…","select":["go-build-cache","sim-devices/AAA-111"]}
 ```
 
-- `select` absent or `null`: the default selection, every safe rule that found something without an error.
+- `select` absent or `null`: the default selection, every safe rule that found something without an error, leaving out unreadable items. A rule with some unreadable items is selected item by item when it acts per item, and left out when its steward command acts on the whole rule.
 - `select: []`: an empty plan.
 - Otherwise rule ids and item ids, as `regrow clean` takes them.
 
@@ -167,6 +167,7 @@ The target's `done` says whether the cancel cut it short. Peers read `canceled`;
 ← {"event":"start","re":"s1","scan_id":"9f2c01aa-1","rules":2}
 ← {"event":"finding","re":"s1","scan_id":"9f2c01aa-1","index":1,"took_ms":4,"finding":{…}}
 ← {"event":"finding","re":"s1","scan_id":"9f2c01aa-1","index":0,"took_ms":9,"finding":{…}}
+← {"event":"summary","re":"s1","scan_id":"9f2c01aa-1","totals":{…},"exclusive":{…}}
 ← {"event":"done","re":"s1","elapsed_ms":9,"canceled":false}
 → {"type":"plan","id":"p1","scan_id":"9f2c01aa-1"}
 ← {"event":"plan","re":"p1","plan_id":"20261004-120000-5b0e…","plan":{"actions":[…]},"totals":{…}}
@@ -177,6 +178,10 @@ The target's `done` says whether the cancel cut it short. Peers read `canceled`;
 ← {"event":"done","re":"x1","result":{"run_id":"20261004-120000-5b0e…","done":1,…},"canceled":false}
 ```
 
+## regrow scan --json
+
+`regrow scan --json` prints the events of one scan, `headroom` through `done`, exactly as a `scan` request gets them, without `hello` and without `re`. It exits when the scan is done.
+
 ## Not yet sent
 
-This build answers `scan` with findings from the all-at-once scanner, every `took_ms` 0, and without `headroom`, `summary` or `partial`. Per-rule streaming, `summary` and `partial` arrive with scan correctness (attack plan PR 2), `headroom` and `tick` with the headroom work (PR 4). `regrow scan --json` will print the scan's events without `hello`.
+`headroom` and the `tick` request arrive with the headroom work (attack plan PR 4). Until then a scan starts with `start`.
