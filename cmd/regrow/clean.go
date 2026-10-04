@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -84,43 +85,11 @@ func printPlanActions(plan engine.Plan) {
 // executor. Both confirmation paths (clean prompt, TUI plan → x → y)
 // land here.
 func executePlan(host engine.Host, plan engine.Plan) error {
-	logPath, err := oplog.DefaultPath()
+	exec, release, err := newRunExecutor(host, executor.NewRunID(time.Now()), nil)
 	if err != nil {
 		return err
 	}
-	log, err := oplog.Open(logPath)
-	if err != nil {
-		return err
-	}
-	// Journal entries fsync per Append (invariant 6); nothing left to
-	// lose at close.
-	defer func() { _ = log.Close() }()
-
-	// The volume export cap comes from user config; a broken config
-	// must block execution, not silently fall back to defaults.
-	cfg, err := config.Load()
-	if err != nil {
-		return err
-	}
-	capBytes, err := cfg.Docker.ExportCapBytes()
-	if err != nil {
-		return err
-	}
-
-	runID := executor.NewRunID(time.Now())
-	stateDir := filepath.Dir(logPath)
-	stagingDir := filepath.Join(stateDir, "staging", runID)
-	exec := &executor.Executor{
-		Trash: &trash.Mover{Home: host.Home, StagingDir: stagingDir},
-		Log:   log,
-		PreActions: map[string]executor.PreAction{
-			engine.PreActionVolumeExport: (&docker.Exporter{StagingDir: stagingDir, CapBytes: capBytes}).PreAction,
-			engine.PreActionAgentScratchRecheck: func(ctx context.Context, a engine.Action) (*trash.Receipt, error) {
-				return nil, scanner.RecheckAgentScratch(ctx, a.Path)
-			},
-		},
-		RunID: runID,
-	}
+	defer release()
 	res, err := exec.Execute(context.Background(), plan)
 	if err != nil {
 		return err
@@ -131,6 +100,46 @@ func executePlan(host engine.Host, plan engine.Plan) error {
 		fmt.Println(line)
 	}
 	return nil
+}
+
+// newRunExecutor wires the executor of one run: the journal, and a
+// mover and volume exporter pointed at the run's staging directory.
+// stream runs the export's docker command; nil streams docker's
+// stderr to the terminal. release closes the journal.
+func newRunExecutor(host engine.Host, runID string, stream func(context.Context, []string, io.Writer) error) (*executor.Executor, func(), error) {
+	logPath, err := oplog.DefaultPath()
+	if err != nil {
+		return nil, nil, err
+	}
+	// The volume export cap comes from user config; a broken config
+	// must block execution, not silently fall back to defaults.
+	cfg, err := config.Load()
+	if err != nil {
+		return nil, nil, err
+	}
+	capBytes, err := cfg.Docker.ExportCapBytes()
+	if err != nil {
+		return nil, nil, err
+	}
+	log, err := oplog.Open(logPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	stagingDir := filepath.Join(filepath.Dir(logPath), "staging", runID)
+	exec := &executor.Executor{
+		Trash: &trash.Mover{Home: host.Home, StagingDir: stagingDir},
+		Log:   log,
+		PreActions: map[string]executor.PreAction{
+			engine.PreActionVolumeExport: (&docker.Exporter{StagingDir: stagingDir, CapBytes: capBytes, Stream: stream}).PreAction,
+			engine.PreActionAgentScratchRecheck: func(ctx context.Context, a engine.Action) (*trash.Receipt, error) {
+				return nil, scanner.RecheckAgentScratch(ctx, a.Path)
+			},
+		},
+		RunID: runID,
+	}
+	// Journal entries fsync per Append (invariant 6); nothing left to
+	// lose at close.
+	return exec, func() { _ = log.Close() }, nil
 }
 
 // nothingToClean explains an empty plan: refusals and skips are why a

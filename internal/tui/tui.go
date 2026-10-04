@@ -188,8 +188,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.cursor = firstCursorable(m.rows)
 		def := engine.DefaultSelection(m.findings)
 		for _, f := range m.findings {
-			if def[f.Rule.ID] {
-				m.selectAllItems(f)
+			for _, it := range f.Items {
+				if id := engine.ItemID(f.Rule.ID, it.Key); def[f.Rule.ID] || def[id] {
+					m.selected[id] = true
+				}
 			}
 		}
 		m.refreshSelection()

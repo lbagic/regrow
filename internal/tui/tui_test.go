@@ -156,6 +156,23 @@ func TestDefaultSelectionAndToggle(t *testing.T) {
 	}
 }
 
+func TestUnreadableItemsStartUnticked(t *testing.T) {
+	host := engine.Host{OS: "darwin", Version: "15.5", Home: "/Users/fixture"}
+	findings := []engine.Finding{{
+		Rule: engine.Rule{ID: "app-logs", Title: "App logs", Category: "macos", Risk: engine.RiskSafe},
+		Items: []engine.Item{
+			{Path: host.Home + "/logs/a", Key: "~/logs/a", Bytes: 1 << 20},
+			{Path: host.Home + "/logs/b", Key: "~/logs/b", Partial: true},
+		},
+	}}
+	m := New(host, "test", func(context.Context) []engine.Finding { return findings })
+	next, _ := m.Update(scanDoneMsg{findings: findings})
+	got := next.(Model).selected
+	if !got["app-logs/~/logs/a"] || got["app-logs/~/logs/b"] || len(got) != 1 {
+		t.Fatalf("pre-ticked %v, want the read item only", got)
+	}
+}
+
 func TestSurfaceOnlyNotToggleable(t *testing.T) {
 	m := newTestModel(t)
 	// Walk to the surface row: build → mod → docker(err) → ios-backups.

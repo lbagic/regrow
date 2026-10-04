@@ -431,6 +431,36 @@ func TestCancelBlocksTheCallInFlight(t *testing.T) {
 	}
 }
 
+// A call started on an ended scan could lose the race to ctx and block
+// its path, so a rescan found an absent target blocked and partial.
+func TestEndedScanStartsNoCall(t *testing.T) {
+	w := &walker{open: openDir, stall: time.Hour, workers: walkWorkers, blocked: &blockedSet{}}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	absent := filepath.Join(t.TempDir(), "absent")
+	called := make(chan struct{}, 100)
+	for range 100 {
+		_, err := bounded(ctx, w, absent, func() (fs.FileInfo, error) {
+			called <- struct{}{}
+			return os.Lstat(absent)
+		})
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("bounded on an ended scan = %v, want context.Canceled", err)
+		}
+	}
+	select {
+	case <-called:
+		t.Fatal("an ended scan started a filesystem call")
+	case <-time.After(50 * time.Millisecond):
+	}
+	if w.blocked.covers(absent) {
+		t.Fatal("an ended scan blocked a path")
+	}
+	if _, found, err := w.usage(context.Background(), absent); found || err != nil {
+		t.Fatalf("rescan: found %v, err %v; want the target absent", found, err)
+	}
+}
+
 // Markers for tool stores name them the way keys do, with ~.
 func TestToolMarkersUseTheTildeForm(t *testing.T) {
 	home := t.TempDir()
