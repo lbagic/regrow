@@ -3,6 +3,7 @@ package engine
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/lbagic/regrow/internal/trash"
 )
@@ -43,6 +44,9 @@ type Action struct {
 	// planner puts it first; if it fails, the executor skips the run's
 	// Trash moves, since Finder may still be emptying.
 	EmptiesTrash bool `json:"empties_trash,omitempty"`
+	// Sudo: Command starts with sudo and prompts for a password, so it
+	// needs a terminal.
+	Sudo bool `json:"sudo,omitempty"`
 }
 
 // Skip records why a selected finding produced no action.
@@ -203,6 +207,18 @@ type draft struct {
 //   - actions that empty the Trash run first, so this run's moves
 //     stay restorable.
 func BuildPlan(host Host, findings []Finding, selected map[string]bool) Plan {
+	return BuildPlanWith(host, findings, selected, PlanOptions{})
+}
+
+// PlanOptions adapts planning to the face that will execute the plan.
+type PlanOptions struct {
+	// NoSudo refuses every action that needs administrator rights: the
+	// face has no terminal for sudo to prompt on.
+	NoSudo bool
+}
+
+// BuildPlanWith is BuildPlan with options.
+func BuildPlanWith(host Host, findings []Finding, selected map[string]bool, opts PlanOptions) Plan {
 	var plan Plan
 	sel := parseSelection(selected)
 	if sel.empty() {
@@ -233,6 +249,12 @@ func BuildPlan(host Host, findings []Finding, selected map[string]bool) Plan {
 		var skips []Skip
 		if len(f.Rule.NativeCommand) > 0 {
 			ds, skips = nativeDrafts(findings, tree, f.Rule, refs, partial)
+			// Before nesting: a refused action must not cover the
+			// items nested inside it.
+			if opts.NoSudo && f.Rule.Sudo && len(ds) > 0 {
+				skips = append(skips, sudoSkips(f.Rule.ID, ds, partial)...)
+				ds = nil
+			}
 		} else {
 			ds, skips = trashDrafts(findings, tree, host, f.Rule, refs)
 		}
@@ -349,6 +371,7 @@ func nativeDrafts(findings []Finding, tree forest, r Rule, refs []itemRef, parti
 				Kind:         ActionNative,
 				Command:      withSudo(r.Sudo, r.NativeCommand),
 				EmptiesTrash: r.EmptiesTrash,
+				Sudo:         r.Sudo,
 			},
 			items: refs,
 		}}, nil
@@ -374,6 +397,7 @@ func nativeDrafts(findings []Finding, tree forest, r Rule, refs []itemRef, parti
 				Command:   withSudo(r.Sudo, cmd),
 				PreAction: r.PreAction,
 				Path:      it.Path,
+				Sudo:      r.Sudo,
 			},
 			items: []itemRef{ref},
 		})
@@ -451,6 +475,30 @@ func runningAncestor(tree forest, owner map[itemRef]int, kept []bool, ref itemRe
 		top = a
 	}
 	return top
+}
+
+// sudoSkips turns a sudo rule's drafts into skips that name the
+// `regrow clean` selector running the same selection: the rule id when
+// the whole rule was selected, else each item id.
+func sudoSkips(ruleID string, ds []draft, partial bool) []Skip {
+	const reason = "needs administrator rights — run `regrow clean %s` in Terminal"
+	if !partial {
+		return []Skip{{RuleID: ruleID, Reason: fmt.Sprintf(reason, ruleID)}}
+	}
+	skips := make([]Skip, len(ds))
+	for i, d := range ds {
+		id := ItemID(ruleID, d.action.ItemKey)
+		skips[i] = Skip{RuleID: ruleID, ItemKey: d.action.ItemKey, Reason: fmt.Sprintf(reason, shellQuote(id))}
+	}
+	return skips
+}
+
+// shellQuote single-quotes s when a shell would split or expand it.
+func shellQuote(s string) string {
+	if !strings.ContainsAny(s, " \t\n'\"\\$`*?[](){}<>|&;!#") {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 func withSudo(sudo bool, argv []string) []string {

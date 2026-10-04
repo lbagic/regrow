@@ -55,28 +55,34 @@ type Executor struct {
 	// RunID names the run in the journal; empty means mint one. The
 	// caller may pre-mint it to point staging at a per-run directory.
 	RunID string
+	// Stop is polled before each action; once it reports true the run
+	// ends there. Unlike cancelling ctx, which kills the command in
+	// flight, a stop lets the current action finish and be journaled.
+	Stop func() bool
 }
 
 // Result summarises one executed run.
 type Result struct {
-	RunID  string
-	Done   int
-	Failed int
-	Bytes  int64 // reclaimed by successful actions
+	RunID  string `json:"run_id"`
+	Done   int    `json:"done"`
+	Failed int    `json:"failed"`
+	Bytes  int64  `json:"bytes"` // reclaimed by successful actions
 	// TrashBytes is the part of Bytes Finder moved to the Trash: it
 	// frees nothing until the Trash is emptied.
-	TrashBytes int64
+	TrashBytes int64 `json:"trash_bytes"`
 	// StagedBytes is the part of Bytes renamed into regrow's staging
 	// dir because Finder was unavailable: emptying the Trash never
 	// frees it.
-	StagedBytes int64
-	Failures    []string
+	StagedBytes int64    `json:"staged_bytes"`
+	Failures    []string `json:"failures,omitempty"`
 	// Skipped lists actions never attempted, with why. They are not
 	// journaled: nothing ran.
-	Skipped []string
+	Skipped []string `json:"skipped,omitempty"`
 	// Pruned is what prune actions deleted, as measured, failed ones
 	// included: a prune that fails midway has still deleted entries.
-	Pruned oplog.Pruned
+	Pruned oplog.Pruned `json:"pruned"`
+	// Stopped: Stop ended the run before every action was attempted.
+	Stopped bool `json:"stopped,omitempty"`
 }
 
 // NewRunID mints a journal run id: sortable timestamp + entropy so
@@ -107,6 +113,10 @@ func (e *Executor) Execute(ctx context.Context, plan engine.Plan) (Result, error
 	for seq, a := range plan.Actions {
 		if ctx.Err() != nil {
 			return res, ctx.Err()
+		}
+		if e.Stop != nil && e.Stop() {
+			res.Stopped = true
+			return res, nil
 		}
 		if trashUnsafe && a.Kind == engine.ActionTrash {
 			res.Skipped = append(res.Skipped, fmt.Sprintf("%s: emptying the Trash failed, and Finder may still be emptying it", actionID(a)))

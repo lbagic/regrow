@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -363,5 +364,124 @@ func TestPlanTotalsSplitByKind(t *testing.T) {
 	got := p.Totals()
 	if got.FreesNow != 20 || got.AfterTrash != 103 {
 		t.Fatalf("Totals = %+v, want FreesNow 20, AfterTrash 103", got)
+	}
+}
+
+func TestBuildPlanMarksSudoActions(t *testing.T) {
+	findings := []Finding{
+		{Rule: Rule{ID: "whole-sudo", Risk: RiskCaution, NativeCommand: Argv{"mdutil", "-E", "/"}, Sudo: true},
+			Items: []Item{{Path: "/Users/t/Library/Metadata/index", Bytes: 1}}},
+		{Rule: Rule{ID: "item-sudo", Risk: RiskSafe, NativeCommand: Argv{"find", "{path}", "-delete"}, Sudo: true},
+			Items: []Item{{Path: "/Users/t/Library/videos", Bytes: 2}}},
+		{Rule: Rule{ID: "plain", Risk: RiskSafe, NativeCommand: Argv{"go", "clean", "-cache"}},
+			Items: []Item{{Path: "/Users/t/Library/Caches/go-build", Bytes: 3}}},
+		{Rule: Rule{ID: "trashed", Risk: RiskSafe, Sudo: true},
+			Items: []Item{{Path: "/Users/t/Library/trashed", Bytes: 4}}},
+	}
+	plan := BuildPlan(testHost, findings, selectRules(findings...))
+	want := map[string]bool{"whole-sudo": true, "item-sudo": true, "plain": false, "trashed": false}
+	if len(plan.Actions) != len(want) {
+		t.Fatalf("want %d actions, got %+v", len(want), plan.Actions)
+	}
+	for _, a := range plan.Actions {
+		if a.Sudo != want[a.RuleID] || a.Sudo != (a.Command[0] == "sudo") {
+			t.Errorf("%s: Sudo = %v with command %v", a.RuleID, a.Sudo, a.Command)
+		}
+	}
+}
+
+func TestBuildPlanWithNoSudo(t *testing.T) {
+	const reason = "needs administrator rights — run `regrow clean %s` in Terminal"
+	whole := Finding{
+		Rule: Rule{ID: "whole-sudo", Risk: RiskCaution, NativeCommand: Argv{"mdutil", "-E", "/"}, Sudo: true},
+		Items: []Item{
+			{Path: "/Users/t/Library/Metadata/index", Bytes: 1},
+			{Path: "/Users/t/Library/Metadata/other", Bytes: 1},
+		},
+	}
+	perItem := Finding{
+		Rule: Rule{ID: "item-sudo", Risk: RiskSafe, NativeCommand: Argv{"find", "{path}", "-delete"}, Sudo: true},
+		Items: []Item{
+			{Path: "/Users/t/Library/Application Support/videos", Bytes: 2},
+			{Path: "/Users/t/Library/more-videos", Bytes: 3},
+		},
+	}
+	// Lives inside perItem's second item.
+	nested := Finding{
+		Rule:  Rule{ID: "nested", Risk: RiskSafe},
+		Items: []Item{{Path: "/Users/t/Library/more-videos/cache", Bytes: 1}},
+	}
+	// A trash rule never runs sudo, whatever its rule says.
+	trashed := Finding{
+		Rule:  Rule{ID: "trashed", Risk: RiskSafe, Sudo: true},
+		Items: []Item{{Path: "/Users/t/Library/trashed", Bytes: 4}},
+	}
+	findings := []Finding{whole, perItem, nested, trashed}
+
+	tests := []struct {
+		name        string
+		selected    map[string]bool
+		wantActions []string
+		wantSkips   []Skip
+	}{
+		{
+			"whole rules name the rule",
+			selectRules(findings...),
+			[]string{"nested", "trashed"},
+			[]Skip{
+				{RuleID: "whole-sudo", Reason: fmt.Sprintf(reason, "whole-sudo")},
+				{RuleID: "item-sudo", Reason: fmt.Sprintf(reason, "item-sudo")},
+			},
+		},
+		{
+			"a partial selection names the item, quoted for the shell",
+			map[string]bool{"item-sudo/~/Library/Application Support/videos": true},
+			nil,
+			[]Skip{{RuleID: "item-sudo", ItemKey: "~/Library/Application Support/videos",
+				Reason: fmt.Sprintf(reason, "'item-sudo/~/Library/Application Support/videos'")}},
+		},
+		{
+			"a partial pick of a whole-rule command keeps its own refusal",
+			map[string]bool{"whole-sudo/~/Library/Metadata/index": true},
+			nil,
+			[]Skip{{RuleID: "whole-sudo", Reason: "whole-rule command cannot target individual items — select the whole rule"}},
+		},
+		{
+			"an item id without shell characters stays bare",
+			map[string]bool{"item-sudo/~/Library/more-videos": true},
+			nil,
+			[]Skip{{RuleID: "item-sudo", ItemKey: "~/Library/more-videos",
+				Reason: fmt.Sprintf(reason, "item-sudo/~/Library/more-videos")}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			plan := BuildPlanWith(testHost, findings, tt.selected, PlanOptions{NoSudo: true})
+			var got []string
+			for _, a := range plan.Actions {
+				if a.Sudo || a.Command[0] == "sudo" {
+					t.Errorf("a sudo action was planned: %+v", a)
+				}
+				got = append(got, a.RuleID)
+			}
+			if !reflect.DeepEqual(got, tt.wantActions) {
+				t.Errorf("actions = %v, want %v", got, tt.wantActions)
+			}
+			if !reflect.DeepEqual(plan.Skipped, tt.wantSkips) {
+				t.Errorf("skipped = %+v, want %+v", plan.Skipped, tt.wantSkips)
+			}
+			if len(plan.Unmatched) != 0 {
+				t.Errorf("a refused selector is not a typo: unmatched = %v", plan.Unmatched)
+			}
+		})
+	}
+
+	// With sudo allowed the outer action deletes the nested item; once
+	// it is refused, nothing covers that item and it is planned itself.
+	covered := BuildPlan(testHost, findings, selectRules(perItem, nested))
+	for _, a := range covered.Actions {
+		if a.RuleID == "nested" {
+			t.Fatalf("the nested item must be covered by its sudo parent when sudo is allowed: %+v", covered.Actions)
+		}
 	}
 }

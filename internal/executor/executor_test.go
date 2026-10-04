@@ -123,6 +123,29 @@ func TestExecuteStopsOnCancel(t *testing.T) {
 	}
 }
 
+func TestExecuteStopEndsTheRunBeforeTheNextAction(t *testing.T) {
+	log := &memLog{}
+	mover := &fakeMover{}
+	e := &Executor{Trash: mover, Log: log, Now: fixedNow,
+		RunNative: func(context.Context, []string) error {
+			t.Error("an action started after the stop")
+			return nil
+		},
+		// Asked to stop while the first action is in flight.
+		Stop: func() bool { return len(mover.moved) > 0 }}
+
+	res, err := e.Execute(context.Background(), testPlan())
+	if err != nil {
+		t.Fatalf("a stop is not an error, got %v", err)
+	}
+	if !res.Stopped || res.Done != 1 || res.Failed != 0 || res.Bytes != 100 {
+		t.Fatalf("result = %+v, want the first action done and the run stopped", res)
+	}
+	if len(log.entries) != 2 || log.entries[1].Event != oplog.EventDone || log.entries[1].Receipt == nil {
+		t.Fatalf("the action in flight must be journaled to its end, got %+v", log.entries)
+	}
+}
+
 func exportPlan() engine.Plan {
 	return engine.Plan{Actions: []engine.Action{{
 		RuleID: "docker-volumes-named", ItemKey: "dakr_db", Kind: engine.ActionNative,
