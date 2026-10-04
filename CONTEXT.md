@@ -125,6 +125,10 @@ A rule's snapshot test: scan its fixture, plan, compare the normalized command l
 A known runaway bug whose signature is a rule's target growing past a size no healthy machine reaches. Declared on the rule (`doctor:` block: healthy line + story); `regrow doctor` flags crossings.
 _Avoid_: health check, diagnostic
 
+**Cause**:
+Something outside regrow's reach that keeps filling the disk a rule's target sits on: a setting, a daemon, a build habit. Declared on the rule (`causes:` — a named check, the story, the owner's fix lines); `regrow doctor` says whether it is in effect and prints the fix. regrow applies none.
+_Avoid_: recommendation, tip, optimization
+
 **Phantom space**:
 Disk usage Finder counts but your files don't add up to — TM snapshots, sparse VM disks, APFS purgeable. Its own category, surfaced with "why Finder still shows full" copy; mostly surface-only.
 
