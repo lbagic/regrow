@@ -22,7 +22,9 @@ import (
 // and `git status --ignored` shows nothing but whole ignored build
 // directories. The rule removes it with `git worktree remove`, which
 // keeps the branch, refuses a worktree with modified or untracked
-// files, and deletes the ignored build output with the checkout.
+// files, and deletes the ignored build output with the checkout. It
+// does not refuse a new ignored file, so the worktree-recheck
+// pre-action runs the clean test again right before the removal.
 
 const (
 	// worktreeIdle is how long a worktree must go untouched.
@@ -90,7 +92,17 @@ type worktree struct {
 // never an item, and two worktrees of one repository are two items:
 // the key is the worktree's path.
 func scanWorktrees(ctx context.Context, w *walker, host engine.Host, roots []string, now time.Time) ([]engine.Item, error) {
-	repos, partialRoots := discover(ctx, w, host, engine.Discover{Roots: roots, Markers: []string{".git"}, MaxDepth: worktreeRepoDepth})
+	// git reports real paths; roots resolved the same way keep the
+	// repositories found under them comparable with what git says.
+	real := make([]string, len(roots))
+	for i, r := range roots {
+		p := host.ExpandPath(r)
+		real[i] = p
+		if rp, err := bounded(ctx, w, p, func() (string, error) { return filepath.EvalSymlinks(p) }); err == nil {
+			real[i] = rp
+		}
+	}
+	repos, partialRoots := discover(ctx, w, host, engine.Discover{Roots: real, Markers: []string{".git"}, MaxDepth: worktreeRepoDepth})
 	var items []engine.Item
 	for _, root := range partialRoots {
 		items = append(items, unreadableMarker("folders under "+tilde(host, root)))
@@ -128,8 +140,8 @@ func scanWorktrees(ctx context.Context, w *walker, host engine.Host, roots []str
 
 // finishedWorktrees checks one repository's linked worktrees, cheapest
 // test first: merged (one git call for the repository), then idle
-// (a walk of the tree), then clean (a git call per worktree). The only
-// error is ctx's.
+// (a walk of the tree), then clean and free of checked-out submodules
+// (git calls per worktree). The only error is ctx's.
 func finishedWorktrees(ctx context.Context, w *walker, mainPath string, linked []worktree, now time.Time) ([]engine.Item, error) {
 	refs, err := readRefs(ctx, mainPath)
 	if err != nil {
@@ -142,7 +154,10 @@ func finishedWorktrees(ctx context.Context, w *walker, mainPath string, linked [
 	var candidates []worktree
 	var heads []string
 	for _, wt := range linked {
-		if !wt.bare && !wt.locked && !wt.prunable && wt.head != "" {
+		// An unborn branch lists an all-zero HEAD, which rev-list
+		// rejects for the whole repository.
+		unborn := strings.Trim(wt.head, "0") == ""
+		if !wt.bare && !wt.locked && !wt.prunable && !unborn {
 			candidates = append(candidates, wt)
 			heads = append(heads, wt.head)
 		}
@@ -180,7 +195,15 @@ func finishedWorktrees(ctx context.Context, w *walker, mainPath string, linked [
 		if t := lastCommitOrCheckout(ctx, w, wt.path); t.After(last) {
 			last = t
 		}
-		if now.Sub(last) < worktreeIdle || !onlyBuildOutput(ctx, wt.path) {
+		if now.Sub(last) < worktreeIdle {
+			continue
+		}
+		if dirty, err := firstUnclean(ctx, wt.path); err != nil || dirty != "" {
+			continue
+		}
+		// `git worktree remove` refuses a worktree with a checked-out
+		// submodule unless forced, so offering it would fail every run.
+		if hasPopulatedSubmodule(ctx, w, wt.path) {
 			continue
 		}
 		name := strings.TrimPrefix(wt.branch, "refs/heads/")
@@ -300,14 +323,17 @@ func notReachable(ctx context.Context, dir string, heads, bases []string) (map[s
 	return unmerged, nil
 }
 
-// onlyBuildOutput reports whether `git status --ignored` lists nothing
-// but whole ignored directories named in worktreeBuildDirs. Untracked
-// and ignored files are shown individually, so they keep the worktree;
-// the flags override a user config that would hide them.
-func onlyBuildOutput(ctx context.Context, dir string) bool {
-	out, err := git(ctx, dir, "status", "--porcelain", "-z", "--ignored=traditional", "--untracked-files=normal", "--ignore-submodules=none")
+// firstUnclean returns the first `git status --ignored` entry that is
+// not a whole ignored directory named in worktreeBuildDirs, or "" when
+// there is none. Matching mode lists a directory only when an ignore
+// pattern matches it; a directory whose files are ignored one by one
+// (dist/.env under a `.env` pattern) is listed file by file, so that
+// .env keeps the worktree. The flags override a user config that would
+// hide untracked files.
+func firstUnclean(ctx context.Context, dir string) (string, error) {
+	out, err := git(ctx, dir, "status", "--porcelain", "-z", "--ignored=matching", "--untracked-files=normal", "--ignore-submodules=none")
 	if err != nil {
-		return false
+		return "", err
 	}
 	for _, entry := range strings.Split(string(out), "\x00") {
 		if entry == "" {
@@ -315,14 +341,47 @@ func onlyBuildOutput(ctx context.Context, dir string) bool {
 		}
 		path, ignored := strings.CutPrefix(entry, "!! ")
 		if !ignored {
-			return false
+			return entry, nil
 		}
 		dirPath, isDir := strings.CutSuffix(path, "/")
 		if !isDir || !worktreeBuildDirs[filepath.Base(dirPath)] {
-			return false
+			return entry, nil
 		}
 	}
-	return true
+	return "", nil
+}
+
+// CheckWorktreeClean runs the clean test again on a worktree about to
+// be removed: an ignored file created since the scan would otherwise be
+// deleted with it, since git refuses only modified or untracked files.
+func CheckWorktreeClean(ctx context.Context, path string) error {
+	dirty, err := firstUnclean(ctx, path)
+	if err != nil {
+		return fmt.Errorf("recheck %s: %w", path, err)
+	}
+	if dirty != "" {
+		return fmt.Errorf("worktree changed since the scan, git status shows %q: not removed", dirty)
+	}
+	return nil
+}
+
+// hasPopulatedSubmodule mirrors git's own refusal: a gitlink in the
+// index whose directory holds a .git. Unreadable means populated.
+func hasPopulatedSubmodule(ctx context.Context, w *walker, dir string) bool {
+	out, err := git(ctx, dir, "ls-files", "--stage", "-z")
+	if err != nil {
+		return true
+	}
+	for _, entry := range strings.Split(string(out), "\x00") {
+		meta, path, ok := strings.Cut(entry, "\t")
+		if !ok || !strings.HasPrefix(meta, "160000 ") {
+			continue
+		}
+		if _, err := w.lstat(ctx, filepath.Join(dir, path, ".git")); !absent(err) {
+			return true
+		}
+	}
+	return false
 }
 
 // lastCommitOrCheckout is when git last moved the worktree's HEAD (a

@@ -48,12 +48,19 @@ func commitFile(t *testing.T, dir, name, content string) {
 	runGit(t, dir, "commit", "-q", "-m", "change "+name)
 }
 
+// removeWorktreeArgv is the command the rule must plan, written out so
+// the test that runs it never takes it from the catalog.
+func removeWorktreeArgv(path string) []string {
+	return []string{"git", "-C", path, "worktree", "remove", path}
+}
+
 // worktreeFixture is a main repository with one linked worktree per
 // case, each failing or passing exactly one test of the rule.
 type worktreeFixture struct {
-	home, app, scratch, solo string
-	wt                       map[string]string // case → worktree path
-	now                      time.Time         // a week and a day after the fixture was built
+	home, app, scratch, scratchLink, solo string
+	wt                                    map[string]string // case → worktree path
+	short                                 map[string]string // case → HEAD, abbreviated, of a detached case
+	now                                   time.Time         // a week and a day after the fixture was built
 }
 
 func newWorktreeFixture(t *testing.T) worktreeFixture {
@@ -64,10 +71,12 @@ func newWorktreeFixture(t *testing.T) worktreeFixture {
 		root = real // git reports real paths
 	}
 	f := worktreeFixture{
-		home:    filepath.Join(root, "home"),
-		scratch: filepath.Join(root, "scratch"),
-		wt:      map[string]string{},
-		now:     time.Now().Add(worktreeIdle + 24*time.Hour),
+		home:        filepath.Join(root, "home"),
+		scratch:     filepath.Join(root, "scratch"),
+		scratchLink: filepath.Join(root, "scratch-link"),
+		wt:          map[string]string{},
+		short:       map[string]string{},
+		now:         time.Now().Add(worktreeIdle + 24*time.Hour),
 	}
 	f.app = filepath.Join(f.home, "workspace", "app")
 	if err := os.MkdirAll(f.app, 0o755); err != nil {
@@ -75,7 +84,7 @@ func newWorktreeFixture(t *testing.T) worktreeFixture {
 	}
 	runGit(t, f.app, "init", "-q", "-b", "main")
 	runGit(t, f.app, "remote", "add", "origin", filepath.Join(root, "origin.git"))
-	commitFile(t, f.app, ".gitignore", "node_modules/\n.env\n")
+	commitFile(t, f.app, ".gitignore", "node_modules/\n.env\n.idea/\n")
 	commitFile(t, f.app, "README", "app\n")
 
 	add := func(name string, args ...string) string {
@@ -85,12 +94,17 @@ func newWorktreeFixture(t *testing.T) worktreeFixture {
 		return p
 	}
 	branch := func(name string) string { return add(name, "-b", name) }
-	detached := func(name string) string { return add(name, "--detach", "main") }
+	detached := func(name string) string {
+		p := add(name, "--detach", "main")
+		f.short[name] = runGit(t, p, "rev-parse", "--short=7", "HEAD")
+		return p
+	}
 
-	// Qualifies: merged by ancestry, holding ignored node_modules.
+	// Qualifies: merged by ancestry, holding ignored node_modules in a
+	// folder that holds nothing else.
 	p := branch("merged")
 	commitFile(t, p, "feature", "done\n")
-	touch(t, filepath.Join(p, "node_modules", "dep", "index.js"))
+	touch(t, filepath.Join(p, "web", "node_modules", "dep", "index.js"))
 	runGit(t, f.app, "merge", "-q", "--ff-only", "merged")
 
 	// Qualifies: squash-merged elsewhere, its upstream branch deleted.
@@ -98,6 +112,13 @@ func newWorktreeFixture(t *testing.T) worktreeFixture {
 	commitFile(t, p, "fix", "done\n")
 	runGit(t, f.app, "config", "branch.squashed.remote", "origin")
 	runGit(t, f.app, "config", "branch.squashed.merge", "refs/heads/squashed")
+
+	// Qualifies: merged on the remote, whose default branch is not
+	// called main, while the local main is stale.
+	p = branch("merged-upstream")
+	commitFile(t, p, "upstream", "done\n")
+	runGit(t, f.app, "update-ref", "refs/remotes/origin/trunk", "refs/heads/merged-upstream")
+	runGit(t, f.app, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/trunk")
 
 	// Qualifies: detached at a commit main contains.
 	detached("detached-merged")
@@ -113,6 +134,11 @@ func newWorktreeFixture(t *testing.T) worktreeFixture {
 	p = detached("detached-unmerged")
 	commitFile(t, p, "experiment", "x\n")
 
+	// An unborn branch lists an all-zero HEAD; it must not take the
+	// repository's other worktrees out with it.
+	p = detached("unborn")
+	runGit(t, p, "checkout", "-q", "--orphan", "unborn")
+
 	p = branch("untracked")
 	touch(t, filepath.Join(p, "notes.txt"))
 
@@ -123,6 +149,14 @@ func newWorktreeFixture(t *testing.T) worktreeFixture {
 
 	p = branch("ignored-env")
 	touch(t, filepath.Join(p, ".env"))
+
+	// An ignored directory that is not build output.
+	p = branch("ignored-idea")
+	touch(t, filepath.Join(p, ".idea", "workspace.xml"))
+
+	// dist/ is not ignored; its only file is, under the .env pattern.
+	p = branch("env-in-dist")
+	touch(t, filepath.Join(p, "dist", ".env"))
 
 	p = branch("active")
 	touch(t, filepath.Join(p, "node_modules", "dep", "index.js"))
@@ -152,8 +186,9 @@ func newWorktreeFixture(t *testing.T) worktreeFixture {
 		t.Fatal(err)
 	}
 
-	// A worktree of app in an agent's scratch dir, which is also a
-	// root, and a scratch clone with a worktree of its own.
+	// A worktree of app in an agent's scratch dir, which is also a root
+	// (given through a symlink), and a scratch clone with a worktree of
+	// its own.
 	p = filepath.Join(f.scratch, "session", "wt")
 	runGit(t, f.app, "worktree", "add", "-q", "-b", "scratch", p, "main")
 	f.wt["scratch"] = p
@@ -166,79 +201,111 @@ func newWorktreeFixture(t *testing.T) worktreeFixture {
 	p = filepath.Join(f.scratch, "session", "solo-wt")
 	runGit(t, f.solo, "worktree", "add", "-q", "--detach", p, "main")
 	f.wt["solo"] = p
+	f.short["solo"] = runGit(t, p, "rev-parse", "--short=7", "HEAD")
+	if err := os.Symlink(f.scratch, f.scratchLink); err != nil {
+		t.Fatal(err)
+	}
+
+	// Merged and clean, but a checked-out submodule makes git refuse
+	// the removal. Last, since merging it moves main.
+	lib := filepath.Join(root, "lib")
+	if err := os.MkdirAll(lib, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, lib, "init", "-q", "-b", "main")
+	commitFile(t, lib, "README", "lib\n")
+	p = branch("submodule")
+	runGit(t, p, "-c", "protocol.file.allow=always", "submodule", "add", "-q", lib, "lib")
+	runGit(t, p, "commit", "-q", "-m", "add lib")
+	runGit(t, f.app, "merge", "-q", "--ff-only", "submodule")
 	return f
 }
 
 func (f worktreeFixture) scan(t *testing.T) []engine.Item {
 	t.Helper()
 	host := engine.Host{OS: "darwin", Home: f.home}
-	items, err := scanWorktrees(context.Background(), testWalker(), host, []string{"~/workspace", f.scratch}, f.now)
+	items, err := scanWorktrees(context.Background(), testWalker(), host, []string{"~/workspace", f.scratchLink}, f.now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return items
 }
 
-func TestScanWorktreesOffersOnlyFinishedOnes(t *testing.T) {
+func TestScanWorktrees(t *testing.T) {
 	f := newWorktreeFixture(t)
 	items := f.scan(t)
 
-	got := map[string]string{}
-	for _, it := range items {
-		got[it.Path] = it.Label
-		if it.Bytes <= 0 || it.LastUsed.IsZero() || it.Partial {
-			t.Errorf("%s: want a complete measurement, got %+v", it.Label, it)
+	t.Run("offers only finished ones", func(t *testing.T) {
+		got := map[string]string{}
+		for _, it := range items {
+			got[it.Path] = it.Label
+			if it.Bytes <= 0 || it.LastUsed.IsZero() || it.Partial {
+				t.Errorf("%s: want a complete measurement, got %+v", it.Label, it)
+			}
 		}
+		want := map[string]string{
+			f.wt["merged"]:           "merged (merged)",
+			f.wt["squashed"]:         "squashed (upstream gone)",
+			f.wt["merged-upstream"]:  "merged-upstream (merged)",
+			f.wt["detached-merged"]:  "detached " + f.short["detached-merged"] + " (merged)",
+			f.wt["status-refreshed"]: "status-refreshed (merged)",
+			f.wt["scratch"]:          "scratch (merged)",
+			f.wt["solo"]:             "detached " + f.short["solo"] + " (merged)",
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("items = %v\nwant %v", got, want)
+		}
+	})
+
+	t.Run("one action per worktree", func(t *testing.T) {
+		finding := engine.Finding{Rule: worktreeRule(t), Items: items}
+		finding.FillItemKeys(f.home)
+		plan := engine.BuildPlan(engine.Host{OS: "darwin", Home: f.home}, []engine.Finding{finding}, map[string]bool{"git-worktrees": true})
+		if len(plan.Actions) != len(finding.Items) || len(plan.Skipped) != 0 {
+			t.Fatalf("want one action per worktree, got %d actions for %d items (skips %+v)", len(plan.Actions), len(finding.Items), plan.Skipped)
+		}
+		for i, a := range plan.Actions {
+			if want := removeWorktreeArgv(finding.Items[i].Path); !reflect.DeepEqual(a.Command, want) {
+				t.Errorf("action %d = %v, want %v", i, a.Command, want)
+			}
+			if a.ItemKey != finding.Items[i].Key {
+				t.Errorf("action %d targets key %q, want the item's own %q", i, a.ItemKey, finding.Items[i].Key)
+			}
+		}
+	})
+}
+
+// TestWorktreeRuleCommand pins the catalog's command to the one
+// TestWorktreeRemoveAndRecheck runs. It executes nothing.
+func TestWorktreeRuleCommand(t *testing.T) {
+	r := worktreeRule(t)
+	got, err := r.NativeCommand.ExpandItem(engine.Item{Path: "/w/x"})
+	if err != nil {
+		t.Fatal(err)
 	}
-	mainHead := runGit(t, f.app, "rev-parse", "--short=7", "main")
-	soloHead := runGit(t, f.solo, "rev-parse", "--short=7", "main")
-	want := map[string]string{
-		f.wt["merged"]:           "merged (merged)",
-		f.wt["squashed"]:         "squashed (upstream gone)",
-		f.wt["detached-merged"]:  "detached " + mainHead + " (merged)",
-		f.wt["status-refreshed"]: "status-refreshed (merged)",
-		f.wt["scratch"]:          "scratch (merged)",
-		f.wt["solo"]:             "detached " + soloHead + " (merged)",
+	if want := removeWorktreeArgv("/w/x"); !reflect.DeepEqual(got, want) {
+		t.Fatalf("rule command = %v, want %v", got, want)
 	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("items = %v\nwant %v", got, want)
+	if r.PreAction != engine.PreActionWorktreeRecheck {
+		t.Fatalf("pre_action = %q, want %q", r.PreAction, engine.PreActionWorktreeRecheck)
 	}
 }
 
-func TestScanWorktreesIsOneItemPerWorktree(t *testing.T) {
+// TestWorktreeRemoveAndRecheck runs the command on the throwaway
+// repository: the worktree goes with its ignored build output and the
+// branch stays. git refuses untracked files but not a new ignored one,
+// which the pre-action's recheck catches.
+func TestWorktreeRemoveAndRecheck(t *testing.T) {
 	f := newWorktreeFixture(t)
-	finding := engine.Finding{Rule: worktreeRule(t), Items: f.scan(t)}
-	finding.FillItemKeys(f.home)
-
-	plan := engine.BuildPlan(engine.Host{OS: "darwin", Home: f.home}, []engine.Finding{finding}, map[string]bool{"git-worktrees": true})
-	if len(plan.Actions) != len(finding.Items) || len(plan.Skipped) != 0 {
-		t.Fatalf("want one action per worktree, got %d actions for %d items (skips %+v)", len(plan.Actions), len(finding.Items), plan.Skipped)
-	}
-	for i, a := range plan.Actions {
-		path := finding.Items[i].Path
-		if want := []string{"git", "-C", path, "worktree", "remove", path}; !reflect.DeepEqual(a.Command, want) {
-			t.Errorf("action %d = %v, want %v", i, a.Command, want)
-		}
-		if a.ItemKey != finding.Items[i].Key {
-			t.Errorf("action %d targets key %q, want the item's own %q", i, a.ItemKey, finding.Items[i].Key)
-		}
-	}
-}
-
-// TestWorktreeRemoveCommand runs the rule's command on the throwaway
-// repository: the worktree goes with its ignored build output, the
-// branch stays, and git refuses a worktree with untracked files.
-func TestWorktreeRemoveCommand(t *testing.T) {
-	f := newWorktreeFixture(t)
-	rule := worktreeRule(t)
+	ctx := context.Background()
 	run := func(path string) error {
-		argv, err := rule.NativeCommand.ExpandItem(engine.Item{Path: path})
-		if err != nil {
-			t.Fatal(err)
-		}
+		argv := removeWorktreeArgv(path)
 		return exec.Command(argv[0], argv[1:]...).Run()
 	}
 
+	if err := CheckWorktreeClean(ctx, f.wt["merged"]); err != nil {
+		t.Fatalf("recheck of an unchanged worktree: %v", err)
+	}
 	if err := run(f.wt["merged"]); err != nil {
 		t.Fatalf("remove merged worktree: %v", err)
 	}
@@ -248,8 +315,10 @@ func TestWorktreeRemoveCommand(t *testing.T) {
 	if runGit(t, f.app, "branch", "--list", "merged") == "" {
 		t.Fatal("the branch must survive the worktree")
 	}
-	if strings.Contains(runGit(t, f.app, "worktree", "list"), f.wt["merged"]) {
-		t.Fatal("git still lists the removed worktree")
+	for _, wt := range parseWorktreeList([]byte(runGit(t, f.app, "worktree", "list", "--porcelain", "-z"))) {
+		if wt.path == f.wt["merged"] {
+			t.Fatal("git still lists the removed worktree")
+		}
 	}
 
 	if err := run(f.wt["untracked"]); err == nil {
@@ -257,6 +326,12 @@ func TestWorktreeRemoveCommand(t *testing.T) {
 	}
 	if _, err := os.Lstat(filepath.Join(f.wt["untracked"], "notes.txt")); err != nil {
 		t.Fatalf("the untracked file must survive: %v", err)
+	}
+
+	touch(t, filepath.Join(f.wt["squashed"], ".env"))
+	err := CheckWorktreeClean(ctx, f.wt["squashed"])
+	if err == nil || !strings.Contains(err.Error(), ".env") {
+		t.Fatalf("recheck after an ignored .env appeared = %v, want a refusal naming it", err)
 	}
 }
 

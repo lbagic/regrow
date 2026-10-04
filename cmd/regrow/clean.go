@@ -134,6 +134,9 @@ func newRunExecutor(host engine.Host, runID string, stream func(context.Context,
 			engine.PreActionAgentScratchRecheck: func(ctx context.Context, a engine.Action) (*trash.Receipt, error) {
 				return nil, scanner.RecheckAgentScratch(ctx, a.Path)
 			},
+			engine.PreActionWorktreeRecheck: func(ctx context.Context, a engine.Action) (*trash.Receipt, error) {
+				return nil, scanner.CheckWorktreeClean(ctx, a.Path)
+			},
 		},
 		RunID: runID,
 	}
