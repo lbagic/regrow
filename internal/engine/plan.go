@@ -213,8 +213,12 @@ func BuildPlan(host Host, findings []Finding, selected map[string]bool) Plan {
 // PlanOptions adapts planning to the face that will execute the plan.
 type PlanOptions struct {
 	// NoSudo refuses every action that needs administrator rights: the
-	// face has no terminal for sudo to prompt on.
+	// face has no terminal for sudo to prompt on. Each skip names the
+	// `regrow clean` command to run in Terminal instead.
 	NoSudo bool
+	// CleanFlags go into that command before the selector, so Terminal
+	// loads the same catalog (--rules-dir, --beta-rules).
+	CleanFlags []string
 }
 
 // BuildPlanWith is BuildPlan with options.
@@ -252,7 +256,7 @@ func BuildPlanWith(host Host, findings []Finding, selected map[string]bool, opts
 			// Before nesting: a refused action must not cover the
 			// items nested inside it.
 			if opts.NoSudo && f.Rule.Sudo && len(ds) > 0 {
-				skips = append(skips, sudoSkips(f.Rule.ID, ds, partial)...)
+				skips = append(skips, sudoSkips(f.Rule.ID, ds, partial, opts.CleanFlags)...)
 				ds = nil
 			}
 		} else {
@@ -480,15 +484,21 @@ func runningAncestor(tree forest, owner map[itemRef]int, kept []bool, ref itemRe
 // sudoSkips turns a sudo rule's drafts into skips that name the
 // `regrow clean` selector running the same selection: the rule id when
 // the whole rule was selected, else each item id.
-func sudoSkips(ruleID string, ds []draft, partial bool) []Skip {
-	const reason = "needs administrator rights — run `regrow clean %s` in Terminal"
+func sudoSkips(ruleID string, ds []draft, partial bool, flags []string) []Skip {
+	reason := func(selector string) string {
+		words := []string{"regrow", "clean"}
+		for _, a := range flags {
+			words = append(words, shellQuote(a))
+		}
+		words = append(words, shellQuote(selector))
+		return "needs administrator rights — run `" + strings.Join(words, " ") + "` in Terminal"
+	}
 	if !partial {
-		return []Skip{{RuleID: ruleID, Reason: fmt.Sprintf(reason, ruleID)}}
+		return []Skip{{RuleID: ruleID, Reason: reason(ruleID)}}
 	}
 	skips := make([]Skip, len(ds))
 	for i, d := range ds {
-		id := ItemID(ruleID, d.action.ItemKey)
-		skips[i] = Skip{RuleID: ruleID, ItemKey: d.action.ItemKey, Reason: fmt.Sprintf(reason, shellQuote(id))}
+		skips[i] = Skip{RuleID: ruleID, ItemKey: d.action.ItemKey, Reason: reason(ItemID(ruleID, d.action.ItemKey))}
 	}
 	return skips
 }

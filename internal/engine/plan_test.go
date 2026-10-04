@@ -421,42 +421,46 @@ func TestBuildPlanWithNoSudo(t *testing.T) {
 	tests := []struct {
 		name        string
 		selected    map[string]bool
+		flags       []string
 		wantActions []string
 		wantSkips   []Skip
 	}{
 		{
-			"whole rules name the rule",
-			selectRules(findings...),
-			[]string{"nested", "trashed"},
-			[]Skip{
+			name:        "whole rules name the rule",
+			selected:    selectRules(findings...),
+			wantActions: []string{"nested", "trashed"},
+			wantSkips: []Skip{
 				{RuleID: "whole-sudo", Reason: fmt.Sprintf(reason, "whole-sudo")},
 				{RuleID: "item-sudo", Reason: fmt.Sprintf(reason, "item-sudo")},
 			},
 		},
 		{
-			"a partial selection names the item, quoted for the shell",
-			map[string]bool{"item-sudo/~/Library/Application Support/videos": true},
-			nil,
-			[]Skip{{RuleID: "item-sudo", ItemKey: "~/Library/Application Support/videos",
+			name:     "a partial selection names the item, quoted for the shell",
+			selected: map[string]bool{"item-sudo/~/Library/Application Support/videos": true},
+			wantSkips: []Skip{{RuleID: "item-sudo", ItemKey: "~/Library/Application Support/videos",
 				Reason: fmt.Sprintf(reason, "'item-sudo/~/Library/Application Support/videos'")}},
 		},
 		{
-			"a partial pick of a whole-rule command keeps its own refusal",
-			map[string]bool{"whole-sudo/~/Library/Metadata/index": true},
-			nil,
-			[]Skip{{RuleID: "whole-sudo", Reason: "whole-rule command cannot target individual items — select the whole rule"}},
+			name:      "the command carries the flags that load the same catalog",
+			selected:  selectRules(whole),
+			flags:     []string{"--rules-dir", "/opt/my rules", "--beta-rules"},
+			wantSkips: []Skip{{RuleID: "whole-sudo", Reason: fmt.Sprintf(reason, "--rules-dir '/opt/my rules' --beta-rules whole-sudo")}},
 		},
 		{
-			"an item id without shell characters stays bare",
-			map[string]bool{"item-sudo/~/Library/more-videos": true},
-			nil,
-			[]Skip{{RuleID: "item-sudo", ItemKey: "~/Library/more-videos",
+			name:      "a partial pick of a whole-rule command keeps its own refusal",
+			selected:  map[string]bool{"whole-sudo/~/Library/Metadata/index": true},
+			wantSkips: []Skip{{RuleID: "whole-sudo", Reason: "whole-rule command cannot target individual items — select the whole rule"}},
+		},
+		{
+			name:     "an item id without shell characters stays bare",
+			selected: map[string]bool{"item-sudo/~/Library/more-videos": true},
+			wantSkips: []Skip{{RuleID: "item-sudo", ItemKey: "~/Library/more-videos",
 				Reason: fmt.Sprintf(reason, "item-sudo/~/Library/more-videos")}},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			plan := BuildPlanWith(testHost, findings, tt.selected, PlanOptions{NoSudo: true})
+			plan := BuildPlanWith(testHost, findings, tt.selected, PlanOptions{NoSudo: true, CleanFlags: tt.flags})
 			var got []string
 			for _, a := range plan.Actions {
 				if a.Sudo || a.Command[0] == "sudo" {

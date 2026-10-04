@@ -16,13 +16,14 @@ Protocol version: **1**.
 - Every event carries `event`, its name, and `re`, the `id` of the request it answers. Only `hello` and errors about a line without a string `id` have no `re`.
 - Events reach stdout in the order the engine produced them, written by a single writer. A peer that stops reading never stalls a scan, an execute or the handling of later requests: events queue until it reads again.
 - Peers ignore event names and fields they do not know. New events and fields can appear within protocol version 1; a change that breaks an existing field bumps the version.
+- stderr is never protocol. It carries text for people: the reason when the engine exits with status 1, and a crash report if it crashes. Steward commands' output is captured, not passed through. The peer drains stderr or points it at a file: a full pipe would block the engine.
 
 ## Lifecycle
 
 1. The engine starts and writes `hello` before it reads anything.
 2. The peer sends requests. Each request gets exactly one terminal event: `done` or `error`, with `re` set to the request's `id`.
-3. Only one **scan or execute** is in flight at a time. Another `scan` or `execute` sent meanwhile is refused with `error{code:"busy"}` and changes nothing: a refused execute does not consume its plan. `plan` and `cancel` are answered at any time.
-4. When stdin ends, or the process gets SIGINT or SIGTERM, the engine shuts down: a scan in flight is canceled, an execute finishes the action it is running, journals it and stops there. The terminal events of both are still written. Then the engine exits 0. A second signal kills it at once.
+3. Only one **scan or execute** is in flight at a time. Another `scan` or `execute` sent meanwhile is refused with `error{code:"busy"}` and changes nothing. `plan` and `cancel` are answered at any time.
+4. When stdin ends, or the process gets SIGINT or SIGTERM, the engine shuts down: a scan in flight is canceled, an execute finishes the action it is running, journals it and stops there. The terminal events of both are still written. Then the engine exits 0. It waits for that action however long it takes, so a peer that cannot wait out a hung steward command sends SIGTERM twice: the first signal asks for the clean stop, the second kills the engine at once.
 
 Request ids are the peer's own; the engine echoes them and does not check that they are unique.
 
@@ -94,12 +95,13 @@ An action is `{rule_id, item_key, kind, command, pre_action, path, bytes, emptie
 
 A plan id:
 
-- is executable once, for 10 minutes;
-- dies when a newer scan starts;
+- is executable once, for 10 minutes of wall-clock time, sleep included;
+- dies when a newer scan starts, even one later canceled;
+- dies when any execute starts: that run changes what the scan measured, so every plan of the scan is dropped and planning from it again answers `scan_spent`;
 - is the oplog run id its execution journals under, so `regrow history` and `regrow undo <plan_id>` find the run;
 - carries 128 random bits, so it cannot be guessed.
 
-Errors: `bad_request` (no `scan_id`), `unknown_scan`, `scan_running`, `scan_canceled` (scan again), `scan_superseded` (a newer scan replaced it).
+Errors: `bad_request` (no `scan_id`), `unknown_scan`, `scan_running`, `scan_canceled` (scan again), `scan_superseded` (a newer scan replaced it), `scan_spent` (an execute ran against it; scan again).
 
 ### execute
 
@@ -112,13 +114,15 @@ The engine executes on request: the peer's confirmation is the per-run opt-in. A
 | Event | Fields |
 |---|---|
 | `journal` | `entry`: the oplog line, `{time, run, seq, event, rule_id, item_key, kind, command, path, bytes, receipt, error}`; `event` is `start`, `done` or `fail`; a done Trash move carries `receipt: {original, to, method}` |
-| `done` | `result`; `canceled`: `true` when a cancel or shutdown stopped the run early |
+| `done` | `result`; `canceled`: `true` when a cancel or shutdown stopped the run before every action was attempted |
 
 `result` is `{run_id, done, failed, bytes, trash_bytes, staged_bytes, failures, skipped, stopped}`. `bytes` counts successful actions; `trash_bytes` is the part now in the Trash, freed once it is emptied; `staged_bytes` the part moved into regrow's staging directory because Finder was unavailable, which emptying the Trash never frees. One failed action does not stop the run.
 
-A steward command runs with stdin from `/dev/null` and its stdout and stderr captured. When it fails, the last 4 KiB of that output ends the `fail` line's `error`.
+A steward command runs with stdin from `/dev/null` and its stdout and stderr captured. When it fails, the last 4 KiB of that output ends the `fail` line's `error`. The docker export that precedes a volume removal is captured the same way, except that its stdout is the tarball.
 
-Errors: `bad_request` (no `plan_id`); `busy`; `unknown_plan` (never issued, already executed, or dropped by a newer scan); `plan_expired`; `execute_failed` (the run could not start, for example an unreadable config file, or the journal failed and nothing more runs). Once a plan id has been looked up it is spent, whatever the outcome: only `bad_request` and `busy` leave it executable.
+A Trash move that has not finished after 60 s fails with a reason, and the run goes on. A folder macOS blocks without Full Disk Access can hold a move forever, and no cancel reaches it. If Finder completes such a move later, Finder's Put Back restores the item; `regrow undo` has no receipt for it.
+
+Errors: `bad_request` (no `plan_id`); `busy`; `unknown_plan` (never issued, already executed, or dropped when an execute or a newer scan started); `plan_expired`; `execute_failed` (the run could not start, for example an unreadable config file, or the journal failed and nothing more runs). The first execute that names a plan id spends it, whatever the outcome.
 
 ### cancel
 
@@ -126,7 +130,9 @@ Errors: `bad_request` (no `plan_id`); `busy`; `unknown_plan` (never issued, alre
 {"type":"cancel","id":"c1","target":"s1"}
 ```
 
-`target` is the `id` of a scan or execute. A scan stops at once. An execute finishes the action it is running, journals it, and runs nothing after it. The target then ends with `done{canceled:true}`, and only after that does the cancel get its own `done`, so a `scan` sent after the cancel's `done` is never refused as busy. A target that is not in flight has nothing left to do: the cancel gets `done` at once.
+`target` is the `id` of a scan or execute. A scan stops at once. An execute finishes the action it is running, journals it, and runs nothing after it. The target then ends with its `done`, and only after that does the cancel get its own `done`, so a `scan` sent after the cancel's `done` is never refused as busy. A target that is not in flight has nothing left to do: the cancel gets `done` at once.
+
+The target's `done` says whether the cancel cut it short. Peers read `canceled`; an execute's `result.stopped` carries the same value. A cancel that lands as the target finishes (during an execute's last action, or as a scan wraps up after its last finding) can come too late to change anything: the target then ends `canceled:false` with its full results, and a scan that ends that way can be planned.
 
 ## hello
 
@@ -148,7 +154,7 @@ Errors: `bad_request` (no `plan_id`); `busy`; `unknown_plan` (never issued, alre
 | `line_too_long` | the request line was over 1 MiB; no `re` |
 | `unknown_request` | unknown `type` |
 | `busy` | a scan or execute is in flight |
-| `unknown_scan`, `scan_running`, `scan_canceled`, `scan_superseded` | see plan |
+| `unknown_scan`, `scan_running`, `scan_canceled`, `scan_superseded`, `scan_spent` | see plan |
 | `unknown_plan`, `plan_expired`, `execute_failed` | see execute |
 
 `message` is for people; peers branch on `code`.

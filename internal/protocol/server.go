@@ -17,10 +17,15 @@ import (
 	"github.com/lbagic/regrow/internal/engine"
 	"github.com/lbagic/regrow/internal/executor"
 	"github.com/lbagic/regrow/internal/oplog"
+	"github.com/lbagic/regrow/internal/trash"
 )
 
 const (
 	defaultPlanTTL = 10 * time.Minute
+	// defaultMoveLimit bounds one Trash move. Without Full Disk Access
+	// a syscall on another app's folder can block forever, and no
+	// cancel reaches a goroutine stuck in one.
+	defaultMoveLimit = time.Minute
 	// defaultExitGrace bounds what shutdown waits for that cannot lose
 	// data: a canceled scan winding down, and a reader that stopped
 	// draining events. An execute is always waited for in full.
@@ -58,8 +63,13 @@ type Server struct {
 	// PlanTTL is how long a plan id stays executable; zero means 10
 	// minutes.
 	PlanTTL time.Duration
+	// CleanFlags are the flags `regrow clean` needs in Terminal to see
+	// this engine's catalog (--rules-dir, --beta-rules); sudo skips
+	// name them.
+	CleanFlags []string
 
 	exitGrace time.Duration
+	moveLimit time.Duration
 }
 
 type scanStatus int
@@ -68,6 +78,9 @@ const (
 	scanRunning scanStatus = iota
 	scanDone
 	scanCanceled
+	// scanSpent: an execute ran against the scan's findings, so they
+	// no longer describe the disk.
+	scanSpent
 )
 
 type scanState struct {
@@ -80,6 +93,9 @@ type scanState struct {
 type heldPlan struct {
 	plan    engine.Plan
 	created time.Time
+	// expired marks a plan pruned for age; its body is dropped, its id
+	// kept so an execute of it still hears plan_expired.
+	expired bool
 }
 
 // operation is the one scan or execute in flight.
@@ -161,11 +177,14 @@ loop:
 
 func (s *session) emit(event any) bool { return s.out.send(event) }
 
+// now is wall-clock time. Round(0) drops the monotonic reading, which
+// on macOS stops while the machine sleeps: a plan held overnight must
+// expire.
 func (s *session) now() time.Time {
 	if s.srv.Now != nil {
-		return s.srv.Now()
+		return s.srv.Now().Round(0)
 	}
-	return time.Now()
+	return time.Now().Round(0)
 }
 
 func (s *session) handle(l requestLine) {
@@ -283,16 +302,17 @@ func (s *session) runScan(ctx context.Context, cancel context.CancelFunc, op *op
 		if ctx.Err() != nil {
 			return
 		}
+		f = encodable(f)
 		f.FillItemKeys(s.srv.Host.Home)
-		findings[i] = f
 		ev := findingEvent{head{"finding", op.re}, sc.id, i, took.Milliseconds(), f}
 		if !s.emit(ev) {
-			// A timestamp outside JSON's year range fails the whole
-			// encode. The row still has to arrive, or the peer waits
-			// on this rule forever.
-			ev.Finding = engine.Finding{Rule: f.Rule, Err: "finding could not be encoded"}
+			// The row still has to arrive, or the peer waits on this
+			// rule forever; the engine keeps what the peer saw.
+			f = engine.Finding{Rule: f.Rule, Err: "finding could not be encoded"}
+			ev.Finding = f
 			s.emit(ev)
 		}
+		findings[i] = f
 	})
 	canceled := ctx.Err() != nil
 	if !canceled && s.srv.Account != nil {
@@ -322,6 +342,8 @@ func (s *session) scanFor(id string) (*scanState, string, string) {
 			return nil, CodeScanRunning, fmt.Sprintf("scan %s is still running", id)
 		case scanCanceled:
 			return nil, CodeScanCanceled, fmt.Sprintf("scan %s was canceled: scan again", id)
+		case scanSpent:
+			return nil, CodeScanSpent, fmt.Sprintf("an execute already ran against scan %s: scan again", id)
 		}
 		return cur, "", ""
 	}
@@ -350,15 +372,15 @@ func (s *session) plan(req request) {
 			selected[atom] = true
 		}
 	}
-	plan := engine.BuildPlanWith(s.srv.Host, sc.findings, selected, engine.PlanOptions{NoSudo: true})
+	plan := engine.BuildPlanWith(s.srv.Host, sc.findings, selected, engine.PlanOptions{NoSudo: true, CleanFlags: s.srv.CleanFlags})
 	if plan.Actions == nil {
 		plan.Actions = []engine.Action{}
 	}
 
 	now := s.now()
 	for id, held := range s.plans {
-		if s.expired(held, now) {
-			delete(s.plans, id)
+		if !held.expired && s.expired(held, now) {
+			s.plans[id] = heldPlan{created: held.created, expired: true}
 		}
 	}
 	id := newPlanID(now)
@@ -372,7 +394,7 @@ func (s *session) expired(held heldPlan, now time.Time) bool {
 	if ttl == 0 {
 		ttl = defaultPlanTTL
 	}
-	return now.Sub(held.created) > ttl
+	return held.expired || now.Sub(held.created) > ttl
 }
 
 func (s *session) startExecute(req request) {
@@ -382,14 +404,12 @@ func (s *session) startExecute(req request) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	// Busy is checked before the plan is consumed: a refused execute
-	// leaves its plan usable.
 	if s.busy(req) {
 		return
 	}
 	held, ok := s.plans[req.PlanID]
 	if !ok {
-		s.emit(failure(req.ID, CodeUnknownPlan, fmt.Sprintf("unknown plan %q: never issued, already executed, expired, or from a scan a newer scan replaced", req.PlanID)))
+		s.emit(failure(req.ID, CodeUnknownPlan, fmt.Sprintf("unknown plan %q: never issued, or dropped when an execute or a newer scan started", req.PlanID)))
 		return
 	}
 	delete(s.plans, req.PlanID)
@@ -397,6 +417,11 @@ func (s *session) startExecute(req request) {
 		s.emit(failure(req.ID, CodePlanExpired, fmt.Sprintf("plan %s expired: plan again", req.PlanID)))
 		return
 	}
+	// The run changes what the scan measured. Another plan of it could
+	// replay against that: a second Empty Trash would destroy this
+	// run's Trash moves.
+	clear(s.plans)
+	s.scan.status = scanSpent
 	stopped := new(atomic.Bool)
 	op := s.begin(req, func() { stopped.Store(true) })
 	go s.runExecute(op, req.PlanID, held.plan, stopped)
@@ -415,6 +440,13 @@ func (s *session) runExecute(op *operation, runID string, plan engine.Plan, stop
 	defer release()
 	ex.RunID = runID
 	ex.Stop = stopped.Load
+	if ex.Trash != nil {
+		limit := s.srv.moveLimit
+		if limit == 0 {
+			limit = defaultMoveLimit
+		}
+		ex.Trash = boundedMover{ex.Trash, limit}
+	}
 	ex.Log = journalTee{ex.Log, func(e oplog.Entry) { s.emit(journalEvent{head{"journal", op.re}, e}) }}
 	if ex.RunNative == nil {
 		ex.RunNative = RunNative
@@ -467,6 +499,58 @@ func (s *session) shutdown(grace time.Duration) {
 	case <-op.finished:
 	case <-timer.C:
 	}
+}
+
+// boundedMover gives up on a Trash move after limit. A move stuck in a
+// syscall is abandoned, not stopped: its goroutine stays blocked, and
+// a Finder move already requested may still land in the Trash.
+type boundedMover struct {
+	inner executor.Mover
+	limit time.Duration
+}
+
+func (b boundedMover) Move(ctx context.Context, path string) (trash.Receipt, error) {
+	ctx, cancel := context.WithTimeout(ctx, b.limit)
+	defer cancel()
+	type outcome struct {
+		receipt trash.Receipt
+		err     error
+	}
+	result := make(chan outcome, 1)
+	go func() {
+		r, err := b.inner.Move(ctx, path)
+		result <- outcome{r, err}
+	}()
+	select {
+	case o := <-result:
+		return o.receipt, o.err
+	case <-ctx.Done():
+	}
+	select {
+	case o := <-result:
+		return o.receipt, o.err
+	default:
+		return trash.Receipt{}, fmt.Errorf("moving %s to the Trash did not finish within %s (a blocked or unreadable folder?): if it reaches the Trash after all, Finder's Put Back restores it", path, b.limit)
+	}
+}
+
+// encodable clears what JSON cannot carry: a time outside years
+// 0–9999, which reads as unknown instead.
+func encodable(f engine.Finding) engine.Finding {
+	var items []engine.Item
+	for i, it := range f.Items {
+		if y := it.LastUsed.Year(); y >= 0 && y <= 9999 {
+			continue
+		}
+		if items == nil {
+			items = append([]engine.Item(nil), f.Items...)
+		}
+		items[i].LastUsed = time.Time{}
+	}
+	if items != nil {
+		f.Items = items
+	}
+	return f
 }
 
 // journalTee forwards an entry to the peer once the journal has

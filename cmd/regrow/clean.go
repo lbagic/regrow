@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -84,7 +85,7 @@ func printPlanActions(plan engine.Plan) {
 // executor. Both confirmation paths (clean prompt, TUI plan → x → y)
 // land here.
 func executePlan(host engine.Host, plan engine.Plan) error {
-	exec, release, err := newRunExecutor(host, executor.NewRunID(time.Now()))
+	exec, release, err := newRunExecutor(host, executor.NewRunID(time.Now()), nil)
 	if err != nil {
 		return err
 	}
@@ -103,8 +104,9 @@ func executePlan(host engine.Host, plan engine.Plan) error {
 
 // newRunExecutor wires the executor of one run: the journal, and a
 // mover and volume exporter pointed at the run's staging directory.
-// release closes the journal.
-func newRunExecutor(host engine.Host, runID string) (*executor.Executor, func(), error) {
+// stream runs the export's docker command; nil streams docker's
+// stderr to the terminal. release closes the journal.
+func newRunExecutor(host engine.Host, runID string, stream func(context.Context, []string, io.Writer) error) (*executor.Executor, func(), error) {
 	logPath, err := oplog.DefaultPath()
 	if err != nil {
 		return nil, nil, err
@@ -128,7 +130,7 @@ func newRunExecutor(host engine.Host, runID string) (*executor.Executor, func(),
 		Trash: &trash.Mover{Home: host.Home, StagingDir: stagingDir},
 		Log:   log,
 		PreActions: map[string]executor.PreAction{
-			engine.PreActionVolumeExport: (&docker.Exporter{StagingDir: stagingDir, CapBytes: capBytes}).PreAction,
+			engine.PreActionVolumeExport: (&docker.Exporter{StagingDir: stagingDir, CapBytes: capBytes, Stream: stream}).PreAction,
 			engine.PreActionAgentScratchRecheck: func(ctx context.Context, a engine.Action) (*trash.Receipt, error) {
 				return nil, scanner.RecheckAgentScratch(ctx, a.Path)
 			},

@@ -156,7 +156,7 @@ func run(args []string) error {
 	case "prune":
 		return runPrune(host, catalog, ids, opts)
 	case "engine":
-		return runEngine(host, catalog)
+		return runEngine(host, catalog, opts)
 	case "undo":
 		return runUndo(ids)
 	case "history":

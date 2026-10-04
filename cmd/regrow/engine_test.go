@@ -6,7 +6,11 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"os/exec"
+	"os/signal"
 	"path/filepath"
+	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/lbagic/regrow/internal/engine"
@@ -35,7 +39,7 @@ func TestEngineScansAndPlansThroughTheRealScanner(t *testing.T) {
 	outR, outW := io.Pipe()
 	served := make(chan error, 1)
 	go func() {
-		served <- serveEngine(context.Background(), host, catalog, inR, outW)
+		served <- serveEngine(context.Background(), host, catalog, nil, inR, outW)
 		_ = outW.Close()
 	}()
 	lines := bufio.NewScanner(outR)
@@ -92,5 +96,56 @@ func TestEngineScansAndPlansThroughTheRealScanner(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(target, "a.bin")); err != nil {
 		t.Fatalf("scan and plan must not touch the fixture: %v", err)
+	}
+}
+
+func TestCleanFlagsLoadTheSameCatalogFromTerminal(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	got, err := cleanFlags(options{rulesDir: "my-rules", betaRules: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"--rules-dir", filepath.Join(dir, "my-rules"), "--beta-rules"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("cleanFlags = %q, want %q", got, want)
+	}
+	if got, _ := cleanFlags(options{}); len(got) != 0 {
+		t.Fatalf("the embedded catalog needs no flags, got %q", got)
+	}
+}
+
+// A stand-in docker on PATH: the export's reason must reach the error
+// the journal records, and its stdout the tarball.
+func TestDockerStreamCapturesTheExportsStderr(t *testing.T) {
+	bin := t.TempDir()
+	script := "#!/bin/sh\nprintf tar-bytes\necho \"volume busy: $*\" >&2\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(bin, "docker"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	var tarball strings.Builder
+	err := dockerStream(context.Background(), []string{"run", "--rm", "fixture-volume"}, &tarball)
+	if tarball.String() != "tar-bytes" {
+		t.Errorf("tarball got %q", tarball.String())
+	}
+	if err == nil || !strings.Contains(err.Error(), "volume busy: run --rm fixture-volume") {
+		t.Fatalf("err = %v, want docker's stderr in it", err)
+	}
+}
+
+func TestStewardCommandsKeepTheDefaultSIGPIPE(t *testing.T) {
+	keepRunningOnEPIPE()
+	t.Cleanup(func() { signal.Reset(syscall.SIGPIPE) })
+	// yes dies quietly of SIGPIPE when head exits; with SIGPIPE ignored
+	// it gets EPIPE and complains on stderr.
+	var stderr strings.Builder
+	cmd := exec.Command("/bin/sh", "-c", "yes | head -1")
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatal(err)
+	}
+	if stderr.String() != "" {
+		t.Fatalf("a child inherited an ignored SIGPIPE: %q", stderr.String())
 	}
 }

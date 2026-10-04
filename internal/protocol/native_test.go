@@ -57,6 +57,17 @@ func TestRunNativeKeepsOnlyTheTail(t *testing.T) {
 	}
 }
 
+func TestRunNativeToSendsStdoutToTheWriter(t *testing.T) {
+	var data strings.Builder
+	err := RunNativeTo(context.Background(), sh(`printf payload; echo why-it-failed >&2; exit 2`), &data)
+	if data.String() != "payload" {
+		t.Errorf("writer got %q, want the command's stdout", data.String())
+	}
+	if err == nil || !strings.HasSuffix(err.Error(), "exit status 2: why-it-failed") {
+		t.Fatalf("err = %v, want stderr's tail and nothing of stdout", err)
+	}
+}
+
 func TestRunNativeRefusesSudo(t *testing.T) {
 	err := RunNative(context.Background(), []string{"sudo", "/bin/sh", "-c", "exit 0"})
 	if err == nil || !strings.Contains(err.Error(), "administrator rights") {

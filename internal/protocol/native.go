@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os/exec"
 	"strings"
 	"time"
@@ -21,6 +22,17 @@ const (
 // for stdin and its stdout and stderr are captured; a failure carries
 // the tail of that output, which is what the journal records.
 func RunNative(ctx context.Context, argv []string) error {
+	return runCaptured(ctx, argv, nil)
+}
+
+// RunNativeTo is RunNative with the command's stdout sent to w, for a
+// command whose output is data (a docker volume tarball). Only stderr
+// is captured then.
+func RunNativeTo(ctx context.Context, argv []string, w io.Writer) error {
+	return runCaptured(ctx, argv, w)
+}
+
+func runCaptured(ctx context.Context, argv []string, stdout io.Writer) error {
 	if len(argv) == 0 {
 		return errors.New("empty command")
 	}
@@ -30,6 +42,9 @@ func RunNative(ctx context.Context, argv []string) error {
 	out := &tail{max: nativeTailBytes}
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Stdout, cmd.Stderr = out, out
+	if stdout != nil {
+		cmd.Stdout = stdout
+	}
 	cmd.WaitDelay = nativeWaitDelay
 	err := cmd.Run()
 	if err == nil || errors.Is(err, exec.ErrWaitDelay) {

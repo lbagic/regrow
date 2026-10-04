@@ -32,6 +32,7 @@ const (
 	CodeScanRunning    = "scan_running"
 	CodeScanCanceled   = "scan_canceled"
 	CodeScanSuperseded = "scan_superseded"
+	CodeScanSpent      = "scan_spent"
 	CodeUnknownPlan    = "unknown_plan"
 	CodePlanExpired    = "plan_expired"
 	CodeExecuteFailed  = "execute_failed"

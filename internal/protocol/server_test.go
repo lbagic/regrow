@@ -278,15 +278,16 @@ func TestPlanExpiresAfterTenMinutes(t *testing.T) {
 	srv.Now = clock.Now
 	p := start(t, srv)
 	p.expect("hello")
-	scanID := p.scanned("s", 2)
-	onTime := p.planned("p1", scanID, `["fixture-cache"]`)
-	late := p.planned("p2", scanID, `["fixture-logs"]`)
 
+	// Exactly ten minutes old still runs.
+	onTime := p.planned("p1", p.scanned("s1", 2), `["fixture-cache"]`)
 	clock.advance(10 * time.Minute)
 	p.send(`{"type":"execute","id":"x1","plan_id":"` + onTime.PlanID + `"}`)
 	p.expect("journal/x1", "journal/x1", "done/x1")
 
-	clock.advance(time.Second)
+	// A second older does not.
+	late := p.planned("p2", p.scanned("s2", 2), `["fixture-logs"]`)
+	clock.advance(10*time.Minute + time.Second)
 	p.send(`{"type":"execute","id":"x2","plan_id":"` + late.PlanID + `"}`)
 	p.expectError("x2", CodePlanExpired)
 	if !exists(m.logs) {
@@ -297,9 +298,33 @@ func TestPlanExpiresAfterTenMinutes(t *testing.T) {
 			t.Fatalf("an expired plan was journaled: %+v", e)
 		}
 	}
-	// Expiry consumed the id too.
+	// Expiry consumed the id.
 	p.send(`{"type":"execute","id":"x3","plan_id":"` + late.PlanID + `"}`)
 	p.expectError("x3", CodeUnknownPlan)
+
+	// A plan pruned for age while another plan is made still answers
+	// plan_expired, and its expiry spends nothing else.
+	scanID := p.scanned("s3", 2)
+	stale := p.planned("p3", scanID, `["fixture-logs"]`)
+	clock.advance(11 * time.Minute)
+	fresh := p.planned("p4", scanID, `["fixture-logs"]`)
+	p.send(`{"type":"execute","id":"x4","plan_id":"` + stale.PlanID + `"}`)
+	p.expectError("x4", CodePlanExpired)
+	p.send(`{"type":"execute","id":"x5","plan_id":"` + fresh.PlanID + `"}`)
+	if done := p.expect("journal/x5", "journal/x5", "done/x5")[2]; done.Result.Done != 1 || exists(m.logs) {
+		t.Fatalf("the fresh plan did not run: %s", done.raw)
+	}
+}
+
+func TestPlanClockIgnoresTheMonotonicReading(t *testing.T) {
+	// The monotonic clock stops while a Mac sleeps; a plan made before
+	// a night with the lid closed must be measured in wall time.
+	for _, srv := range []*Server{{}, {Now: time.Now}} {
+		s := &session{srv: srv}
+		if got := s.now(); strings.Contains(got.String(), " m=") {
+			t.Fatalf("plan clock %s carries a monotonic reading", got)
+		}
+	}
 }
 
 func TestNewScanSupersedesOlderPlans(t *testing.T) {
@@ -322,6 +347,37 @@ func TestNewScanSupersedesOlderPlans(t *testing.T) {
 	p.expectError("p2", CodeScanSuperseded)
 	p.send(`{"type":"plan","id":"p3","scan_id":"never-issued"}`)
 	p.expectError("p3", CodeUnknownScan)
+}
+
+// Plans die when a newer scan starts, not when it finishes: a canceled
+// rescan still ends them.
+func TestPlansDieWhenANewScanStarts(t *testing.T) {
+	m := newMachine(t)
+	srv := m.server()
+	fixed := srv.Scan
+	calls := 0
+	srv.Scan = func(ctx context.Context, rules []engine.Rule, emit func(int, engine.Finding, time.Duration)) {
+		calls++
+		if calls == 1 {
+			fixed(ctx, rules, emit)
+			return
+		}
+		<-ctx.Done()
+	}
+	p := start(t, srv)
+	p.expect("hello")
+	planned := p.planned("p", p.scanned("s1", 2), bothRules)
+
+	p.send(`{"type":"scan","id":"s2"}`)
+	p.expect("start/s2")
+	p.send(`{"type":"cancel","id":"c","target":"s2"}`)
+	p.expect("done/s2", "done/c")
+
+	p.send(`{"type":"execute","id":"x","plan_id":"` + planned.PlanID + `"}`)
+	p.expectError("x", CodeUnknownPlan)
+	if !exists(m.cache) || len(m.journal()) != 0 {
+		t.Fatal("a plan outlived the scan that started after it")
+	}
 }
 
 func TestCancelThenRescan(t *testing.T) {
@@ -391,18 +447,47 @@ func TestBusyWhileExecuting(t *testing.T) {
 	p.expectError("s2", CodeBusy)
 	p.send(`{"type":"execute","id":"x2","plan_id":"` + logsPlan.PlanID + `"}`)
 	p.expectError("x2", CodeBusy)
+	// A plan built while the execute runs would replay against
+	// findings it is changing.
+	p.send(`{"type":"plan","id":"p3","scan_id":"` + scanID + `"}`)
+	p.expectError("p3", CodeScanSpent)
 
 	close(gate.release)
 	p.expect("journal/x1", "done/x1")
 
-	// Neither refusal cost anything: the scan was not replaced and
-	// the refused plan is still executable.
+	// The refused scan did not replace the spent one, and the slot is
+	// free again.
+	p.send(`{"type":"plan","id":"p4","scan_id":"` + scanID + `"}`)
+	p.expectError("p4", CodeScanSpent)
+	logsPlan = p.planned("p5", p.scanned("s3", 2), `["fixture-logs"]`)
 	p.send(`{"type":"execute","id":"x3","plan_id":"` + logsPlan.PlanID + `"}`)
 	gate.waitEntered(t, m.logs)
-	done := p.expect("journal/x3", "journal/x3", "done/x3")[2]
-	if done.Result.Done != 1 || exists(m.logs) {
-		t.Fatalf("the plan refused as busy did not run afterwards: %s", done.raw)
+	if done := p.expect("journal/x3", "journal/x3", "done/x3")[2]; done.Result.Done != 1 || exists(m.logs) {
+		t.Fatalf("an execute after the busy one did not run: %s", done.raw)
 	}
+}
+
+// Two plans of one scan, both emptying the Trash: run back to back,
+// the second would permanently delete the first run's Trash moves.
+func TestExecuteSpendsEveryPlanOfItsScan(t *testing.T) {
+	m := newMachine(t)
+	p := start(t, m.server())
+	p.expect("hello")
+	scanID := p.scanned("s", 2)
+	first := p.planned("p1", scanID, `["fixture-cache"]`)
+	second := p.planned("p2", scanID, bothRules)
+
+	p.send(`{"type":"execute","id":"x1","plan_id":"` + first.PlanID + `"}`)
+	p.expect("journal/x1", "journal/x1", "done/x1")
+	journaled := len(m.journal())
+
+	p.send(`{"type":"execute","id":"x2","plan_id":"` + second.PlanID + `"}`)
+	p.expectError("x2", CodeUnknownPlan)
+	if !exists(m.logs) || len(m.journal()) != journaled {
+		t.Fatal("a second plan of an executed scan ran")
+	}
+	p.send(`{"type":"plan","id":"p3","scan_id":"` + scanID + `"}`)
+	p.expectError("p3", CodeScanSpent)
 }
 
 func TestCancelStopsAnExecuteBetweenActions(t *testing.T) {
@@ -631,23 +716,69 @@ func TestMalformedRequests(t *testing.T) {
 	p.expect("done/c")
 }
 
-func TestFindingThatCannotBeEncodedStillArrives(t *testing.T) {
+func TestFindingWithAnUnencodableTimeArrivesAsUnknown(t *testing.T) {
 	m := newMachine(t)
 	findings := m.findings()
 	findings[0].Items[0].LastUsed = time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC)
 	srv := m.server()
 	srv.Scan = scanOf(findings)
+	var accounted []engine.Finding
+	srv.Account = func(f []engine.Finding) engine.Ledger {
+		accounted = f
+		return engine.Ledger{}
+	}
 	p := start(t, srv)
 	p.expect("hello")
 
 	p.send(`{"type":"scan","id":"s"}`)
-	scan := p.expect("start/s", "finding/s", "finding/s", "done/s")
-	if f := scan[1].Finding; f.Rule.ID != "fixture-cache" || f.Err == "" || len(f.Items) != 0 {
-		t.Fatalf("the unencodable finding arrived as %s, want its rule and an error", scan[1].raw)
+	scan := p.expect("start/s", "finding/s", "finding/s", "summary/s", "done/s")
+	f := scan[1].Finding
+	if f.Err != "" || len(f.Items) != 1 || f.Items[0].Bytes != 100 || !f.Items[0].LastUsed.IsZero() {
+		t.Fatalf("finding = %s, want the item with last_used unknown", scan[1].raw)
 	}
-	// The engine kept the measured finding: it still plans.
+	// The engine holds what the peer saw, and plans from it.
+	if !accounted[0].Items[0].LastUsed.IsZero() {
+		t.Fatalf("the engine kept last_used %s the peer never saw", accounted[0].Items[0].LastUsed)
+	}
 	if got := actionRules(p.planned("p", scan[0].ScanID, "").Plan); got != "fixture-cache" {
 		t.Fatalf("plan = %q", got)
+	}
+}
+
+// blockedMover never returns a move of block, as a Finder move or
+// Lstat stuck on a folder without Full Disk Access would.
+type blockedMover struct {
+	inner   executor.Mover
+	block   string
+	release chan struct{}
+}
+
+func (b blockedMover) Move(ctx context.Context, path string) (trash.Receipt, error) {
+	if path == b.block {
+		<-b.release
+		return trash.Receipt{}, errors.New("released")
+	}
+	return b.inner.Move(ctx, path)
+}
+
+func TestABlockedTrashMoveFailsAfterItsLimit(t *testing.T) {
+	m := newMachine(t)
+	stuck := blockedMover{inner: m.mover(), block: m.cache, release: make(chan struct{})}
+	t.Cleanup(func() { close(stuck.release) })
+	srv := m.server()
+	srv.NewExecutor = m.executors(stuck)
+	srv.moveLimit = 50 * time.Millisecond
+	p := start(t, srv)
+	p.expect("hello")
+	planned := p.planned("p", p.scanned("s", 2), bothRules)
+
+	p.send(`{"type":"execute","id":"x","plan_id":"` + planned.PlanID + `"}`)
+	run := p.expect("journal/x", "journal/x", "journal/x", "journal/x", "done/x")
+	if e := run[1].Entry; e.Event != oplog.EventFail || !strings.Contains(e.Error, "did not finish within 50ms") {
+		t.Fatalf("the blocked move journaled %s", run[1].raw)
+	}
+	if res := run[4].Result; res.Failed != 1 || res.Done != 1 || exists(m.logs) {
+		t.Fatalf("result = %s, want the blocked move failed and the next one run", run[4].raw)
 	}
 }
 
