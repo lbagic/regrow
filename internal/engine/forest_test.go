@@ -279,3 +279,28 @@ func TestBuildPlanGuardsPerItemCommandPaths(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildPlanNamesAnEarlierRulesItemAtTheSamePath(t *testing.T) {
+	// On equal paths the earlier rule is the forest's parent, so the
+	// later rule's action does not find it among its descendants.
+	findings := []Finding{
+		{Rule: Rule{ID: "early", Risk: RiskCaution}, Items: []Item{{Path: "/Users/t/w/c", Bytes: 70}}},
+		{Rule: Rule{ID: "late", Risk: RiskCaution, NativeCommand: Argv{"tool", "rm", "{path}"}},
+			Items: []Item{{Path: "/Users/t/w/c", Bytes: 70}}},
+	}
+	plan := BuildPlan(testHost, findings, map[string]bool{"late": true})
+	if want := []string{"late/~/w/c"}; !reflect.DeepEqual(actionIDs(plan), want) {
+		t.Fatalf("actions = %v, want %v", actionIDs(plan), want)
+	}
+	if got, want := plan.Actions[0].Includes, []Included{{ID: "early/~/w/c", Bytes: 70}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("includes = %+v, want the unselected item of the earlier rule at the same path: %+v", got, want)
+	}
+
+	plan = BuildPlan(testHost, findings, selectRules(findings...))
+	if want := []string{"early/~/w/c"}; !reflect.DeepEqual(actionIDs(plan), want) {
+		t.Fatalf("both selected: actions = %v, want %v", actionIDs(plan), want)
+	}
+	if got := plan.Actions[0].Includes; len(got) != 0 {
+		t.Fatalf("both selected: includes = %+v, want none, the later item has its own skip line", got)
+	}
+}
