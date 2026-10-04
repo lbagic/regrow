@@ -35,6 +35,10 @@ type Action struct {
 	// Bytes counts only items that no other action of the plan
 	// contains.
 	Bytes int64 `json:"bytes"`
+	// EmptiesTrash: the action permanently empties the Trash. The
+	// planner puts it first; if it fails, the executor skips the run's
+	// Trash moves, since Finder may still be emptying.
+	EmptiesTrash bool `json:"empties_trash,omitempty"`
 }
 
 // Skip records why a selected finding produced no action.
@@ -180,9 +184,6 @@ func (s selection) unmatched(findings []Finding, matched map[string]bool) []stri
 type draft struct {
 	action Action
 	items  []itemRef
-	// first: the action empties the Trash, so it must run before any
-	// move of this run lands there.
-	first bool
 }
 
 // BuildPlan turns selected findings into the exact command list.
@@ -339,12 +340,12 @@ func nativeDrafts(findings []Finding, tree forest, r Rule, refs []itemRef, parti
 		}
 		return []draft{{
 			action: Action{
-				RuleID:  r.ID,
-				Kind:    ActionNative,
-				Command: withSudo(r.Sudo, r.NativeCommand),
+				RuleID:       r.ID,
+				Kind:         ActionNative,
+				Command:      withSudo(r.Sudo, r.NativeCommand),
+				EmptiesTrash: r.EmptiesTrash,
 			},
 			items: refs,
-			first: r.EmptiesTrash,
 		}}, nil
 	}
 	var ds []draft
@@ -378,10 +379,11 @@ func nativeDrafts(findings []Finding, tree forest, r Rule, refs []itemRef, parti
 // resolveNesting applies the containment forest to the drafts. An item
 // with a planned ancestor is deleted by that ancestor's action, so its
 // bytes are not counted again, and a draft left with no item of its
-// own is dropped. Dropping one never uncovers anything: the ancestor
-// that covers it covers its descendants too. A whole-rule command
-// cannot leave items out, so it still runs while any of its items is
-// uncovered. Trash-emptying actions move to the front.
+// own is dropped. Dropping one never uncovers anything: the topmost
+// planned ancestor of a covered item has no planned ancestor itself,
+// so its action always runs. A whole-rule command cannot leave items
+// out, so it still runs while any of its items is uncovered.
+// Trash-emptying actions move to the front.
 func resolveNesting(findings []Finding, tree forest, drafts []draft) ([]Action, []Skip) {
 	owner := map[itemRef]int{}
 	for di, d := range drafts {
@@ -389,45 +391,61 @@ func resolveNesting(findings []Finding, tree forest, drafts []draft) ([]Action, 
 			owner[ref] = di
 		}
 	}
+	bytes := make([]int64, len(drafts))
+	kept := make([]bool, len(drafts))
+	for di, d := range drafts {
+		for _, ref := range d.items {
+			if !hasPlannedAncestor(tree, owner, ref) {
+				kept[di] = true
+				bytes[di] += itemAt(findings, ref).Bytes
+			}
+		}
+	}
 	var first, rest []Action
 	var skips []Skip
 	for di, d := range drafts {
-		var bytes int64
-		var own int
-		var cover string
-		for _, ref := range d.items {
-			covered := false
-			for _, a := range tree.ancestors(ref) {
-				oi, planned := owner[a]
-				if !planned {
-					continue
-				}
-				covered = true
-				if oi != di {
-					if cover == "" {
-						cover = refID(findings, a)
-					}
-					break
-				}
-			}
-			if !covered {
-				own++
-				bytes += itemAt(findings, ref).Bytes
-			}
-		}
-		if own == 0 {
-			skips = append(skips, Skip{RuleID: d.action.RuleID, ItemKey: d.action.ItemKey, Reason: fmt.Sprintf("inside %s, also selected", cover)})
+		if !kept[di] {
+			cover := runningAncestor(tree, owner, kept, d.items[0])
+			skips = append(skips, Skip{RuleID: d.action.RuleID, ItemKey: d.action.ItemKey,
+				Reason: fmt.Sprintf("inside %s, also selected", refID(findings, cover))})
 			continue
 		}
 		a := d.action
-		a.Bytes = bytes
-		if d.first {
+		a.Bytes = bytes[di]
+		if a.EmptiesTrash {
 			first = append(first, a)
 		} else {
 			rest = append(rest, a)
 		}
 	}
 	return append(first, rest...), skips
+}
+
+func hasPlannedAncestor(tree forest, owner map[itemRef]int, ref itemRef) bool {
+	for _, a := range tree.ancestors(ref) {
+		if _, planned := owner[a]; planned {
+			return true
+		}
+	}
+	return false
+}
+
+// runningAncestor is the nearest ancestor of a covered item whose
+// action stays in the plan. The topmost planned ancestor always
+// qualifies, so the loop returns before falling through.
+func runningAncestor(tree forest, owner map[itemRef]int, kept []bool, ref itemRef) itemRef {
+	var top itemRef
+	for _, a := range tree.ancestors(ref) {
+		oi, planned := owner[a]
+		if !planned {
+			continue
+		}
+		if kept[oi] {
+			return a
+		}
+		top = a
+	}
+	return top
 }
 
 func withSudo(sudo bool, argv []string) []string {

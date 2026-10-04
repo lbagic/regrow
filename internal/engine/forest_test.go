@@ -2,7 +2,6 @@ package engine
 
 import (
 	"reflect"
-	"strings"
 	"testing"
 )
 
@@ -58,7 +57,9 @@ func TestBuildPlanSubsumesNestedSelections(t *testing.T) {
 	if r := reasons["inner/~/p/q"]; r != "inside outer/~/p, also selected" {
 		t.Errorf("inner skip reason = %q", r)
 	}
-	if r := reasons["per-item-native/~/p/q/r"]; !strings.HasPrefix(r, "inside ") || !strings.HasSuffix(r, ", also selected") {
+	// The nearest selected ancestor (inner) is skipped too; the reason
+	// names the action that actually deletes the item.
+	if r := reasons["per-item-native/~/p/q/r"]; r != "inside outer/~/p, also selected" {
 		t.Errorf("nested native item skip reason = %q", r)
 	}
 	if got := plan.TotalBytes(); got != 107 {
