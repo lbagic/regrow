@@ -208,10 +208,13 @@ func classify(snap *Snapshot, cfg config.Docker, capBytes int64, now time.Time) 
 		})
 	}
 
+	// A shared record's bytes are an image layer's: pruning the record
+	// frees nothing while the image stays, and `docker system df`
+	// leaves it out of RECLAIMABLE for the same reason.
 	var cacheBytes int64
 	var cacheNewest time.Time
 	for _, bc := range snap.BuildCache {
-		if bc.InUse || bc.LastUsedAt.IsZero() || bc.LastUsedAt.After(staleBefore) {
+		if bc.InUse || bc.Shared || bc.LastUsedAt.IsZero() || bc.LastUsedAt.After(staleBefore) {
 			continue
 		}
 		cacheBytes += bc.Bytes

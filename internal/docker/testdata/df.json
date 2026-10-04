@@ -21,6 +21,7 @@
   "BuildCache": [
     {"ID": "mxl83c8k9k2k12gmygiyef3m9", "CacheType": "regular", "InUse": "false", "Shared": "true", "Size": "139MB", "LastUsedAt": "2026-06-12 09:00:25.781099506 +0000 UTC", "UsageCount": "1"},
     {"ID": "inuserecord0000000000000", "CacheType": "regular", "InUse": "true", "Shared": "false", "Size": "50MB", "LastUsedAt": "2026-05-01 00:00:00 +0000 UTC", "UsageCount": "3"},
-    {"ID": "recentrecord000000000000", "CacheType": "regular", "InUse": "false", "Shared": "false", "Size": "70MB", "LastUsedAt": "2026-07-12 08:00:00 +0000 UTC", "UsageCount": "1"}
+    {"ID": "recentrecord000000000000", "CacheType": "regular", "InUse": "false", "Shared": "false", "Size": "70MB", "LastUsedAt": "2026-07-12 08:00:00 +0000 UTC", "UsageCount": "1"},
+    {"ID": "stalerecord0000000000000", "CacheType": "regular", "InUse": "false", "Shared": "false", "Size": "25MB", "LastUsedAt": "2026-06-01 00:00:00 +0000 UTC", "UsageCount": "1"}
   ]
 }

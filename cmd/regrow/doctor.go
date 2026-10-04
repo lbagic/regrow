@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
+	"os"
 
 	"github.com/lbagic/regrow/internal/engine"
 	"github.com/lbagic/regrow/internal/scanner"
@@ -25,54 +27,64 @@ func runDoctor(host engine.Host, catalog []engine.Rule, asJSON bool) error {
 }
 
 func printDoctorReport(rep engine.DoctorReport) {
-	fmt.Println("regrow doctor — known runaway bugs, and where the \"missing\" space hides")
-	fmt.Println()
+	writeDoctorReport(os.Stdout, rep)
+}
 
-	fmt.Println("HERO BUGS")
-	flagged := 0
+func writeDoctorReport(w io.Writer, rep engine.DoctorReport) {
+	p := func(format string, a ...any) { _, _ = fmt.Fprintf(w, format, a...) }
+	p("regrow doctor — known runaway bugs, and where the \"missing\" space hides\n\n")
+
+	p("HERO BUGS\n")
+	var flagged, unknown int
 	for _, c := range rep.Hero {
 		f := c.Finding
+		size := engine.SizeText(f.TotalBytes(), f.Partial())
+		line := tui.HumanBytes(int64(f.Rule.Doctor.FlagAbove))
 		switch {
-		case f.Err != "":
-			fmt.Printf("  ! %-34s %10s  scan failed: %s\n", f.Rule.Title, "", f.Err)
-		case c.Flagged:
+		case c.Verdict == engine.VerdictFlagged:
 			flagged++
-			fmt.Printf("  🚩 %-33s %10s  RUNAWAY — healthy is under %s\n",
-				f.Rule.Title, tui.HumanBytes(f.TotalBytes()), tui.HumanBytes(int64(f.Rule.Doctor.FlagAbove)))
-			fmt.Printf("       %s\n", f.Rule.Doctor.Story)
-			fmt.Printf("       fix: regrow clean %s%s\n", f.Rule.ID, nativeHint(f.Rule))
+			p("  🚩 %-33s %12s  RUNAWAY — healthy is under %s\n", f.Rule.Title, size, line)
+			p("       %s\n", f.Rule.Doctor.Story)
+			p("       fix: regrow clean %s%s\n", f.Rule.ID, nativeHint(f.Rule))
+		case f.Err != "":
+			unknown++
+			p("  ? %-34s %12s  unknown — scan failed: %s\n", f.Rule.Title, "", f.Err)
+		case c.Verdict == engine.VerdictUnknown:
+			unknown++
+			p("  ? %-34s %12s  unknown — flags above %s; %s\n", f.Rule.Title, size, line, engine.PartialText(f.TotalBytes(), true))
 		case len(f.Items) == 0:
-			fmt.Printf("  ✓ %-34s %10s  not present\n", f.Rule.Title, "")
+			p("  ✓ %-34s %12s  not present\n", f.Rule.Title, "")
 		default:
-			fmt.Printf("  ✓ %-34s %10s  normal (flags above %s)\n",
-				f.Rule.Title, tui.HumanBytes(f.TotalBytes()), tui.HumanBytes(int64(f.Rule.Doctor.FlagAbove)))
+			p("  ✓ %-34s %12s  normal (flags above %s)\n", f.Rule.Title, size, line)
 		}
 	}
 
-	fmt.Println()
-	fmt.Println("PHANTOM SPACE — why Finder shows more used than your files add up to")
+	p("\nPHANTOM SPACE — why Finder shows more used than your files add up to\n")
 	for _, f := range rep.Phantom {
 		switch {
 		case f.Err != "":
-			fmt.Printf("  ! %-34s %10s  scan failed: %s\n", f.Rule.Title, "", f.Err)
+			p("  ! %-34s %12s  scan failed: %s\n", f.Rule.Title, "", f.Err)
 		case len(f.Items) == 0:
-			fmt.Printf("  • %-34s %10s  not present\n", f.Rule.Title, "")
+			p("  • %-34s %12s  not present\n", f.Rule.Title, "")
 		default:
-			fmt.Printf("  • %-34s %10s\n", f.Rule.Title, tui.HumanBytes(f.TotalBytes()))
+			p("  • %-34s %12s\n", f.Rule.Title, engine.SizeText(f.TotalBytes(), f.Partial()))
 			for _, it := range f.Items {
-				fmt.Printf("      %s\n", itemLine(it))
+				p("      %s\n", itemLine(it))
 			}
 			if f.Rule.Note != "" {
-				fmt.Printf("      %s\n", f.Rule.Note)
+				p("      %s\n", f.Rule.Note)
 			}
 		}
 	}
 
-	fmt.Println()
-	if flagged > 0 {
-		fmt.Printf("%d runaway bug(s) found. Fixes above are dry-run first: `regrow plan <id>` shows the exact commands.\n", flagged)
-	} else {
-		fmt.Println("No runaway bugs on this machine. Phantom space above is informational — nothing needs fixing.")
+	p("\n")
+	switch {
+	case flagged > 0:
+		p("%d runaway bug(s) found. Fixes above are dry-run first: `regrow plan <id>` shows the exact commands.\n", flagged)
+	case unknown > 0:
+		p("No runaway bug in what could be read; %d check(s) unknown above. Phantom space is informational.\n", unknown)
+	default:
+		p("No runaway bugs on this machine. Phantom space above is informational — nothing needs fixing.\n")
 	}
 }
 

@@ -33,7 +33,7 @@ func TestScanOllamaModels(t *testing.T) {
 		  "layers":[{"digest":"sha256-hf","size":1000000}]}`)
 	writeManifest(t, dir, []string{"registry.ollama.ai", "library", "broken", "latest"}, `{not json`)
 
-	items, err := scanOllamaModels(context.Background(), dir)
+	items, err := scanOllamaModels(context.Background(), testWalker(), dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +88,7 @@ func TestOllamaManifestsDirEnvOverride(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("OLLAMA_MODELS", base)
-	got, ok := ollamaManifestsDir()
+	got, ok := ollamaManifestsDir(context.Background(), testWalker())
 	if !ok || got != filepath.Join(base, "manifests") {
 		t.Fatalf("ollamaManifestsDir() = (%q, %v)", got, ok)
 	}

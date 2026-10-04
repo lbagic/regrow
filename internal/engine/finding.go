@@ -19,18 +19,23 @@ type Item struct {
 	// for `ollama rm {arg}`, a runtime id for simctl).
 	Arg string `json:"arg,omitempty"`
 	// Bytes is measured disk usage (physical blocks, du-style), or a
-	// tool-reported size.
+	// tool-reported size: the whole item, nested items included.
 	Bytes int64 `json:"bytes"`
-	// LastUsed is a best-effort recency signal; zero when unknown.
+	// LastUsed is the newest mtime over the item's files and
+	// directories, or a tool-reported time; zero when unknown.
 	LastUsed time.Time `json:"last_used,omitzero"`
+	// Partial: Bytes and LastUsed are lower bounds, because something
+	// in the item refused or blocked.
+	Partial bool `json:"partial,omitempty"`
 }
 
 // Finding is one rule with everything the scan measured for it.
 type Finding struct {
 	Rule  Rule   `json:"rule"`
 	Items []Item `json:"items,omitempty"`
-	// Err records a scan failure (tool missing, permission denied at
-	// the root) so the UI can show why a rule reported nothing.
+	// Err records a rule-level failure (tool missing, unknown query,
+	// scan cancelled). A target that refuses or blocks is an item
+	// with Partial set, not an error.
 	Err string `json:"error,omitempty"`
 }
 
@@ -41,4 +46,14 @@ func (f Finding) TotalBytes() int64 {
 		n += it.Bytes
 	}
 	return n
+}
+
+// Partial reports whether any item's size is a lower bound.
+func (f Finding) Partial() bool {
+	for _, it := range f.Items {
+		if it.Partial {
+			return true
+		}
+	}
+	return false
 }

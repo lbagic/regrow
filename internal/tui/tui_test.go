@@ -423,3 +423,88 @@ func lineHas(view, a, b string) bool {
 	}
 	return false
 }
+
+// nestedFindings puts a steward-command rule inside a Trash rule,
+// reads one folder in part and another not at all.
+func nestedFindings(home string) []engine.Finding {
+	return []engine.Finding{
+		{
+			Rule:  engine.Rule{ID: "app-caches", Title: "App caches", Category: "macos", Risk: engine.RiskCaution},
+			Items: []engine.Item{{Path: home + "/Library/Caches", Bytes: 70 << 30, Partial: true}},
+		},
+		{
+			Rule: engine.Rule{ID: "go-build-cache", Title: "Go build cache", Category: "dev-caches",
+				Risk: engine.RiskSafe, NativeCommand: engine.Argv{"go", "clean", "-cache"}},
+			Items: []engine.Item{{Path: home + "/Library/Caches/go-build", Bytes: 55 << 30}},
+		},
+		{
+			Rule:  engine.Rule{ID: "gated-cache", Title: "Gated cache", Category: "macos", Risk: engine.RiskCaution},
+			Items: []engine.Item{{Path: home + "/Library/Containers/gated", Partial: true}},
+		},
+	}
+}
+
+func nestedModel(t *testing.T) Model {
+	t.Helper()
+	host := engine.Host{OS: "darwin", Version: "15.5", Home: "/Users/fixture"}
+	m := New(host, "test", nil)
+	next, _ := m.Update(scanDoneMsg{findings: nestedFindings(host.Home)})
+	return next.(Model)
+}
+
+func TestListShowsBucketsOnceAndPartialSizes(t *testing.T) {
+	view := nestedModel(t).View()
+	for _, want := range []string{
+		// go-build's 55 GiB count under its steward command only.
+		"frees now 55.0 GiB · after Trash 15.0 GiB",
+		"shown only 0 B · macOS-managed 0 B · 2 unreadable in part",
+		"≥ 70.0 GiB",
+		"unreadable",
+	} {
+		if !strings.Contains(view, want) {
+			t.Errorf("list is missing %q:\n%s", want, view)
+		}
+	}
+	// Category headers carry no size: a category mixes buckets.
+	for _, line := range strings.Split(view, "\n") {
+		if strings.Contains(line, "MACOS") && strings.Contains(line, "GiB") {
+			t.Errorf("category header must not carry a total: %q", line)
+		}
+	}
+}
+
+func TestSelectedEstimateCountsNestedSelectionOnce(t *testing.T) {
+	m := nestedModel(t)
+	// go-build-cache is pre-selected (safe); add the container rule.
+	for i, r := range m.rows {
+		if r.kind == rowFinding && m.findings[r.finding].Rule.ID == "app-caches" {
+			m.cursor = i
+		}
+	}
+	m = press(t, m, " ")
+	view := m.View()
+	// go-build is skipped as "inside app-caches": both selected, the
+	// outer size counted once, and the skip counted with it.
+	if !strings.Contains(view, "selected 2 · plan ~70.0 GiB · 1 skipped") {
+		t.Fatalf("selecting a folder and a folder inside it must estimate the outer size once, got:\n%s", view)
+	}
+
+	// The summary follows the selection: untick the container again.
+	m = press(t, m, " ")
+	if view := m.View(); !strings.Contains(view, "selected 1 · plan ~55.0 GiB   ") {
+		t.Fatalf("after unticking the container, got:\n%s", view)
+	}
+}
+
+func TestCursorNoteExplainsPartialSizes(t *testing.T) {
+	m := nestedModel(t)
+	for i, r := range m.rows {
+		if r.kind == rowFinding && m.findings[r.finding].Rule.ID == "gated-cache" {
+			m.cursor = i
+		}
+	}
+	m.width = 200
+	if view := m.View(); !strings.Contains(view, "unreadable: "+engine.UnreadableNote) {
+		t.Fatalf("footer must explain an unreadable row, got:\n%s", view)
+	}
+}

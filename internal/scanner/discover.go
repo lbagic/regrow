@@ -5,8 +5,9 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"strings"
+	"sync"
 
 	"github.com/lbagic/regrow/internal/engine"
 )
@@ -27,9 +28,13 @@ var builtinExcludes = map[string]bool{
 // discover walks the rule's roots looking for directories that match
 // the discover spec: base name (if set) plus every marker file
 // present. Missing roots are skipped; that lets rules list
-// conventional project locations. Results are sorted for determinism.
-// Cancelling ctx stops the walk; hits found so far are returned.
-func discover(ctx context.Context, host engine.Host, spec engine.Discover) []string {
+// conventional project locations. A root that is a symlink is walked
+// through it. A directory reached from two roots (a symlinked root, a
+// root inside another) is reported once, under the first root's path.
+// Hits are sorted. partial lists the roots whose walk met a blocked or
+// unreadable directory. Cancelling ctx stops the walk; hits found so
+// far are returned.
+func discover(ctx context.Context, w *walker, host engine.Host, spec engine.Discover) (hits, partial []string) {
 	maxDepth := spec.MaxDepth
 	if maxDepth <= 0 {
 		maxDepth = defaultMaxDepth
@@ -39,45 +44,103 @@ func discover(ctx context.Context, host engine.Host, spec engine.Discover) []str
 		specExclude[name] = true
 	}
 
-	var hits []string
-	for _, raw := range spec.Roots {
-		root := host.ExpandPath(raw)
-		if fi, err := os.Stat(root); err != nil || !fi.IsDir() {
+	// A worker whose directory answered after the walk gave up on it
+	// may still call visit; closed keeps it off the returned hits.
+	type hit struct{ real, path string }
+	var mu sync.Mutex
+	closed := false
+	var found []hit
+	for _, root := range discoverRoots(ctx, w, host, spec.Roots) {
+		visit := func(dir string, batch []fs.DirEntry) ([]string, bool) {
+			depth := relDepth(root.path, dir) + 1
+			var subdirs []string
+			var batchHits []hit
+			for _, e := range batch {
+				if !e.IsDir() {
+					continue
+				}
+				name := e.Name()
+				// Rule excludes win over everything; builtin excludes
+				// yield to a name match so rules like node_modules
+				// discovery still work.
+				if specExclude[name] || depth > maxDepth {
+					continue
+				}
+				p := childPath(dir, name)
+				switch {
+				case matches(p, name, spec):
+					batchHits = append(batchHits, hit{root.realOf(p), p})
+				case !builtinExcludes[name]:
+					subdirs = append(subdirs, p)
+				}
+			}
+			if len(batchHits) > 0 {
+				mu.Lock()
+				if !closed {
+					found = append(found, batchHits...)
+				}
+				mu.Unlock()
+			}
+			return subdirs, true
+		}
+		incomplete, err := w.walk(ctx, root.path, visit)
+		if err != nil {
+			break
+		}
+		if incomplete {
+			partial = append(partial, root.path)
+		}
+	}
+	mu.Lock()
+	closed = true
+	seen := map[string]bool{}
+	for _, h := range found {
+		if !seen[h.real] {
+			seen[h.real] = true
+			hits = append(hits, h.path)
+		}
+	}
+	mu.Unlock()
+	slices.Sort(hits)
+	return hits, partial
+}
+
+// discoverRoot is a root as walked (path) and where it really is.
+type discoverRoot struct{ path, real string }
+
+// realOf maps a path found under the root to its real location; walks
+// never follow symlinks below the root, so only the root needs it.
+func (r discoverRoot) realOf(p string) string {
+	return filepath.Join(r.real, p[len(r.path):])
+}
+
+// discoverRoots expands the rule's roots, keeps the directories among
+// them, and drops a root whose real path an earlier root already has.
+func discoverRoots(ctx context.Context, w *walker, host engine.Host, raw []string) []discoverRoot {
+	var out []discoverRoot
+	for _, r := range raw {
+		p := filepath.Clean(host.ExpandPath(r))
+		if !w.isDir(ctx, p) {
 			continue
 		}
-		_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
-			if cerr := ctx.Err(); cerr != nil {
-				return cerr // cancelled: abort this root's walk
-			}
-			if err != nil {
-				return nil // unreadable: skip, keep walking siblings
-			}
-			if !d.IsDir() || p == root {
-				return nil
-			}
-			name := d.Name()
-			// Rule excludes win over everything; builtin excludes
-			// yield to a name match so rules like node_modules
-			// discovery still work.
-			if specExclude[name] {
-				return filepath.SkipDir
-			}
-			depth := strings.Count(strings.TrimPrefix(p, root), string(filepath.Separator))
-			if depth > maxDepth {
-				return filepath.SkipDir
-			}
-			if matches(p, name, spec) {
-				hits = append(hits, p)
-				return filepath.SkipDir
-			}
-			if builtinExcludes[name] {
-				return filepath.SkipDir
-			}
-			return nil
-		})
+		real, err := bounded(ctx, w, p, func() (string, error) { return filepath.EvalSymlinks(p) })
+		if err != nil {
+			continue
+		}
+		if !slices.ContainsFunc(out, func(k discoverRoot) bool { return k.real == real }) {
+			out = append(out, discoverRoot{p, real})
+		}
 	}
-	sort.Strings(hits)
-	return hits
+	return out
+}
+
+// relDepth counts the path segments of dir below root: 0 for root.
+func relDepth(root, dir string) int {
+	rel := strings.TrimPrefix(dir[len(root):], string(filepath.Separator))
+	if rel == "" {
+		return 0
+	}
+	return strings.Count(rel, string(filepath.Separator)) + 1
 }
 
 func matches(path, name string, spec engine.Discover) bool {

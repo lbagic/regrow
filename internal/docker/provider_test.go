@@ -157,9 +157,11 @@ func TestClassifyTiers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// In-use and recently-used records are excluded from the sum.
-	if len(cache) != 1 || cache[0].Bytes != 139000000 {
-		t.Fatalf("build cache = %+v, want one 139MB aggregate", cache)
+	// Only the stale 25MB record counts. In-use and recently-used
+	// records are excluded, and so is the stale 139MB record shared
+	// with an image layer: pruning it frees nothing.
+	if len(cache) != 1 || cache[0].Bytes != 25000000 {
+		t.Fatalf("build cache = %+v, want one 25MB aggregate", cache)
 	}
 }
 
@@ -348,5 +350,24 @@ func TestParseDockerTime(t *testing.T) {
 		if got := parseDockerTime(zero); !got.IsZero() {
 			t.Errorf("parseDockerTime(%q) = %v, want zero", zero, got)
 		}
+	}
+}
+
+// A docker CLI killed at the query deadline is not a stopped daemon:
+// every docker rule must report the deadline instead of "not found",
+// including rules that read the memoized snapshot afterwards.
+func TestSnapshotDeadlineIsAnError(t *testing.T) {
+	wedged := func(ctx context.Context, _ ...string) ([]byte, bool, error) {
+		<-ctx.Done()
+		return nil, true, errors.New("signal: killed")
+	}
+	p := testProvider(t, wedged)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if _, err := p.BuildCache(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("wedged daemon = %v, want the deadline", err)
+	}
+	if _, err := p.ImagesDangling(context.Background()); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("a later rule = %v, want the same deadline, not an empty result", err)
 	}
 }

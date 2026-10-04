@@ -1,7 +1,8 @@
 # Build cache is the one docker object with native last-used
 # tracking, so the daemon's own age filter is the steward command.
 # unused-for=720h = the same 30 days the scanner sums; keep in sync
-# with internal/docker staleAge.
+# with internal/docker staleAge. Records shared with an image layer
+# are left out of the sum: pruning them frees nothing.
 id: docker-build-cache
 title: Docker build cache unused 30d+
 category: docker

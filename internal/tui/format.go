@@ -63,3 +63,19 @@ func TotalsLines(p engine.Plan) []string {
 		fmt.Sprintf("Frees after Trash  %10s  moved to the Trash; `regrow undo` restores until it is emptied", HumanBytes(t.AfterTrash)),
 	}
 }
+
+// LedgerLines prints a scan's buckets: every byte once, in the bucket
+// of the innermost item that holds it.
+func LedgerLines(t engine.Totals) []string {
+	lines := []string{
+		"Each byte counted once within the rows; macOS-managed space can overlap them:",
+		fmt.Sprintf("  Frees now          %10s  steward commands", HumanBytes(t.FreesNow)),
+		fmt.Sprintf("  Frees after Trash  %10s  moved to the Trash; freed once it is emptied", HumanBytes(t.AfterTrash)),
+		fmt.Sprintf("  Shown only         %10s  surface-only; regrow never deletes it", HumanBytes(t.ShownOnly)),
+		fmt.Sprintf("  macOS-managed      %10s  phantom space macOS reclaims on its own", HumanBytes(t.MacOSManaged)),
+	}
+	if t.Partial > 0 {
+		lines = append(lines, fmt.Sprintf("  %d item(s) partly or wholly %s; their sizes are lower bounds.", t.Partial, engine.UnreadableNote))
+	}
+	return lines
+}
