@@ -143,10 +143,12 @@ One pass of the watch loop, as `regrow tick` runs it: a free-space sample append
 
 | Event | Fields |
 |---|---|
-| `tick` | the sample's fields as in `headroom`, plus `days_to_full` (absent without a forecast), `alerts` (`[{kind, message, band, acute, top_process}]`, absent when none crossed) and `pruned` (what autotrim did or why it did not run: `{rule_id, skipped, run, files, bytes, free_before, free_after, error}`) |
+| `tick` | the sample's fields as in `headroom`, plus `days_to_full` (absent without a forecast), `alerts` (`[{kind, message, band, acute, top_process}]`, absent when none crossed), `pruned` (what autotrim did or why it did not run: `{rule_id, skipped, run, files, bytes, free_before, free_after, error}`) and `history_unreadable` |
 | `done` | — |
 
-A tick that sampled sends its `tick` event even when it then fails, so the alerts arrive. Errors: `autotrim_locked` (the gate refused a prune that low headroom called for), `tick_failed` (no sample, a history that could not be read or written, or a prune that failed).
+`history_unreadable: true` says the headroom history could not be read: the sample was still taken and recorded, but this tick has no forecast and no alerts, and autotrim judged headroom by the top free-space band alone. It is a fact about the tick, not a failure: such a tick still ends with `done` unless something else failed. The field is absent otherwise.
+
+A tick that sampled sends its `tick` event even when it then fails, so the alerts arrive. Errors: `autotrim_locked` (the gate refused a prune that low headroom called for), `tick_failed` (no sample, a history that could not be written, or a prune that failed).
 
 ## hello
 

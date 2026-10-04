@@ -548,10 +548,11 @@ func (s *session) startTick(req request) {
 	op := s.begin(req, func() {})
 	go func() {
 		tick, err := s.srv.Tick(context.Background(), req.Autotrim)
+		unreadable, err := splitHistoryUnreadable(err)
 		if !tick.At.IsZero() {
 			// A sampled tick is reported even when it also failed: a
 			// refused autotrim must not hide the alerts.
-			s.emit(inlineEvent{head{"tick", op.re}, tick})
+			s.emit(inlineEvent{head{"tick", op.re}, tickBody{tick, unreadable}})
 		}
 		var terminal any = done(op.re)
 		switch {
@@ -562,6 +563,37 @@ func (s *session) startTick(req request) {
 		}
 		s.end(op, terminal, nil)
 	}()
+}
+
+// tickBody is a tick event's fields: the tick's own, and whether the
+// headroom history could not be read, which leaves the tick without a
+// forecast or alerts.
+type tickBody struct {
+	headroom.Tick
+	HistoryUnreadable bool `json:"history_unreadable,omitempty"`
+}
+
+// splitHistoryUnreadable takes autopilot.ErrHistoryUnreadable out of a
+// tick's error: an unreadable history is a fact about the tick, not a
+// failure of it.
+func splitHistoryUnreadable(err error) (bool, error) {
+	if err == nil {
+		return false, nil
+	}
+	parts := []error{err}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		parts = joined.Unwrap()
+	}
+	unreadable := false
+	var rest []error
+	for _, e := range parts {
+		if errors.Is(e, autopilot.ErrHistoryUnreadable) {
+			unreadable = true
+			continue
+		}
+		rest = append(rest, e)
+	}
+	return unreadable, errors.Join(rest...)
 }
 
 func (s *session) shutdown(grace time.Duration) {

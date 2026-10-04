@@ -90,6 +90,59 @@ func TestTickFailures(t *testing.T) {
 	p.expectError("t", CodeTickFailed)
 }
 
+// An unreadable headroom history leaves the tick without a forecast or
+// alerts. The tick says so and still succeeds, unless something else
+// failed with it.
+func TestTickWithAnUnreadableHistory(t *testing.T) {
+	unreadable := fmt.Errorf("%w: headroom.jsonl: permission denied", autopilot.ErrHistoryUnreadable)
+	pruned := &headroom.PruneResult{RuleID: "fixture-prune", Run: "r1", Files: 1, Bytes: 2}
+	tests := []struct {
+		name     string
+		err      error
+		wantCode string
+	}{
+		{"alone, the tick is done", errors.Join(unreadable), ""},
+		{"with a failed prune, that failure ends it", errors.Join(nil, unreadable, errors.New("prune fixture-prune failed: exit status 1")), CodeTickFailed},
+		{"with a locked autotrim, the lock ends it", errors.Join(unreadable, fmt.Errorf("%w for fixture-prune", autopilot.ErrAutotrimLocked)), CodeAutotrimLocked},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := newMachine(t)
+			srv := m.server()
+			srv.Tick = func(context.Context, bool) (headroom.Tick, error) {
+				return headroom.Tick{Sample: headroom.Sample{At: tickAt, Free: 7}, Pruned: pruned}, tt.err
+			}
+			p := start(t, srv)
+			p.expect("hello")
+			p.send(`{"type":"tick","id":"t","autotrim":true}`)
+			got := p.expect("tick/t")[0]
+			if !strings.Contains(got.raw, `"history_unreadable":true`) || !strings.Contains(got.raw, `"pruned":{"rule_id":"fixture-prune"`) {
+				t.Fatalf("tick = %s, want history_unreadable and the prune", got.raw)
+			}
+			if tt.wantCode == "" {
+				p.expect("done/t")
+				return
+			}
+			if e := p.expectError("t", tt.wantCode); strings.Contains(e.Message, "headroom.jsonl") {
+				t.Fatalf("error = %s, the unreadable history is not the failure", e.raw)
+			}
+		})
+	}
+
+	// A readable history leaves the field out.
+	m := newMachine(t)
+	srv := m.server()
+	srv.Tick = func(context.Context, bool) (headroom.Tick, error) {
+		return headroom.Tick{Sample: headroom.Sample{At: tickAt}}, nil
+	}
+	p := start(t, srv)
+	p.expect("hello")
+	p.send(`{"type":"tick","id":"t"}`)
+	if got := p.expect("tick/t", "done/t")[0]; strings.Contains(got.raw, "history_unreadable") {
+		t.Fatalf("tick = %s", got.raw)
+	}
+}
+
 // A tick is an operation like a scan or an execute: one at a time, and
 // shutdown waits for it, since its autotrim prune is never cut short.
 func TestTickIsAnOperation(t *testing.T) {
