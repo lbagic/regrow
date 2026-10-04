@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -29,19 +30,27 @@ func runTick(host engine.Host, catalog []engine.Rule, opts options) error {
 		}
 		return err
 	}
-	for _, line := range tickLines(tick) {
+	for _, line := range tickLines(tick, errors.Is(err, autopilot.ErrHistoryUnreadable), opts.autotrim) {
 		fmt.Println(line)
 	}
 	return err
 }
 
-func tickLines(t headroom.Tick) []string {
+// tickLines prints a tick. Without its history a tick has no forecast
+// and no alerts, and autotrim judged headroom by the top band alone.
+func tickLines(t headroom.Tick, noHistory, autotrim bool) []string {
 	lines := []string{fmt.Sprintf("%s  free %s of %s, purgeable %s, swap %s",
 		t.At.Local().Format("2006-01-02 15:04"), tui.HumanBytes(t.Free), tui.HumanBytes(t.Total),
 		tui.HumanBytes(t.Purgeable), tui.HumanBytes(t.SwapUsed))}
-	if t.DaysToFull != nil {
+	switch {
+	case noHistory:
+		lines = append(lines, "No forecast or alerts: the headroom history cannot be read (the error follows).")
+		if autotrim {
+			lines = append(lines, fmt.Sprintf("Autotrim judged headroom by the %s line alone.", tui.HumanBytes(headroom.Bands[0])))
+		}
+	case t.DaysToFull != nil:
 		lines = append(lines, fmt.Sprintf("Days to full: %.1f at the current rate.", *t.DaysToFull))
-	} else {
+	default:
 		lines = append(lines, "Days to full: no forecast (it needs three hours of samples with free space falling).")
 	}
 	for _, a := range t.Alerts {

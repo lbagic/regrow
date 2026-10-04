@@ -3,7 +3,6 @@ package headroom
 import (
 	"context"
 	"fmt"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -18,7 +17,7 @@ type Process struct {
 }
 
 func Processes(ctx context.Context) ([]Process, error) {
-	out, err := exec.CommandContext(ctx, "ps", "-axo", "pid=,ppid=,rss=,comm=").Output()
+	out, err := probeOutput(ctx, probeWaitDelay, "ps", "-axo", "pid=,ppid=,rss=,comm=")
 	if err != nil {
 		return nil, fmt.Errorf("ps: %w", err)
 	}

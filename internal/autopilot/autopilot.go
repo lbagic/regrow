@@ -41,6 +41,9 @@ type Autopilot struct {
 	// Self is this process's pid: it and its ancestors never count as
 	// a running build.
 	Self int
+	// Volume is where Take measures free space; a cache elsewhere is
+	// never pruned. Empty skips the check.
+	Volume string
 }
 
 // New wires the loop to the real machine.
@@ -62,6 +65,7 @@ func New(host engine.Host, catalog []engine.Rule) (*Autopilot, error) {
 		Processes: headroom.Processes,
 		Now:       time.Now,
 		Self:      os.Getpid(),
+		Volume:    headroom.Volume(),
 	}, nil
 }
 
@@ -126,6 +130,11 @@ func Target(s headroom.Sample, days float64, forecast bool) (target int64, low b
 	return target, s.Free < target
 }
 
+// ErrHistoryUnreadable marks a tick that sampled but could not read
+// headroom.jsonl: it has no forecast and no alerts, and autotrim judged
+// headroom by the top free-space band alone.
+var ErrHistoryUnreadable = errors.New("the headroom history cannot be read")
+
 // Tick takes one sample, records it, and reports it with the forecast
 // and the alerts that crossed. With autotrim it also prunes when
 // headroom is low. The Tick is good whenever its sample time is set,
@@ -138,20 +147,23 @@ func (a *Autopilot) Tick(ctx context.Context, autotrim bool) (headroom.Tick, err
 	}
 	tick := headroom.Tick{Sample: s}
 	path := filepath.Join(a.StateDir, headroom.FileName)
-	prev, err := headroom.Tail(path, s.At.Add(-headroom.Window))
-	if err != nil {
-		// Without the history every condition would read as a fresh
-		// crossing on every tick.
-		return tick, errors.Join(fmt.Errorf("read %s: %w", path, err), headroom.Append(path, s))
-	}
+	prev, herr := headroom.Tail(path, s.At.Add(-headroom.Window))
 	errs := []error{headroom.Append(path, s)}
 
-	cur := append(prev[:len(prev):len(prev)], s)
-	days, forecast := headroom.Forecast(cur)
-	if forecast {
-		tick.DaysToFull = &days
+	var days float64
+	var forecast bool
+	if herr != nil {
+		// Without the history every condition would read as a fresh
+		// crossing on every tick.
+		errs = append(errs, fmt.Errorf("%w: %s: %v", ErrHistoryUnreadable, path, herr))
+	} else {
+		cur := append(prev[:len(prev):len(prev)], s)
+		days, forecast = headroom.Forecast(cur)
+		if forecast {
+			tick.DaysToFull = &days
+		}
+		tick.Alerts = a.nameTopProcess(ctx, headroom.Alerts(prev, cur))
 	}
-	tick.Alerts = a.nameTopProcess(ctx, headroom.Alerts(prev, cur))
 
 	if autotrim {
 		pruned, err := a.autotrim(ctx, s, days, forecast)
@@ -185,9 +197,10 @@ func (a *Autopilot) nameTopProcess(ctx context.Context, alerts []headroom.Alert)
 	return alerts
 }
 
-// autotrim reports a locked gate as an error only when headroom is low
-// enough that a prune would have run; otherwise the tick succeeds and
-// says it is locked. A prune that ran and failed is an error too.
+// autotrim reports a shut gate, locked or unreadable, as an error only
+// when headroom is low enough that a prune would have run; otherwise
+// the tick succeeds and says so. A prune that ran and failed is an
+// error too.
 func (a *Autopilot) autotrim(ctx context.Context, s headroom.Sample, days float64, forecast bool) (*headroom.PruneResult, error) {
 	var rule *engine.Rule
 	for i := range a.Catalog {
@@ -199,13 +212,17 @@ func (a *Autopilot) autotrim(ctx context.Context, s headroom.Sample, days float6
 	if rule == nil {
 		return nil, nil
 	}
-	gate := a.Gate(*rule)
 	target, low := Target(s, days, forecast)
+	gate := a.Gate(*rule)
 	if !low {
-		if errors.Is(gate, ErrAutotrimLocked) {
+		switch {
+		case gate == nil:
+			return nil, nil
+		case errors.Is(gate, ErrAutotrimLocked):
 			return &headroom.PruneResult{RuleID: rule.ID, Skipped: gate.Error()}, nil
+		default:
+			return &headroom.PruneResult{RuleID: rule.ID, Skipped: fmt.Sprintf("the oplog cannot be read, so autotrim would refuse: %v", gate)}, nil
 		}
-		return nil, gate
 	}
 	if gate != nil {
 		return nil, gate
@@ -268,7 +285,7 @@ func (a *Autopilot) Prune(ctx context.Context, r engine.Rule) (headroom.PruneRes
 }
 
 func (a *Autopilot) request(free, target int64) engine.PruneRequest {
-	return engine.PruneRequest{Now: a.Now(), Free: free, Target: target, GoEnv: a.GoEnv}
+	return engine.PruneRequest{Now: a.Now(), Free: free, Target: target, Volume: a.Volume, GoEnv: a.GoEnv}
 }
 
 // prune is one single-flight prune: lock, check for builds, plan,

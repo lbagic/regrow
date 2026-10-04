@@ -107,6 +107,10 @@ type PruneRequest struct {
 	// Free is free space now; Target is the free space to get back to.
 	Free   int64
 	Target int64
+	// Volume is a path on the volume Free was measured on; the cache
+	// must be on it, or deleting would not move Free and autotrim would
+	// trim it again on every tick. Empty skips the check.
+	Volume string
 	// GoEnv answers `go env <key>`; nil asks the go command on PATH.
 	GoEnv func(ctx context.Context, key string) (string, error)
 }
@@ -182,6 +186,15 @@ func PrunePlan(ctx context.Context, host Host, r Rule, req PruneRequest) (Plan, 
 	if err := VerifyGoCache(cache); err != nil {
 		return skip("%v", err)
 	}
+	if req.Volume != "" {
+		same, err := sameVolume(cache, req.Volume)
+		if err != nil {
+			return skip("%v", err)
+		}
+		if !same {
+			return skip("%s is not on the volume of %s, whose free space was measured, so pruning it would not bring that space back", cache, req.Volume)
+		}
+	}
 	survey.Cache = cache
 
 	hist, err := surveyCache(ctx, cache)
@@ -219,8 +232,12 @@ func PrunePlan(ctx context.Context, host Host, r Rule, req PruneRequest) (Plan, 
 }
 
 // PruneCommand deletes the cache entries last used at or before cutoff.
+// -ignore_readdir_race: Go trims its cache and `go clean -cache`
+// removes whole shard dirs, either of which can run while find walks;
+// without it a vanished entry or shard makes find exit 1, and the
+// prune is journaled as failed though it deleted what it could.
 func PruneCommand(cache string, cutoff time.Time) []string {
-	return []string{findBin, cache, "-mindepth", "2", "-maxdepth", "2", "-type", "f",
+	return []string{findBin, cache, "-ignore_readdir_race", "-mindepth", "2", "-maxdepth", "2", "-type", "f",
 		"-path", entryPattern(cache), "!", "-newermt", cutoff.UTC().Format("2006-01-02 15:04:05") + " UTC", "-delete"}
 }
 
@@ -259,6 +276,30 @@ func goCacheDir(ctx context.Context, goEnv func(context.Context, string) (string
 		return "", fmt.Errorf("go build cache: %v", err)
 	}
 	return resolved, nil
+}
+
+func sameVolume(a, b string) (bool, error) {
+	sa, err := statT(a)
+	if err != nil {
+		return false, err
+	}
+	sb, err := statT(b)
+	if err != nil {
+		return false, err
+	}
+	return sa.Dev == sb.Dev, nil
+}
+
+func statT(path string) (*syscall.Stat_t, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return nil, fmt.Errorf("%s: no device number", path)
+	}
+	return st, nil
 }
 
 // VerifyGoCache refuses any directory the go command did not set up as

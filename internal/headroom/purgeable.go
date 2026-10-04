@@ -36,7 +36,7 @@ func Purgeable(ctx context.Context, volume string) (int64, error) {
 	if _, err := exec.LookPath("osascript"); err != nil {
 		return 0, nil
 	}
-	out, err := exec.CommandContext(ctx, "osascript", "-l", "JavaScript", "-e", purgeableJXA, volume).Output()
+	out, err := probeOutput(ctx, probeWaitDelay, "osascript", "-l", "JavaScript", "-e", purgeableJXA, volume)
 	if err != nil {
 		return 0, fmt.Errorf("purgeable probe: %w", err)
 	}

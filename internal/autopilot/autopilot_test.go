@@ -80,6 +80,7 @@ func newHarness(t *testing.T) *harness {
 		StateDir:  filepath.Dir(logPath),
 		OplogPath: logPath,
 		Host:      engine.Host{OS: "darwin", Home: home},
+		Volume:    root,
 		Catalog: []engine.Rule{{
 			ID: engine.RuleGoBuildCache, Title: "Go build cache", Category: "dev-caches", Risk: engine.RiskSafe,
 			Paths:         map[string][]engine.PathEntry{"darwin": {{Path: "~/Library/Caches/go-build"}}},
@@ -665,5 +666,65 @@ func TestPruneUnderGoRunIsNotItsOwnBuild(t *testing.T) {
 	res, err := h.ap.Prune(context.Background(), h.rule())
 	if err != nil || res.Skipped != "" || res.Files != 3 {
 		t.Fatalf("`go run ./cmd/regrow prune go-build --yes` must not defer to its own go: %+v, %v", res, err)
+	}
+}
+
+func TestUnreadableOplogFailsOnlyTheTicksThatWouldPrune(t *testing.T) {
+	h := newHarness(t)
+	if err := os.MkdirAll(filepath.Dir(h.ap.OplogPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(h.ap.OplogPath, []byte("not json\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	h.free = 80 * gib
+	tick, err := h.ap.Tick(context.Background(), true)
+	if err != nil {
+		t.Fatalf("with headroom to spare an unreadable oplog must not fail the tick: %v", err)
+	}
+	if tick.Pruned == nil || !strings.Contains(tick.Pruned.Skipped, "the oplog cannot be read") {
+		t.Errorf("the tick must say why autotrim would refuse, got %+v", tick.Pruned)
+	}
+
+	h.now = start.Add(15 * time.Minute)
+	h.free = 30 * gib
+	if _, err := h.ap.Tick(context.Background(), true); err == nil || !strings.Contains(err.Error(), "corrupt oplog line") {
+		t.Errorf("a tick that would prune must fail on the unreadable oplog, got %v", err)
+	}
+	if len(h.ran) != 0 {
+		t.Errorf("nothing may run, ran %v", h.ran)
+	}
+}
+
+func TestUnreadableHistoryStillAutotrimsAgainstTheTopBand(t *testing.T) {
+	tests := []struct {
+		name       string
+		freeGiB    int64
+		wantPruned bool
+	}{
+		{"under the top band", 30, true},
+		{"over the top band", 60, false},
+	}
+	for _, tt := range tests {
+		h := newHarness(t)
+		h.openGate()
+		// A directory where the history file should be cannot be read.
+		if err := os.MkdirAll(filepath.Join(h.ap.StateDir, headroom.FileName), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		h.free = tt.freeGiB * gib
+
+		tick, err := h.ap.Tick(context.Background(), true)
+		if !errors.Is(err, ErrHistoryUnreadable) {
+			t.Fatalf("%s: err = %v, want ErrHistoryUnreadable", tt.name, err)
+		}
+		if tick.At.IsZero() || tick.DaysToFull != nil || len(tick.Alerts) != 0 {
+			t.Errorf("%s: the sample stands, with no forecast or alerts: %+v", tt.name, tick)
+		}
+		pruned := tick.Pruned != nil && tick.Pruned.Files == 3
+		if pruned != tt.wantPruned {
+			t.Errorf("%s: pruned = %+v, want a prune: %v", tt.name, tick.Pruned, tt.wantPruned)
+		}
 	}
 }

@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -156,6 +157,7 @@ func TestPrunePlanTakesOldestHoursUpToTheNeed(t *testing.T) {
 			r := pruneRule()
 			r.Prune.KeepUnder = ByteSize(float64(5*fx.size) - tt.keepLess*float64(fx.size))
 			req := fx.request(10<<30, TrimToKeepUnder)
+			req.Volume = fx.host.Home
 			if !tt.unbounded {
 				req.Target = req.Free + int64(tt.short*float64(fx.size))
 			}
@@ -169,7 +171,7 @@ func TestPrunePlanTakesOldestHoursUpToTheNeed(t *testing.T) {
 			}
 			a := plan.Actions[0]
 			cutoff := hourEnd(tt.wantCutoffAge)
-			wantCmd := []string{"/usr/bin/find", fx.cache, "-mindepth", "2", "-maxdepth", "2", "-type", "f",
+			wantCmd := []string{"/usr/bin/find", fx.cache, "-ignore_readdir_race", "-mindepth", "2", "-maxdepth", "2", "-type", "f",
 				"-path", globEscape(fx.cache) + "/[0123456789abcdef][0123456789abcdef]/*-[ad]",
 				"!", "-newermt", cutoff.UTC().Format("2006-01-02 15:04:05") + " UTC", "-delete"}
 			if a.Kind != ActionPrune || a.RuleID != RuleGoBuildCache || a.Path != fx.cache || !reflect.DeepEqual(a.Command, wantCmd) {
@@ -256,6 +258,11 @@ func TestPrunePlanRefusesWhatIsNotAGoCache(t *testing.T) {
 		{"rule without a prune block", func(_ *testing.T, _ cacheFixture, _ *PruneRequest, r *Rule) {
 			r.Prune = nil
 		}, "no prune policy"},
+		// /dev is its own file system on macOS and Linux: a stand-in
+		// for a GOCACHE on an external disk.
+		{"free space measured on another volume", func(_ *testing.T, _ cacheFixture, req *PruneRequest, _ *Rule) {
+			req.Volume = "/dev"
+		}, "is not on the volume of /dev, whose free space was measured"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -444,4 +451,83 @@ func TestPruneRuleBytesFreeNowInTheLedger(t *testing.T) {
 	if led.Totals.FreesNow != 7 || led.Totals.AfterTrash != 0 {
 		t.Errorf("a rule with a prune policy frees now, got %+v", led.Totals)
 	}
+}
+
+// TestPruneCommandSurvivesAConcurrentCacheClean runs the prune command
+// while shard dirs vanish under it, as when `go clean -cache` runs
+// during a prune. Once find is deleting in one shard, the others are
+// moved out of the cache, so find meets them gone; whether it gets
+// there first depends on timing, so the scenario repeats until the race
+// has happened once.
+func TestPruneCommandSurvivesAConcurrentCacheClean(t *testing.T) {
+	if _, err := os.Stat(findBin); err != nil {
+		t.Skipf("%s: %v", findBin, err)
+	}
+	shards := []string{"00", "3f", "a7", "ff"}
+	const perShard = 600
+	for attempt := 1; attempt <= 5; attempt++ {
+		root, err := filepath.EvalSymlinks(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		cache, gone := filepath.Join(root, "go-build"), filepath.Join(root, "gone")
+		if err := os.MkdirAll(gone, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for _, sh := range shards {
+			if err := os.MkdirAll(filepath.Join(cache, sh), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			for i := range perShard {
+				if err := os.WriteFile(filepath.Join(cache, sh, fmt.Sprintf("%04x-a", i)), nil, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+
+		// A cutoff an hour ahead matches every entry.
+		cmd := exec.Command(findBin, PruneCommand(cache, time.Now().Add(time.Hour))[1:]...)
+		var stderr strings.Builder
+		cmd.Stderr = &stderr
+		if err := cmd.Start(); err != nil {
+			t.Fatal(err)
+		}
+		moved, stop := make(chan []string, 1), make(chan struct{})
+		go func() {
+			for {
+				select {
+				case <-stop:
+					moved <- nil
+					return
+				default:
+				}
+				for _, sh := range shards {
+					names, _ := os.ReadDir(filepath.Join(cache, sh))
+					if len(names) == perShard {
+						continue
+					}
+					var out []string
+					for _, other := range shards {
+						if other != sh && os.Rename(filepath.Join(cache, other), filepath.Join(gone, other)) == nil {
+							out = append(out, other)
+						}
+					}
+					moved <- out
+					return
+				}
+			}
+		}()
+		err = cmd.Wait()
+		close(stop)
+		away := <-moved
+		if err != nil {
+			t.Fatalf("attempt %d: find must not fail when shards vanish under it: %v\n%s", attempt, err, stderr.String())
+		}
+		for _, sh := range away {
+			if left, _ := os.ReadDir(filepath.Join(gone, sh)); len(left) > 0 {
+				return // find met a vanished shard and still exited 0
+			}
+		}
+	}
+	t.Skip("find finished before any shard vanished in 5 attempts; the race was not exercised")
 }
