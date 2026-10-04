@@ -20,10 +20,11 @@ import (
 // or its branch's upstream is gone, as after a squash merge and branch
 // delete); no commit, checkout or file change touched it for a week;
 // and `git status --ignored` shows nothing but whole ignored build
-// directories. The rule removes it with `git worktree remove`, which
-// keeps the branch, refuses a worktree with modified or untracked
-// files, and deletes the ignored build output with the checkout. It
-// does not refuse a new ignored file, so the worktree-recheck
+// directories, with no tracked file hidden from status. The rule
+// removes it with `git worktree remove`, which keeps the branch,
+// refuses a worktree with modified or untracked files, and deletes the
+// ignored build output with the checkout. It does not refuse a new
+// ignored file or an edit hidden from status, so the worktree-recheck
 // pre-action runs the clean test again right before the removal.
 
 const (
@@ -61,6 +62,10 @@ var worktreeBuildDirs = map[string]bool{
 	"target":        true,
 }
 
+// gitInProgress are the admin dir entries git keeps while a rebase,
+// merge, cherry-pick, revert or bisect is under way.
+var gitInProgress = []string{"rebase-merge", "rebase-apply", "sequencer", "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "BISECT_LOG"}
+
 // worktreeRoots are where the query looks for repositories: the
 // project roots the discover rules use, and agent scratch dirs, where
 // agents clone repositories and add worktrees.
@@ -94,15 +99,15 @@ type worktree struct {
 func scanWorktrees(ctx context.Context, w *walker, host engine.Host, roots []string, now time.Time) ([]engine.Item, error) {
 	// git reports real paths; roots resolved the same way keep the
 	// repositories found under them comparable with what git says.
-	real := make([]string, len(roots))
+	resolved := make([]string, len(roots))
 	for i, r := range roots {
 		p := host.ExpandPath(r)
-		real[i] = p
+		resolved[i] = p
 		if rp, err := bounded(ctx, w, p, func() (string, error) { return filepath.EvalSymlinks(p) }); err == nil {
-			real[i] = rp
+			resolved[i] = rp
 		}
 	}
-	repos, partialRoots := discover(ctx, w, host, engine.Discover{Roots: real, Markers: []string{".git"}, MaxDepth: worktreeRepoDepth})
+	repos, partialRoots := discover(ctx, w, host, engine.Discover{Roots: resolved, Markers: []string{".git"}, MaxDepth: worktreeRepoDepth})
 	var items []engine.Item
 	for _, root := range partialRoots {
 		items = append(items, unreadableMarker("folders under "+tilde(host, root)))
@@ -151,13 +156,20 @@ func finishedWorktrees(ctx context.Context, w *walker, mainPath string, linked [
 	if len(bases) == 0 {
 		return nil, ctx.Err()
 	}
+	// A base branch checked out in a linked worktree (the layout around
+	// a bare repository) is the main checkout, and always reads merged.
+	baseBranch := map[string]bool{}
+	for _, b := range bases {
+		name := strings.TrimPrefix(strings.TrimPrefix(b, "refs/heads/"), "refs/remotes/origin/")
+		baseBranch["refs/heads/"+name] = true
+	}
 	var candidates []worktree
 	var heads []string
 	for _, wt := range linked {
 		// An unborn branch lists an all-zero HEAD, which rev-list
 		// rejects for the whole repository.
 		unborn := strings.Trim(wt.head, "0") == ""
-		if !wt.bare && !wt.locked && !wt.prunable && !unborn {
+		if !wt.bare && !wt.locked && !wt.prunable && !unborn && !baseBranch[wt.branch] {
 			candidates = append(candidates, wt)
 			heads = append(heads, wt.head)
 		}
@@ -198,12 +210,13 @@ func finishedWorktrees(ctx context.Context, w *walker, mainPath string, linked [
 		if now.Sub(last) < worktreeIdle {
 			continue
 		}
-		if dirty, err := firstUnclean(ctx, wt.path); err != nil || dirty != "" {
+		if dirty, err := firstUnclean(ctx, w, wt.path); err != nil || dirty != "" {
 			continue
 		}
-		// `git worktree remove` refuses a worktree with a checked-out
-		// submodule unless forced, so offering it would fail every run.
-		if hasPopulatedSubmodule(ctx, w, wt.path) {
+		// `git worktree remove` refuses a worktree that has or had a
+		// checked-out submodule unless forced, so offering it would
+		// fail every run.
+		if hasSubmodule(ctx, w, wt.path) {
 			continue
 		}
 		name := strings.TrimPrefix(wt.branch, "refs/heads/")
@@ -323,14 +336,31 @@ func notReachable(ctx context.Context, dir string, heads, bases []string) (map[s
 	return unmerged, nil
 }
 
-// firstUnclean returns the first `git status --ignored` entry that is
-// not a whole ignored directory named in worktreeBuildDirs, or "" when
-// there is none. Matching mode lists a directory only when an ignore
+// firstUnclean says why the worktree is not clean, or "" when it is.
+// Clean means `git status --ignored` lists nothing but whole ignored
+// directories named in worktreeBuildDirs, and no tracked file is hidden
+// from status. Matching mode lists a directory only when an ignore
 // pattern matches it; a directory whose files are ignored one by one
 // (dist/.env under a `.env` pattern) is listed file by file, so that
 // .env keeps the worktree. The flags override a user config that would
-// hide untracked files.
-func firstUnclean(ctx context.Context, dir string) (string, error) {
+// hide untracked files. Status skips files flagged assume-unchanged or
+// skip-worktree, and `git worktree remove` deletes an edit to one
+// without asking, so `ls-files -v` is read for them: a lowercase tag
+// (assume-unchanged), or S (skip-worktree) on a file that is on disk;
+// a sparse checkout's S entries are absent. A rebase, merge,
+// cherry-pick, revert or bisect in progress keeps its state in the
+// admin dir, which goes with the worktree, and can leave HEAD on a
+// merged commit with nothing to show in status.
+func firstUnclean(ctx context.Context, w *walker, dir string) (string, error) {
+	admin, ok := gitdirOf(ctx, w, dir)
+	if !ok {
+		return "its .git file cannot be read", nil
+	}
+	for _, name := range gitInProgress {
+		if _, err := w.lstat(ctx, filepath.Join(admin, name)); !absent(err) {
+			return "a git operation is in progress (" + name + ")", nil
+		}
+	}
 	out, err := git(ctx, dir, "status", "--porcelain", "-z", "--ignored=matching", "--untracked-files=normal", "--ignore-submodules=none")
 	if err != nil {
 		return "", err
@@ -340,12 +370,27 @@ func firstUnclean(ctx context.Context, dir string) (string, error) {
 			continue
 		}
 		path, ignored := strings.CutPrefix(entry, "!! ")
-		if !ignored {
-			return entry, nil
-		}
 		dirPath, isDir := strings.CutSuffix(path, "/")
-		if !isDir || !worktreeBuildDirs[filepath.Base(dirPath)] {
-			return entry, nil
+		if !ignored || !isDir || !worktreeBuildDirs[filepath.Base(dirPath)] {
+			return fmt.Sprintf("git status shows %q", entry), nil
+		}
+	}
+	out, err = git(ctx, dir, "ls-files", "-v", "-z")
+	if err != nil {
+		return "", err
+	}
+	for _, entry := range strings.Split(string(out), "\x00") {
+		tag, path, ok := strings.Cut(entry, " ")
+		if !ok || len(tag) != 1 {
+			continue
+		}
+		switch {
+		case tag[0] >= 'a' && tag[0] <= 'z':
+			return fmt.Sprintf("%s is flagged assume-unchanged, which hides edits from git status", path), nil
+		case tag == "S":
+			if _, err := w.lstat(ctx, filepath.Join(dir, path)); !absent(err) {
+				return fmt.Sprintf("%s is flagged skip-worktree, which hides edits from git status", path), nil
+			}
 		}
 	}
 	return "", nil
@@ -355,19 +400,28 @@ func firstUnclean(ctx context.Context, dir string) (string, error) {
 // be removed: an ignored file created since the scan would otherwise be
 // deleted with it, since git refuses only modified or untracked files.
 func CheckWorktreeClean(ctx context.Context, path string) error {
-	dirty, err := firstUnclean(ctx, path)
+	why, err := firstUnclean(ctx, defaultWalker, path)
 	if err != nil {
 		return fmt.Errorf("recheck %s: %w", path, err)
 	}
-	if dirty != "" {
-		return fmt.Errorf("worktree changed since the scan, git status shows %q: not removed", dirty)
+	if why != "" {
+		return fmt.Errorf("worktree %s is no longer clean (%s): not removed", path, why)
 	}
 	return nil
 }
 
-// hasPopulatedSubmodule mirrors git's own refusal: a gitlink in the
-// index whose directory holds a .git. Unreadable means populated.
-func hasPopulatedSubmodule(ctx context.Context, w *walker, dir string) bool {
+// hasSubmodule mirrors git's own refusal: a modules folder in the
+// worktree's admin dir (left behind even by `submodule deinit`), or a
+// gitlink in the index whose directory holds a .git. Unreadable counts
+// as present.
+func hasSubmodule(ctx context.Context, w *walker, dir string) bool {
+	admin, ok := gitdirOf(ctx, w, dir)
+	if !ok {
+		return true
+	}
+	if _, err := w.lstat(ctx, filepath.Join(admin, "modules")); !absent(err) {
+		return true
+	}
 	out, err := git(ctx, dir, "ls-files", "--stage", "-z")
 	if err != nil {
 		return true

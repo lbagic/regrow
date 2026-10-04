@@ -14,11 +14,22 @@ import (
 )
 
 // gitTestEnv isolates git from the machine's config and fixes the
-// author and dates, so the throwaway repositories are reproducible.
+// author and dates, so the throwaway repositories are reproducible. It
+// also drops the variables that point git at a repository: under a git
+// hook or `rebase --exec` they would send the fixture's commands to the
+// enclosing repository.
 func gitTestEnv(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
+	}
+	for _, name := range gitRepoEnv {
+		if val, ok := os.LookupEnv(name); ok {
+			if err := os.Unsetenv(name); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Setenv(name, val) })
+		}
 	}
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
@@ -123,6 +134,14 @@ func newWorktreeFixture(t *testing.T) worktreeFixture {
 	// Qualifies: detached at a commit main contains.
 	detached("detached-merged")
 
+	// Qualifies: a sparse checkout's skip-worktree entry is not on disk,
+	// so nothing of it can be lost.
+	p = branch("sparse")
+	runGit(t, p, "update-index", "--skip-worktree", "README")
+	if err := os.Remove(filepath.Join(p, "README")); err != nil {
+		t.Fatal(err)
+	}
+
 	// Qualifies: another tool's plain `git status` stamped the admin
 	// dir and its index, which is not work in the worktree.
 	branch("status-refreshed")
@@ -149,6 +168,26 @@ func newWorktreeFixture(t *testing.T) worktreeFixture {
 
 	p = branch("ignored-env")
 	touch(t, filepath.Join(p, ".env"))
+
+	// An edit to a tracked file that a flag hides from git status.
+	for _, flag := range []string{"skip-worktree", "assume-unchanged"} {
+		p = branch(flag)
+		runGit(t, p, "update-index", "--"+flag, "README")
+		if err := os.WriteFile(filepath.Join(p, "README"), []byte("local edit\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// A base branch in a linked worktree is the main checkout of a
+	// bare-repository layout: master by name, trunk as the local side
+	// of the remote's default branch.
+	branch("master")
+	branch("trunk")
+
+	// A bisect in progress leaves HEAD on a merged commit and status
+	// empty; its state lives in the admin dir.
+	p = detached("bisecting")
+	runGit(t, p, "bisect", "start")
 
 	// An ignored directory that is not build output.
 	p = branch("ignored-idea")
@@ -218,6 +257,12 @@ func newWorktreeFixture(t *testing.T) worktreeFixture {
 	runGit(t, p, "-c", "protocol.file.allow=always", "submodule", "add", "-q", lib, "lib")
 	runGit(t, p, "commit", "-q", "-m", "add lib")
 	runGit(t, f.app, "merge", "-q", "--ff-only", "submodule")
+
+	// A deinit'd submodule leaves a modules folder in the admin dir,
+	// which git refuses as well.
+	p = branch("submodule-deinit")
+	runGit(t, p, "-c", "protocol.file.allow=always", "submodule", "update", "-q", "--init", "lib")
+	runGit(t, p, "submodule", "deinit", "-q", "-f", "lib")
 	return f
 }
 
@@ -248,6 +293,7 @@ func TestScanWorktrees(t *testing.T) {
 			f.wt["squashed"]:         "squashed (upstream gone)",
 			f.wt["merged-upstream"]:  "merged-upstream (merged)",
 			f.wt["detached-merged"]:  "detached " + f.short["detached-merged"] + " (merged)",
+			f.wt["sparse"]:           "sparse (merged)",
 			f.wt["status-refreshed"]: "status-refreshed (merged)",
 			f.wt["scratch"]:          "scratch (merged)",
 			f.wt["solo"]:             "detached " + f.short["solo"] + " (merged)",
@@ -330,8 +376,8 @@ func TestWorktreeRemoveAndRecheck(t *testing.T) {
 
 	touch(t, filepath.Join(f.wt["squashed"], ".env"))
 	err := CheckWorktreeClean(ctx, f.wt["squashed"])
-	if err == nil || !strings.Contains(err.Error(), ".env") {
-		t.Fatalf("recheck after an ignored .env appeared = %v, want a refusal naming it", err)
+	if err == nil || !strings.Contains(err.Error(), ".env") || !strings.Contains(err.Error(), f.wt["squashed"]) {
+		t.Fatalf("recheck after an ignored .env appeared = %v, want a refusal naming the file and the worktree", err)
 	}
 }
 
