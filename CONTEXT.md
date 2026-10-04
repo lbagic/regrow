@@ -40,6 +40,21 @@ What brings deleted data back and what that costs. Shown next to every finding; 
 An item's size counted as what deleting *it alone* frees — bytes in blobs shared with other items are excluded and annotated in the label instead (ollama models). Sizes never promise space deletion won't reclaim.
 _Avoid_: logical size, reported size
 
+**Partial**:
+An item whose size and last-used are lower bounds, because a folder in it refused or never answered. Shown as "≥ X", or "unreadable" when nothing could be measured. Not an error: the rule found its target.
+_Avoid_: failed, errored
+
+**Scan ledger**:
+A scan's accounting: every measured byte in exactly one item (its size minus the items nested directly inside it), and each item's share in one bucket.
+_Avoid_: total found; not the docker usage ledger
+
+**Bucket**:
+When, if ever, an item's bytes become free space, derived from its rule: frees now (steward command), after Trash (Trash move), shown only (surface-only), macOS-managed (phantom space).
+
+**Written off**:
+A filesystem call the scan stopped waiting for: it made no progress for the stall window while nothing else answered. Its path stays blocked, never touched again, until that call answers.
+_Avoid_: timed out
+
 **Usage ledger**:
 Regrow's own persisted record of derived last-used timestamps (docker volumes), merged on every scan so history survives the objects that supplied it (containers). Keyed by identity + creation time to defeat name reuse.
 _Avoid_: cache, database
