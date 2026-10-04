@@ -24,8 +24,9 @@ import (
 // removes it with `git worktree remove`, which keeps the branch,
 // refuses a worktree with modified or untracked files, and deletes the
 // ignored build output with the checkout. It does not refuse a new
-// ignored file or an edit hidden from status, so the worktree-recheck
-// pre-action runs the clean test again right before the removal.
+// ignored file, an edit hidden from status, or a detached HEAD that no
+// branch contains, so the worktree-recheck pre-action tests for those
+// again right before the removal.
 
 const (
 	// worktreeIdle is how long a worktree must go untouched.
@@ -396,9 +397,12 @@ func firstUnclean(ctx context.Context, w *walker, dir string) (string, error) {
 	return "", nil
 }
 
-// CheckWorktreeClean runs the clean test again on a worktree about to
-// be removed: an ignored file created since the scan would otherwise be
-// deleted with it, since git refuses only modified or untracked files.
+// CheckWorktreeClean rechecks a worktree about to be removed for what
+// the removal would destroy without git refusing: an ignored file
+// created since the scan (the clean test, run again), and a commit made
+// since on a detached HEAD, which no ref would hold once the worktree
+// is gone. A worktree on a branch needs no second merged test: the
+// branch keeps its commits.
 func CheckWorktreeClean(ctx context.Context, path string) error {
 	why, err := firstUnclean(ctx, defaultWalker, path)
 	if err != nil {
@@ -406,6 +410,20 @@ func CheckWorktreeClean(ctx context.Context, path string) error {
 	}
 	if why != "" {
 		return fmt.Errorf("worktree %s is no longer clean (%s): not removed", path, why)
+	}
+	branch, err := git(ctx, path, "branch", "--show-current")
+	if err != nil {
+		return fmt.Errorf("recheck %s: %w", path, err)
+	}
+	if strings.TrimSpace(string(branch)) != "" {
+		return nil
+	}
+	holder, err := git(ctx, path, "for-each-ref", "--count=1", "--contains", "HEAD", "refs/heads", "refs/remotes")
+	if err != nil {
+		return fmt.Errorf("recheck %s: %w", path, err)
+	}
+	if strings.TrimSpace(string(holder)) == "" {
+		return fmt.Errorf("worktree %s is detached at a commit no branch contains: not removed", path)
 	}
 	return nil
 }

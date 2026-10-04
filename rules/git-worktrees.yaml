@@ -15,7 +15,7 @@ risk: caution
 tool_query: git-worktrees
 native_command: git -C {path} worktree remove {path}
 pre_action: worktree-recheck
-note: Removes the whole worktree folder with its ignored build output (node_modules, target, .next, dist, …); the plan names any other rule's items inside it. The branch and its commits stay in the repository. git refuses a worktree with modified or untracked files, and the recheck right before the removal refuses one that gained any other unclean file since the scan.
+note: Removes the whole worktree folder with its ignored build output (node_modules, target, .next, dist, …); the plan names any other rule's items inside it. The branch and its commits stay in the repository. git refuses a worktree with modified or untracked files, and the recheck right before the removal refuses one that gained any other unclean file, or a commit on a detached HEAD, since the scan.
 regen:
   story: git worktree add <path> <branch> checks the branch out again; installs and builds recreate the build output.
   cost: seconds for the checkout; minutes to reinstall and rebuild

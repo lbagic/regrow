@@ -379,6 +379,44 @@ func TestWorktreeRemoveAndRecheck(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), ".env") || !strings.Contains(err.Error(), f.wt["squashed"]) {
 		t.Fatalf("recheck after an ignored .env appeared = %v, want a refusal naming the file and the worktree", err)
 	}
+
+	// A commit on a detached HEAD leaves status empty, and no ref would
+	// hold it once the worktree is gone.
+	detached := f.wt["detached-merged"]
+	if err := CheckWorktreeClean(ctx, detached); err != nil {
+		t.Fatalf("recheck of a detached worktree at a merged commit: %v", err)
+	}
+	commitFile(t, detached, "late", "after the scan\n")
+	err = CheckWorktreeClean(ctx, detached)
+	if err == nil || !strings.Contains(err.Error(), "no branch contains") || !strings.Contains(err.Error(), detached) {
+		t.Fatalf("recheck after a commit on a detached HEAD = %v, want a refusal naming the worktree", err)
+	}
+	// On a branch the same commit stays reachable through the branch.
+	commitFile(t, f.wt["status-refreshed"], "late", "after the scan\n")
+	if err := CheckWorktreeClean(ctx, f.wt["status-refreshed"]); err != nil {
+		t.Fatalf("recheck after a commit on a branch: %v", err)
+	}
+}
+
+// TestGitIgnoresRepositoryVariables: under a git hook or `rebase
+// --exec`, GIT_DIR and its kin name the enclosing repository and would
+// override -C in every call the query and the recheck make.
+func TestGitIgnoresRepositoryVariables(t *testing.T) {
+	f := newWorktreeFixture(t)
+	want := f.scan(t)
+	if len(want) == 0 {
+		t.Fatal("fixture offers nothing")
+	}
+	elsewhere := t.TempDir()
+	t.Setenv("GIT_DIR", filepath.Join(elsewhere, "other.git"))
+	t.Setenv("GIT_WORK_TREE", elsewhere)
+	t.Setenv("GIT_INDEX_FILE", filepath.Join(elsewhere, "index"))
+	if got := f.scan(t); !reflect.DeepEqual(got, want) {
+		t.Fatalf("scan with GIT_DIR set = %d items, want the same %d as without", len(got), len(want))
+	}
+	if err := CheckWorktreeClean(context.Background(), f.wt["merged"]); err != nil {
+		t.Fatalf("recheck with GIT_DIR set: %v", err)
+	}
 }
 
 func TestParseWorktreeList(t *testing.T) {
