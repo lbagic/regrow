@@ -70,6 +70,11 @@ func TestValidate(t *testing.T) {
 	if err := validRule().Validate(); err != nil {
 		t.Fatalf("valid rule rejected: %v", err)
 	}
+	trashWithHook := validRule()
+	trashWithHook.PreAction = PreActionAgentScratchRecheck
+	if err := trashWithHook.Validate(); err != nil {
+		t.Fatalf("a pre_action on a Trash rule must be valid, the hook gates each move: %v", err)
+	}
 
 	tests := []struct {
 		name    string
@@ -115,7 +120,7 @@ func TestValidate(t *testing.T) {
 				r.NativeCommand = Argv{"docker", "system", "prune"}
 				r.PreAction = PreActionVolumeExport
 			},
-			"per-item native_command",
+			"per-item action",
 		},
 		{
 			"empties_trash without native command",

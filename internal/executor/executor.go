@@ -29,10 +29,11 @@ type Journal interface {
 	Append(oplog.Entry) error
 }
 
-// PreAction runs before a native action's command and makes its
-// target recoverable first (docker volume export to staging). A
-// pre-action failure fails the whole action: no backup, no deletion.
-// The receipt it returns is journaled like a trash receipt.
+// PreAction runs before an action's command or Trash move: it makes the
+// target recoverable first (docker volume export to staging) or checks
+// that it may still go (agent session recheck). A pre-action failure
+// fails the whole action. The receipt it returns is journaled like a
+// trash receipt; a Trash move's own receipt replaces it.
 type PreAction func(ctx context.Context, a engine.Action) (*trash.Receipt, error)
 
 // Executor runs plan actions one at a time, journaling each before and
@@ -125,11 +126,13 @@ func (e *Executor) Execute(ctx context.Context, plan engine.Plan) (Result, error
 		var actErr error
 		switch a.Kind {
 		case engine.ActionTrash:
-			r, err := e.Trash.Move(ctx, a.Path)
-			if err == nil {
-				receipt = &r
+			receipt, actErr = e.runPreAction(ctx, a)
+			if actErr == nil {
+				var r trash.Receipt
+				if r, actErr = e.Trash.Move(ctx, a.Path); actErr == nil {
+					receipt = &r
+				}
 			}
-			actErr = err
 		case engine.ActionNative:
 			receipt, actErr = e.runPreAction(ctx, a)
 			if actErr == nil {

@@ -31,7 +31,8 @@ type Action struct {
 	// Command is the exact argv, sudo included when the rule needs it.
 	Command []string `json:"command"`
 	// PreAction names the executor hook that must succeed before
-	// Command runs (docker volume export to staging).
+	// Command runs or the Trash move happens (docker volume export to
+	// staging, agent session recheck).
 	PreAction string `json:"pre_action,omitempty"`
 	// Path is the filesystem target for trash actions.
 	Path string `json:"path,omitempty"`
@@ -313,11 +314,12 @@ func trashDrafts(findings []Finding, tree forest, host Host, r Rule, refs []item
 		}
 		ds = append(ds, draft{
 			action: Action{
-				RuleID:  r.ID,
-				ItemKey: it.Key,
-				Kind:    ActionTrash,
-				Command: trash.PreviewCommand(it.Path),
-				Path:    it.Path,
+				RuleID:    r.ID,
+				ItemKey:   it.Key,
+				Kind:      ActionTrash,
+				Command:   trash.PreviewCommand(it.Path),
+				PreAction: r.PreAction,
+				Path:      it.Path,
 			},
 			items: []itemRef{ref},
 		})

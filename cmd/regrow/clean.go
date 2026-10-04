@@ -115,6 +115,9 @@ func executePlan(host engine.Host, plan engine.Plan) error {
 		Log:   log,
 		PreActions: map[string]executor.PreAction{
 			engine.PreActionVolumeExport: (&docker.Exporter{StagingDir: stagingDir, CapBytes: capBytes}).PreAction,
+			engine.PreActionAgentScratchRecheck: func(ctx context.Context, a engine.Action) (*trash.Receipt, error) {
+				return nil, scanner.RecheckAgentScratch(ctx, a.Path)
+			},
 		},
 		RunID: runID,
 	}
