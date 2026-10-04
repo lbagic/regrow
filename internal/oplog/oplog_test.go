@@ -3,6 +3,7 @@ package oplog
 import (
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 
@@ -53,6 +54,130 @@ func TestReadCorruptLineFailsLoudly(t *testing.T) {
 	}
 	if _, err := Read(path); err == nil {
 		t.Fatal("corrupt journal must not be silently skipped")
+	}
+}
+
+func TestAppendAfterACutShortLineKeepsTheJournalReadable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "oplog.jsonl")
+	l, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Append(Entry{Time: t0(0), Run: "r1", Seq: 1, Event: EventStart, RuleID: "go-build-cache", Kind: "prune"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// The done line hit a full disk halfway.
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(`{"time":"2026-07-13T12:00:01Z","run":"r1","seq":1,"event":"do`); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := Read(path); err != nil || len(got) != 1 {
+		t.Fatalf("a cut-short last line must not lock the journal: %d entries, %v", len(got), err)
+	}
+
+	l, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Append(Entry{Time: t0(2), Run: "r2", Seq: 1, Event: EventStart, RuleID: "npm-cache"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Read(path)
+	if err != nil || len(got) != 2 || got[1].Run != "r2" {
+		t.Fatalf("the line appended after a fragment must read back whole: %+v, %v", got, err)
+	}
+}
+
+func TestReadSkipsOnlyCutShortLines(t *testing.T) {
+	good := `{"time":"2026-07-13T12:00:00Z","run":"r1","seq":1,"event":"start"}`
+	head := `{"time":"2026-07-13T12:00:01Z","run":"r1","seq":1,"event":"done"`
+	tests := []struct {
+		name   string
+		middle string
+		ok     bool
+	}{
+		{"cut inside a string", head[:len(head)-3], true},
+		{"cut after a comma", head + `,`, true},
+		{"cut where a value starts", head + `,"receipt":`, true},
+		{"cut inside the first key", `{"ti`, true},
+		{"just the brace", `{`, true},
+		{"blank line", ``, true},
+		{"not json", `not json`, false},
+		{"zeros from a crash", "\x00\x00\x00\x00", false},
+		{"two lines glued, cut inside a key", `{"time":"2026-07-13T12:00:01Z","se` + good, false},
+		// The whole entry parses as the fragment's receipt, and the
+		// line still ends early: without the second-entry check this
+		// one would vanish.
+		{"two lines glued, cut where a value starts", head + `,"receipt":` + good, false},
+		{"two lines glued, cut inside the command array", head + `,"command":[` + good, false},
+		{"whole object, wrong type", `{"time":"2026-07-13T12:00:01Z","seq":"one"}`, false},
+		{"another object cut short", `{"run":"r1","seq":2,"event":"st`, false},
+		{"array cut short", `[1,2`, false},
+	}
+	for _, tt := range tests {
+		path := filepath.Join(t.TempDir(), "oplog.jsonl")
+		if err := os.WriteFile(path, []byte(good+"\n"+tt.middle+"\n"+good+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		got, err := Read(path)
+		if tt.ok && (err != nil || len(got) != 2) {
+			t.Errorf("%s: want the two whole lines, got %d entries, %v", tt.name, len(got), err)
+		}
+		if !tt.ok && err == nil {
+			t.Errorf("%s: corruption must fail loudly, got %d entries", tt.name, len(got))
+		}
+	}
+}
+
+func TestAppendWaitsForAnotherWriter(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "oplog.jsonl")
+	l, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = l.Close() }()
+	// Another process holds the journal and is cut short mid-line.
+	other, err := os.OpenFile(path, os.O_RDWR|os.O_APPEND, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = other.Close() }()
+	if err := syscall.Flock(int(other.Fd()), syscall.LOCK_EX); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		done <- l.Append(Entry{Time: t0(2), Run: "r2", Seq: 1, Event: EventStart, RuleID: "go-build-cache", Kind: "prune"})
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("Append must wait while another writer holds the journal, returned %v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	if _, err := other.WriteString(`{"time":"2026-07-13T12:00:01Z","run":"r1","seq":1,"event":"do`); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Flock(int(other.Fd()), syscall.LOCK_UN); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	got, err := Read(path)
+	if err != nil || len(got) != 1 || got[0].Run != "r2" {
+		t.Fatalf("the waiting entry must start on a fresh line after the fragment: %+v, %v", got, err)
 	}
 }
 

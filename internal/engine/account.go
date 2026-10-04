@@ -69,7 +69,7 @@ func (t *Totals) add(r Rule, n int64) {
 		t.MacOSManaged += n
 	case !r.Risk.Actionable():
 		t.ShownOnly += n
-	case len(r.NativeCommand) > 0:
+	case len(r.NativeCommand) > 0 || r.Prune != nil:
 		t.FreesNow += n
 	default:
 		t.AfterTrash += n

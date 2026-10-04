@@ -6,13 +6,18 @@ package oplog
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
+	"syscall"
 	"time"
 
+	"github.com/lbagic/regrow/internal/jsonl"
 	"github.com/lbagic/regrow/internal/trash"
 )
 
@@ -39,7 +44,16 @@ type Entry struct {
 	Path    string         `json:"path,omitempty"`
 	Bytes   int64          `json:"bytes,omitempty"`
 	Receipt *trash.Receipt `json:"receipt,omitempty"`
-	Error   string         `json:"error,omitempty"`
+	// Pruned rides a prune action's done or fail line: what the command
+	// deleted, as measured. Bytes on the start line is the estimate.
+	Pruned *Pruned `json:"pruned,omitempty"`
+	Error  string  `json:"error,omitempty"`
+}
+
+// Pruned counts the cache entries a prune deleted.
+type Pruned struct {
+	Files int   `json:"files"`
+	Bytes int64 `json:"bytes"`
 }
 
 // StateDir is ~/.local/state/regrow (honouring XDG_STATE_HOME) — the
@@ -77,19 +91,28 @@ func Open(path string) (*Log, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o600)
 	if err != nil {
 		return nil, err
 	}
 	return &Log{f: f}, nil
 }
 
+// Append holds an exclusive flock on the journal from the check for a
+// cut-short last line through the sync: two regrow processes (`clean`
+// and `tick --autotrim`) can journal at once, and one must not write
+// after the other's fragment without starting a fresh line.
 func (l *Log) Append(e Entry) error {
 	line, err := json.Marshal(e)
 	if err != nil {
 		return err
 	}
-	if _, err := l.f.Write(append(line, '\n')); err != nil {
+	fd := int(l.f.Fd())
+	if err := syscall.Flock(fd, syscall.LOCK_EX); err != nil {
+		return fmt.Errorf("lock the oplog: %w", err)
+	}
+	defer func() { _ = syscall.Flock(fd, syscall.LOCK_UN) }()
+	if _, err := l.f.Write(jsonl.Frame(l.f, line)); err != nil {
 		return err
 	}
 	return l.f.Sync()
@@ -99,7 +122,12 @@ func (l *Log) Close() error { return l.f.Close() }
 
 // Read parses the journal. A missing file is an empty history. A
 // corrupt line fails loudly: the journal is the undo contract, and
-// silently skipping lines could undo the wrong thing.
+// silently skipping lines could undo the wrong thing. Two exceptions
+// carry no entry: blank lines, and a line cut short, which is the
+// start of one entry and nothing else (a write that hit a full disk). Skipping a cut-short line can only miss a restore, never undo
+// the wrong thing: a start line that failed refused its action, a lost
+// done line drops its receipt, and a lost undo line leaves a receipt
+// whose restore then fails because the item is back.
 func Read(path string) ([]Entry, error) {
 	f, err := os.Open(path)
 	if os.IsNotExist(err) {
@@ -115,13 +143,38 @@ func Read(path string) ([]Entry, error) {
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for n := 1; sc.Scan(); n++ {
+		line := bytes.TrimSpace(sc.Bytes())
+		if len(line) == 0 {
+			continue
+		}
 		var e Entry
-		if err := json.Unmarshal(sc.Bytes(), &e); err != nil {
+		if err := json.Unmarshal(line, &e); err != nil {
+			if cutShort(line, err) {
+				continue
+			}
 			return nil, fmt.Errorf("%s:%d: corrupt oplog line: %w", path, n, err)
 		}
 		out = append(out, e)
 	}
 	return out, sc.Err()
+}
+
+// entryStart opens every encoded Entry: Time is the first field and
+// never omitted, and no nested type has a time key. It cannot occur
+// inside a string value, whose quotes the encoder escapes.
+var entryStart = []byte(`{"time":`)
+
+// cutShort reports whether line is one unfinished entry: the parser ran
+// out of input with nothing wrong before that, and no second entry
+// starts inside it. A fragment followed by a whole entry with no
+// newline between can parse to the end the same way (the entry lands
+// as a value), and must fail loudly instead of hiding the whole one.
+func cutShort(line []byte, err error) bool {
+	var se *json.SyntaxError
+	opens := bytes.HasPrefix(line, entryStart) || bytes.HasPrefix(entryStart, line)
+	return opens && !bytes.Contains(line[1:], entryStart) &&
+		errors.As(err, &se) && se.Offset == int64(len(line)) &&
+		strings.Contains(se.Error(), "unexpected end of JSON input")
 }
 
 // Run is one execution's journal lines, grouped.

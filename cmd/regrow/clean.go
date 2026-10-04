@@ -261,9 +261,7 @@ func runHistory(asJSON bool) error {
 					undone++
 				}
 			}
-			if e.Event == oplog.EventStart {
-				bytes += e.Bytes
-			}
+			bytes += entryBytes(e)
 		}
 		status := fmt.Sprintf("%d ok, %d failed", done, failed)
 		if undone > 0 {

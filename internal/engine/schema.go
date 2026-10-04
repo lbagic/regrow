@@ -281,6 +281,8 @@ type Rule struct {
 	Beta bool `yaml:"beta" json:"beta,omitempty"`
 	// Doctor marks the rule as a hero-bug scanner for `regrow doctor`.
 	Doctor *Doctor `yaml:"doctor" json:"doctor,omitempty"`
+	// Prune is the policy `regrow prune` and autotrim delete under.
+	Prune *Prune `yaml:"prune" json:"prune,omitempty"`
 	// Fixture is the rule's golden-test data; never serialized to JSON.
 	Fixture *Fixture `yaml:"fixture" json:"-"`
 }
@@ -375,6 +377,7 @@ func (r Rule) Validate() error {
 			errs = append(errs, "empties_trash rules must not be safe — emptying the Trash destroys every undo")
 		}
 	}
+	errs = append(errs, r.validatePrune()...)
 	if r.PreAction != "" {
 		if !knownPreActions[r.PreAction] {
 			errs = append(errs, fmt.Sprintf("unknown pre_action %q", r.PreAction))
