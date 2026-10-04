@@ -66,6 +66,15 @@ _Avoid_: native command (in prose; the YAML field keeps its name)
 **Preview command**:
 The exact command the trash mechanism would run for a path, shown on the plan screen before anything executes.
 
+**Default selection**:
+What every face starts from when nothing is named: whole safe rules that found items without an error. An empty selection plans nothing.
+
+**Containment forest**:
+Every scanned item placed under the nearest item, from any rule, whose path contains it (on equal paths the later rule is the child). The planner uses it to plan nested selections once and to refuse deleting anything that holds a surface-only item.
+
+**Frees now / after Trash**:
+The two plan subtotals: steward commands free space as they run; Trash moves free nothing until the Trash is emptied.
+
 **Pre-action**:
 A named executor hook a rule declares (`pre_action:`) that must succeed before each item's steward command runs — the docker volume tarball export. No backup, no deletion.
 _Avoid_: pre-hook, before-script
