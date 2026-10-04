@@ -96,7 +96,7 @@ A plan id:
 
 - is executable once, for 10 minutes of wall-clock time, sleep included;
 - dies when a newer scan starts, even one later canceled;
-- dies when an execute of its scan starts running: that run changes what the scan measured, so every plan of the scan is dropped and planning from it again answers `scan_spent`. An execute refused before it ran (`busy`, `plan_expired`, an `execute_failed` with no `result`) spends nothing but its own plan id;
+- dies when an execute of its scan starts running: that run changes what the scan measured, so every plan of the scan is dropped and planning from it again answers `scan_spent`. An execute refused as `busy` spends nothing, and one refused later but before it ran (`plan_expired`, an `execute_failed` with no `result`) spends only its own plan id;
 - is the oplog run id its execution journals under, so `regrow history` and `regrow undo <plan_id>` find the run;
 - carries 128 random bits, so it cannot be guessed.
 
@@ -119,9 +119,11 @@ The engine executes on request: the peer's confirmation is the per-run opt-in. A
 
 A steward command runs with stdin from `/dev/null` and its stdout and stderr captured. When it fails, the last 4 KiB of that output ends the `fail` line's `error`. The docker export that precedes a volume removal is captured the same way, except that its stdout is the tarball.
 
-A Trash move that has not finished after 60 s fails with a reason, and the run goes on. A folder macOS blocks without Full Disk Access can hold a move forever, and no cancel reaches it. If the abandoned move completes later, the item is in the Trash, where Finder's Put Back restores it, or in regrow staging if Finder failed and the fallback ran; `regrow undo` has no receipt for either.
+An action whose rule declares a `pre_action` runs that hook first: the docker volume export before a volume removal, the agent-session recheck before a session's scratch goes to the Trash. A hook that fails or refuses fails the action: its `fail` line carries the reason, and nothing is moved or removed.
 
-Errors: `bad_request` (no `plan_id`); `busy`; `unknown_plan` (never issued, already executed, or dropped when an execute or a newer scan started); `plan_expired`; `execute_failed`, either before the run starts (an unreadable config file, a journal that cannot be opened; nothing ran) or when the journal fails mid-run (nothing more runs, and the event carries the `result` of what did). The first execute that names a plan id spends that id, whatever the outcome.
+A Trash move that has not finished after 60 s fails with a reason, and the run goes on. The limit covers the move alone, not a hook before it. A folder macOS blocks without Full Disk Access can hold a move forever, and no cancel reaches it. If the abandoned move completes later, the item is in the Trash, where Finder's Put Back restores it, or in regrow staging if Finder failed and the fallback ran; `regrow undo` has no receipt for either.
+
+Errors: `bad_request` (no `plan_id`); `busy`; `unknown_plan` (never issued, already executed, or dropped when an execute or a newer scan started); `plan_expired`; `execute_failed`, either before the run starts (an unreadable config file, a journal that cannot be opened; nothing ran) or when the journal fails mid-run (nothing more runs, and the event carries the `result` of what did). `bad_request` and `busy` refuse before the plan id is looked up and leave it executable. Past them, the first execute that names a plan id spends that id, whatever the outcome.
 
 ### cancel
 
