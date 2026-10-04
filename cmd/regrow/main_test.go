@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
@@ -171,35 +170,5 @@ func TestScanTextShowsBucketsAndUnreadable(t *testing.T) {
 	}
 	if strings.Contains(out, "Total found") {
 		t.Errorf("the single double-counted total must be gone:\n%s", out)
-	}
-}
-
-func TestScanJSONCarriesTheLedger(t *testing.T) {
-	findings := scanFixture()
-	raw, err := json.Marshal(scanReport{Findings: findings, Ledger: engine.Account(findings)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var got struct {
-		Findings []struct {
-			Items []struct {
-				Partial bool `json:"partial"`
-			} `json:"items"`
-		} `json:"findings"`
-		Totals    map[string]int64 `json:"totals"`
-		Exclusive map[string]int64 `json:"exclusive"`
-	}
-	if err := json.Unmarshal(raw, &got); err != nil {
-		t.Fatal(err)
-	}
-	wantTotals := map[string]int64{"frees_now": 55 << 30, "after_trash": 2 << 30, "shown_only": 15 << 30, "macos_managed": 40 << 30, "partial": 2}
-	if !reflect.DeepEqual(got.Totals, wantTotals) {
-		t.Errorf("totals = %v, want %v", got.Totals, wantTotals)
-	}
-	if got.Exclusive["library-caches/~/Library/Caches"] != 15<<30 {
-		t.Errorf("exclusive = %v, want the container's 15 GiB share", got.Exclusive)
-	}
-	if len(got.Findings) != 5 || !got.Findings[0].Items[0].Partial || got.Findings[1].Items[0].Partial {
-		t.Errorf("findings lost their partial flags: %s", raw)
 	}
 }

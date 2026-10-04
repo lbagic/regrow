@@ -48,8 +48,9 @@ func TestEngineScansAndPlansThroughTheRealScanner(t *testing.T) {
 		Re      string          `json:"re"`
 		Version string          `json:"version"`
 		ScanID  string          `json:"scan_id"`
-		Finding *engine.Finding `json:"finding"`
-		Plan    *engine.Plan    `json:"plan"`
+		Finding   *engine.Finding  `json:"finding"`
+		Plan      *engine.Plan     `json:"plan"`
+		Exclusive map[string]int64 `json:"exclusive"`
 	}
 	next := func(want string) event {
 		t.Helper()
@@ -80,6 +81,9 @@ func TestEngineScansAndPlansThroughTheRealScanner(t *testing.T) {
 	}
 	if it := found.Items[0]; it.Path != target || it.Key != "~/proj/cache" || it.Bytes < 8192 {
 		t.Fatalf("item = %+v, want the measured fixture directory", it)
+	}
+	if exclusive := next("summary").Exclusive; exclusive["fixture-cache/~/proj/cache"] < 8192 {
+		t.Fatalf("summary exclusive = %v, want the ledger of the scan", exclusive)
 	}
 	next("done")
 
@@ -147,5 +151,100 @@ func TestStewardCommandsKeepTheDefaultSIGPIPE(t *testing.T) {
 	}
 	if stderr.String() != "" {
 		t.Fatalf("a child inherited an ignored SIGPIPE: %q", stderr.String())
+	}
+}
+
+// `regrow scan --json` is the engine's scan without hello: a temp home
+// with a readable cache, a cache with a folder it may not open, and a
+// folder it may not list at all.
+func TestScanJSONIsTheEngineScanWithoutHello(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a mode-000 directory")
+	}
+	home := t.TempDir()
+	write := func(rel string) {
+		t.Helper()
+		p := filepath.Join(home, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, make([]byte, 8192), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	lock := func(rel string) {
+		t.Helper()
+		p := filepath.Join(home, rel)
+		if err := os.Chmod(p, 0); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(p, 0o755) })
+	}
+	write("read/a.bin")
+	write("part/a.bin")
+	write("part/locked/b.bin")
+	write("gone/c.bin")
+	lock("part/locked")
+	lock("gone")
+	rule := func(id, path string) engine.Rule {
+		return engine.Rule{ID: id, Title: id, Category: "fixture", Risk: engine.RiskSafe,
+			Paths: map[string][]engine.PathEntry{"darwin": {{Path: path}}}}
+	}
+	catalog := []engine.Rule{rule("fixture-read", "~/read"), rule("fixture-part", "~/part"), rule("fixture-gone", "~/gone")}
+	host := engine.Host{OS: "darwin", Version: "15.5", Home: home}
+
+	var out strings.Builder
+	newEngineServer(host, catalog, nil).ScanOnce(context.Background(), &out)
+
+	type item struct {
+		Bytes   int64 `json:"bytes"`
+		Partial bool  `json:"partial"`
+	}
+	type line struct {
+		Event   string          `json:"event"`
+		Re      *string         `json:"re"`
+		TookMS  *int64          `json:"took_ms"`
+		Finding *struct {
+			Rule  struct{ ID string } `json:"rule"`
+			Items []item              `json:"items"`
+		} `json:"finding"`
+		Totals *engine.Totals `json:"totals"`
+	}
+	var events []string
+	items := map[string]item{}
+	var totals *engine.Totals
+	for _, raw := range strings.Split(strings.TrimSpace(out.String()), "\n") {
+		var l line
+		if err := json.Unmarshal([]byte(raw), &l); err != nil {
+			t.Fatalf("not an event line: %q", raw)
+		}
+		if l.Re != nil {
+			t.Errorf("a line answers no request, so it has no re: %s", raw)
+		}
+		events = append(events, l.Event)
+		switch l.Event {
+		case "finding":
+			if l.TookMS == nil || len(l.Finding.Items) != 1 {
+				t.Fatalf("finding = %s, want took_ms and one item", raw)
+			}
+			items[l.Finding.Rule.ID] = l.Finding.Items[0]
+		case "summary":
+			totals = l.Totals
+		}
+	}
+	if got := strings.Join(events, ","); got != "start,finding,finding,finding,summary,done" {
+		t.Fatalf("events = %s", got)
+	}
+	if it := items["fixture-read"]; it.Partial || it.Bytes < 8192 {
+		t.Errorf("readable item = %+v", it)
+	}
+	if it := items["fixture-part"]; !it.Partial || it.Bytes < 8192 {
+		t.Errorf("partly readable item = %+v, want a partial lower bound", it)
+	}
+	if it := items["fixture-gone"]; !it.Partial || it.Bytes != 0 {
+		t.Errorf("unlistable item = %+v, want partial with nothing measured", it)
+	}
+	if totals == nil || totals.Partial != 2 || totals.AfterTrash < 2*8192 {
+		t.Errorf("summary totals = %+v", totals)
 	}
 }

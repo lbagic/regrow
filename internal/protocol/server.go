@@ -127,7 +127,7 @@ type session struct {
 // its current action and stops there. It returns in's read error, nil
 // at EOF.
 func (srv *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
-	s := &session{srv: srv, out: newOutbox(out), nonce: newNonce(), plans: map[string]heldPlan{}}
+	s := srv.newSession(out)
 
 	probe := srv.ProbeFDA
 	if probe == nil {
@@ -173,6 +173,23 @@ loop:
 	s.shutdown(grace)
 	s.out.close(grace)
 	return err
+}
+
+// ScanOnce writes the events of one scan to out, as a scan request
+// would, without hello and without re: `regrow scan --json`. It
+// returns once every event is written, or the writer failed.
+func (srv *Server) ScanOnce(ctx context.Context, out io.Writer) {
+	s := srv.newSession(out)
+	ctx, cancel := context.WithCancel(ctx)
+	s.mu.Lock()
+	op, sc := s.beginScan(request{Type: reqScan}, cancel)
+	s.mu.Unlock()
+	s.runScan(ctx, cancel, op, sc)
+	s.out.close(0)
+}
+
+func (srv *Server) newSession(out io.Writer) *session {
+	return &session{srv: srv, out: newOutbox(out), nonce: newNonce(), plans: map[string]heldPlan{}}
 }
 
 func (s *session) emit(event any) bool { return s.out.send(event) }
@@ -273,6 +290,15 @@ func (s *session) startScan(req request) {
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
+	op, sc := s.beginScan(req, cancel)
+	s.mu.Unlock()
+
+	go s.runScan(ctx, cancel, op, sc)
+}
+
+// beginScan makes a new scan the current one. The caller holds s.mu
+// and has checked busy.
+func (s *session) beginScan(req request, cancel context.CancelFunc) (*operation, *scanState) {
 	op := s.begin(req, cancel)
 	s.scanSeq++
 	sc := &scanState{id: fmt.Sprintf("%s-%d", s.nonce, s.scanSeq), seq: s.scanSeq, status: scanRunning}
@@ -281,9 +307,7 @@ func (s *session) startScan(req request) {
 	// replaced.
 	s.scan = sc
 	clear(s.plans)
-	s.mu.Unlock()
-
-	go s.runScan(ctx, cancel, op, sc)
+	return op, sc
 }
 
 func (s *session) runScan(ctx context.Context, cancel context.CancelFunc, op *operation, sc *scanState) {

@@ -26,7 +26,8 @@ const usageText = `regrow: what is on your disk, and how it comes back.
 
 Usage:
   regrow [scan] [--json]          interactive checklist on a terminal;
-                                  plain listing when piped or with --json
+                                  plain listing when piped; --json prints
+                                  the engine's scan events (docs/ENGINE.md)
   regrow plan [id ...] [--json]   dry run: the exact commands that would run
   regrow clean [id ...] [--yes]   show the plan, confirm, execute
   regrow doctor [--json]          hero-bug scan and phantom-space report
@@ -129,7 +130,11 @@ func run(args []string) error {
 	case "rules":
 		return printRules(catalog, opts.asJSON)
 	case "scan":
-		if !opts.asJSON && isTTY() {
+		if opts.asJSON {
+			newEngineServer(host, catalog, nil).ScanOnce(context.Background(), os.Stdout)
+			return nil
+		}
+		if isTTY() {
 			plan, confirmed, err := tui.Run(host, version, func(ctx context.Context) []engine.Finding {
 				return scanner.New(host).Scan(ctx, catalog)
 			})
@@ -142,7 +147,8 @@ func run(args []string) error {
 			return executePlan(host, plan)
 		}
 		findings := scanner.New(host).Scan(context.Background(), catalog)
-		return printFindings(findings, opts.asJSON)
+		writeFindings(os.Stdout, findings, engine.Account(findings))
+		return nil
 	case "plan":
 		findings := scanner.New(host).Scan(context.Background(), catalog)
 		plan := engine.BuildPlan(host, findings, selectionFor(ids, findings))
@@ -194,21 +200,6 @@ func printRules(catalog []engine.Rule, asJSON bool) error {
 	for _, r := range catalog {
 		fmt.Printf("%-24s %-12s %-10s %s\n", r.ID, r.Category, r.Risk, r.Title)
 	}
-	return nil
-}
-
-// scanReport is `regrow scan --json`: the findings and their ledger.
-type scanReport struct {
-	Findings []engine.Finding `json:"findings"`
-	engine.Ledger
-}
-
-func printFindings(findings []engine.Finding, asJSON bool) error {
-	ledger := engine.Account(findings)
-	if asJSON {
-		return emitJSON(scanReport{Findings: findings, Ledger: ledger})
-	}
-	writeFindings(os.Stdout, findings, ledger)
 	return nil
 }
 

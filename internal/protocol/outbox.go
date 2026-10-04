@@ -77,12 +77,17 @@ func (o *outbox) run(w io.Writer) {
 }
 
 // close stops accepting events and waits up to grace for the queued
-// ones to be written. It reports whether the queue drained.
+// ones to be written; a grace of 0 waits until they are. It reports
+// whether the queue drained.
 func (o *outbox) close(grace time.Duration) bool {
 	o.mu.Lock()
 	o.closed = true
 	o.mu.Unlock()
 	o.signal()
+	if grace == 0 {
+		<-o.done
+		return true
+	}
 	timer := time.NewTimer(grace)
 	defer timer.Stop()
 	select {

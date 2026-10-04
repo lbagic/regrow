@@ -42,17 +42,23 @@ func keepRunningOnEPIPE() {
 }
 
 func serveEngine(ctx context.Context, host engine.Host, catalog []engine.Rule, flags []string, in io.Reader, out io.Writer) error {
-	srv := &protocol.Server{
+	return newEngineServer(host, catalog, flags).Serve(ctx, in, out)
+}
+
+// newEngineServer is what `regrow engine` and `regrow scan --json`
+// both speak through.
+func newEngineServer(host engine.Host, catalog []engine.Rule, flags []string) *protocol.Server {
+	return &protocol.Server{
 		Version:    version,
 		Host:       host,
 		Catalog:    catalog,
 		CleanFlags: flags,
 		Scan:       scanStream(host),
+		Account:    engine.Account,
 		NewExecutor: func(runID string) (*executor.Executor, func(), error) {
 			return newRunExecutor(host, runID, dockerStream)
 		},
 	}
-	return srv.Serve(ctx, in, out)
 }
 
 // cleanFlags are the flags that make `regrow clean` in Terminal load
@@ -80,13 +86,11 @@ func dockerStream(ctx context.Context, args []string, stdout io.Writer) error {
 	return protocol.RunNativeTo(ctx, append([]string{"docker"}, args...), stdout)
 }
 
-// scanStream fills the engine's streaming scan seam from the
-// all-at-once Scan: every finding arrives when the whole scan is
-// done, with no per-rule time.
+// scanStream builds a scanner per scan: tool providers keep one
+// snapshot per scanner, and a reused one would hand a rescan the
+// previous scan's docker state.
 func scanStream(host engine.Host) protocol.ScanFunc {
 	return func(ctx context.Context, rules []engine.Rule, emit func(int, engine.Finding, time.Duration)) {
-		for i, f := range scanner.New(host).Scan(ctx, rules) {
-			emit(i, f, 0)
-		}
+		scanner.New(host).ScanStream(ctx, rules, emit)
 	}
 }
