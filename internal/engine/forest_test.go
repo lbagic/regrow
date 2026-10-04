@@ -2,6 +2,7 @@ package engine
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -253,6 +254,28 @@ func TestBuildPlanNamesUnselectedItemsThatGoWithAnAction(t *testing.T) {
 	for _, a := range BuildPlan(testHost, findings, sel).Actions {
 		if len(a.Includes) != 0 {
 			t.Fatalf("%s: every nested item is selected and skipped with a reason, includes = %+v", a.ItemKey, a.Includes)
+		}
+	}
+}
+
+func TestBuildPlanGuardsPerItemCommandPaths(t *testing.T) {
+	findings := []Finding{{
+		Rule: Rule{ID: "worktrees", Risk: RiskCaution, NativeCommand: Argv{"git", "-C", "{path}", "worktree", "remove", "{path}"}},
+		Items: []Item{
+			{Path: "/Volumes/X", Bytes: 9},
+			{Path: "/Users/t", Bytes: 9},
+			{Path: "/opt", Bytes: 9},
+			{Path: "/Users/t/w/ok", Bytes: 9},
+		},
+	}}
+	plan := BuildPlan(testHost, findings, selectRules(findings...))
+	if want := []string{"worktrees/~/w/ok"}; !reflect.DeepEqual(actionIDs(plan), want) {
+		t.Fatalf("actions = %v, want only the guarded-in path", actionIDs(plan))
+	}
+	reasons := skipReasons(plan)
+	for key, want := range map[string]string{"/Volumes/X": "mount root", "~": "home directory", "/opt": "top-level directory"} {
+		if r := reasons["worktrees/"+key]; !strings.Contains(r, "path guard: refusing "+want) {
+			t.Errorf("%s skip reason = %q, want the path guard's %q", key, r, want)
 		}
 	}
 }

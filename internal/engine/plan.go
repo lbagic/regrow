@@ -285,7 +285,7 @@ func BuildPlanWith(host Host, findings []Finding, selected map[string]bool, opts
 		var ds []draft
 		var skips []Skip
 		if len(f.Rule.NativeCommand) > 0 {
-			ds, skips = nativeDrafts(findings, tree, f.Rule, refs, partial)
+			ds, skips = nativeDrafts(findings, tree, host, f.Rule, refs, partial)
 			// Before nesting: a refused action must not cover the
 			// items nested inside it.
 			if opts.NoSudo && f.Rule.Sudo && len(ds) > 0 {
@@ -391,8 +391,10 @@ func trashDrafts(findings []Finding, tree forest, host Host, r Rule, refs []item
 // one it acts on everything at once, so a partial selection, or any
 // item holding a surface-only one, refuses the whole command. The
 // placeholder convention itself (which tokens exist, refusing empty
-// substitutions) is owned by the schema (Argv).
-func nativeDrafts(findings []Finding, tree forest, r Rule, refs []itemRef, partial bool) ([]draft, []Skip) {
+// substitutions) is owned by the schema (Argv). A per-item command's
+// item path passes the path guard, as a Trash move's does: a tool can
+// report any path, a mount root included.
+func nativeDrafts(findings []Finding, tree forest, host Host, r Rule, refs []itemRef, partial bool) ([]draft, []Skip) {
 	if !r.NativeCommand.PerItem() {
 		if partial {
 			return nil, []Skip{{RuleID: r.ID, Reason: "whole-rule command cannot target individual items — select the whole rule"}}
@@ -418,6 +420,9 @@ func nativeDrafts(findings []Finding, tree forest, r Rule, refs []itemRef, parti
 	for _, ref := range refs {
 		it := itemAt(findings, ref)
 		cmd, err := r.NativeCommand.ExpandItem(it)
+		if err == nil && it.Path != "" {
+			err = trash.GuardPath(it.Path, host.Home)
+		}
 		if err != nil {
 			skips = append(skips, Skip{RuleID: r.ID, ItemKey: it.Key, Reason: err.Error()})
 			continue

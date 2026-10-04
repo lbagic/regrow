@@ -37,6 +37,8 @@ func ActionCommand(a engine.Action) string {
 		s += "  (tarball to staging first)"
 	case engine.PreActionAgentScratchRecheck:
 		s += "  (session checked again first)"
+	case engine.PreActionWorktreeRecheck:
+		s += "  (git status rechecked first)"
 	default:
 		s += "  (pre: " + a.PreAction + ")"
 	}
@@ -54,11 +56,13 @@ func Reversibility(a engine.Action) string {
 
 // ActionLine renders one plan action identically on every plan surface,
 // with one more line per item the action deletes along with its target.
+// Every surface indents the action by two spaces; the extra lines carry
+// that indent themselves, so they start under the rule id.
 func ActionLine(a engine.Action) string {
 	line := fmt.Sprintf("%-8s %-24s %10s  %-13s  %s",
 		"["+string(a.Kind)+"]", a.RuleID, HumanBytes(a.Bytes), Reversibility(a), ActionCommand(a))
 	for _, in := range a.Includes {
-		line += fmt.Sprintf("\n%-8s also removes %s (%s)", "", in.ID, HumanBytes(in.Bytes))
+		line += fmt.Sprintf("\n  %-8s also removes %s (%s)", "", in.ID, HumanBytes(in.Bytes))
 	}
 	return line
 }
