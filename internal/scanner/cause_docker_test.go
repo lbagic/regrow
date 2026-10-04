@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/lbagic/regrow/internal/engine"
@@ -36,6 +37,26 @@ func TestDockerVMMemory(t *testing.T) {
 			name:  "limit set in the older settings file",
 			files: map[string]string{legacy: `{"memoryMiB": 2048, "cpus": 4}`},
 			want:  engine.VerdictNormal, detail: []string{"capped at 2.0 GiB"},
+		},
+		{
+			name:  "a limit just under half the memory",
+			files: map[string]string{store: `{"MemoryMiB": 6144}`},
+			want:  engine.VerdictNormal, detail: []string{"capped at 6.0 GiB of this Mac's 16.0 GiB"},
+		},
+		{
+			name:  "a limit at the default is no cap",
+			files: map[string]string{store: `{"MemoryMiB": 8192}`},
+			want:  engine.VerdictFlagged, detail: []string{"the memory limit is 8.0 GiB, half or more of this Mac's 16.0 GiB"},
+		},
+		{
+			name:  "the default written out by the older settings file",
+			files: map[string]string{legacy: `{"memoryMiB": 8192, "cpus": 4}`},
+			want:  engine.VerdictFlagged, detail: []string{"the memory limit is 8.0 GiB, half or more of this Mac's 16.0 GiB"},
+		},
+		{
+			name:  "a limit above the default",
+			files: map[string]string{store: `{"MemoryMiB": 12288}`},
+			want:  engine.VerdictFlagged, detail: []string{"the memory limit is 12.0 GiB, half or more of this Mac's 16.0 GiB"},
 		},
 		{
 			name:  "the newer file wins over a leftover older one",
@@ -92,54 +113,96 @@ func TestDockerVMMemoryWithoutAHostFigure(t *testing.T) {
 	if detail[len(detail)-1] == ')' {
 		t.Errorf("detail %q must not print a figure it does not have", detail)
 	}
+
+	// With nothing to compare a limit against, it reads as the cap it
+	// was set as.
+	writeText(t, filepath.Join(c.host.Home, "Library/Group Containers/group.com.docker/settings-store.json"), `{"MemoryMiB": 8192}`)
+	verdict, detail = c.dockerVMMemory(context.Background(), engine.Rule{})
+	wantCause(t, verdict, detail, engine.VerdictNormal, "capped at 8.0 GiB")
 }
 
+// What each config means is what Docker Engine 29.8 does with it:
+// collection is on unless enabled is false, a policy replaces the
+// default sizes, and defaultKeepStorage is the older name of
+// defaultReservedSpace.
 func TestDockerBuildCacheLimit(t *testing.T) {
+	const unset = "builder.gc.enabled is not set, which means on since Docker Engine 28.2"
 	tests := []struct {
-		name   string
-		config string
-		want   engine.Verdict
-		detail []string
+		name    string
+		config  string
+		want    engine.Verdict
+		detail  []string
+		without string
 	}{
 		{
-			name:   "Docker Desktop's stock config",
-			config: `{"builder": {"gc": {"defaultKeepStorage": "20GB", "enabled": true}}, "experimental": false}`,
-			want:   engine.VerdictNormal, detail: []string{"builder.gc.defaultKeepStorage is 20GB"},
+			name:    "Docker Desktop's stock config",
+			config:  `{"builder": {"gc": {"defaultKeepStorage": "20GB", "enabled": true}}, "experimental": false}`,
+			want:    engine.VerdictNormal,
+			detail:  []string{"garbage collection on: builder.gc.defaultKeepStorage is 20GB"},
+			without: "not set",
 		},
 		{
-			name:   "collection on, sized by the newer key",
-			config: `{"builder": {"gc": {"enabled": true, "defaultReservedSpace": "10GB"}}}`,
-			want:   engine.VerdictNormal, detail: []string{"builder.gc.defaultReservedSpace is 10GB"},
+			name:   "sized by the current keys",
+			config: `{"builder": {"gc": {"enabled": true, "defaultReservedSpace": "10GB", "defaultMaxUsedSpace": "30GB"}}}`,
+			want:   engine.VerdictNormal,
+			detail: []string{"builder.gc.defaultReservedSpace is 10GB, builder.gc.defaultMaxUsedSpace is 30GB"},
 		},
 		{
-			name:   "collection on, no size",
-			config: `{"builder": {"gc": {"enabled": true}}}`,
-			want:   engine.VerdictNormal, detail: []string{"Docker's default limits"},
+			name:    "the newer size name wins over the older",
+			config:  `{"builder": {"gc": {"enabled": true, "defaultKeepStorage": "20GB", "defaultReservedSpace": "5GB"}}}`,
+			want:    engine.VerdictNormal,
+			detail:  []string{"builder.gc.defaultReservedSpace is 5GB"},
+			without: "defaultKeepStorage",
 		},
 		{
-			name:   "collection on, own policy",
-			config: `{"builder": {"gc": {"enabled": true, "policy": [{"keepStorage": "10GB", "all": true}]}}}`,
-			want:   engine.VerdictNormal, detail: []string{"builder.gc.policy"},
+			name:    "collection on, no size",
+			config:  `{"builder": {"gc": {"enabled": true}}}`,
+			want:    engine.VerdictNormal,
+			detail:  []string{"Docker's default limits"},
+			without: "not set",
+		},
+		{
+			name:    "a policy replaces the default sizes",
+			config:  `{"builder": {"gc": {"enabled": true, "defaultKeepStorage": "20GB", "policy": [{"keepStorage": "10GB", "all": true}]}}}`,
+			want:    engine.VerdictNormal,
+			detail:  []string{"under the policy in builder.gc.policy"},
+			without: "defaultKeepStorage",
+		},
+		{
+			name:   "no builder block: on by default",
+			config: `{"experimental": false}`,
+			want:   engine.VerdictNormal,
+			detail: []string{"Docker's default limits", unset},
+		},
+		{
+			name:   "a size without the switch: on by default, under that size",
+			config: `{"builder": {"gc": {"defaultKeepStorage": "20GB"}}}`,
+			want:   engine.VerdictNormal,
+			detail: []string{"builder.gc.defaultKeepStorage is 20GB", unset},
 		},
 		{
 			name:   "collection switched off, size left behind",
 			config: `{"builder": {"gc": {"defaultKeepStorage": "20GB", "enabled": false}}}`,
-			want:   engine.VerdictFlagged, detail: []string{"~/.docker/daemon.json switches build-cache garbage collection off"},
+			want:   engine.VerdictFlagged,
+			detail: []string{"~/.docker/daemon.json switches build-cache garbage collection off", "nothing limits the cache"},
 		},
 		{
-			name:   "no builder block",
-			config: `{"experimental": false}`,
-			want:   engine.VerdictFlagged, detail: []string{"does not switch build-cache garbage collection on"},
+			name:   "a policy with no rule collects nothing",
+			config: `{"builder": {"gc": {"enabled": true, "policy": []}}}`,
+			want:   engine.VerdictFlagged,
+			detail: []string{"a policy with no rule", "nothing limits the cache"},
 		},
 		{
-			name:   "a size without the switch",
-			config: `{"builder": {"gc": {"defaultKeepStorage": "20GB"}}}`,
-			want:   engine.VerdictFlagged, detail: []string{"does not switch build-cache garbage collection on"},
+			name:   "a null policy is no policy",
+			config: `{"builder": {"gc": {"enabled": true, "policy": null, "defaultReservedSpace": "20GB"}}}`,
+			want:   engine.VerdictNormal,
+			detail: []string{"builder.gc.defaultReservedSpace is 20GB"},
 		},
 		{
 			name:   "not JSON",
 			config: `builder: gc`,
-			want:   engine.VerdictUnknown, detail: []string{"~/.docker/daemon.json is not a JSON object"},
+			want:   engine.VerdictUnknown,
+			detail: []string{"~/.docker/daemon.json is not a JSON object"},
 		},
 	}
 	for _, tt := range tests {
@@ -148,6 +211,9 @@ func TestDockerBuildCacheLimit(t *testing.T) {
 			writeText(t, filepath.Join(c.host.Home, ".docker/daemon.json"), tt.config)
 			verdict, detail := c.dockerBuildCacheLimit(context.Background(), engine.Rule{})
 			wantCause(t, verdict, detail, tt.want, tt.detail...)
+			if tt.without != "" && strings.Contains(detail, tt.without) {
+				t.Errorf("detail %q must not say %q", detail, tt.without)
+			}
 		})
 	}
 

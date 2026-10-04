@@ -2,11 +2,15 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/lbagic/regrow/internal/engine"
+	"github.com/lbagic/regrow/internal/scanner"
 )
 
 func TestDoctorTextShowsThreeVerdicts(t *testing.T) {
@@ -142,5 +146,98 @@ func TestDoctorJSONCarriesCauseRows(t *testing.T) {
 	c := got.Causes[0]
 	if c.RuleID != "owner" || c.Verdict != "flagged" || c.Detail != "seen" || c.Cause.Check != "in-effect" || len(c.Cause.Fix) != 2 {
 		t.Errorf("cause row = %+v in %s", c, raw)
+	}
+}
+
+// doctor scans only the rules with a doctor block (or in phantom
+// space) and checks the causes of every rule: a rule that carries only
+// causes gets its row without being scanned.
+func TestDoctorReportChecksCausesOfUnscannedRules(t *testing.T) {
+	home := t.TempDir()
+	if err := os.WriteFile(filepath.Join(home, "runaway.log"), make([]byte, 8192), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	catalog := []engine.Rule{
+		{
+			ID: "hero", Title: "Hero", Category: "dev-caches", Risk: engine.RiskSafe,
+			Paths:  map[string][]engine.PathEntry{"darwin": {{Path: "~/runaway.log"}}},
+			Doctor: &engine.Doctor{FlagAbove: 1, Story: "known bug"},
+		},
+		{
+			ID: "owner", Title: "Owner", Category: "docker", Risk: engine.RiskSafe,
+			ToolQuery: "costly",
+			Causes:    []engine.Cause{{Check: "limit-unset", Title: "Limit", Story: "why", Fix: []string{"set it"}}},
+		},
+	}
+	var checked []string
+	s := &scanner.Scanner{
+		Host: engine.Host{OS: "darwin", Version: "15.7", Home: home},
+		Queries: map[string]scanner.ToolQuery{
+			"costly": func(context.Context) ([]engine.Item, error) {
+				t.Error("a rule that carries only causes must not be scanned")
+				return nil, nil
+			},
+		},
+		CauseQueries: map[string]scanner.CauseQuery{
+			"limit-unset": func(_ context.Context, r engine.Rule) (engine.Verdict, string) {
+				checked = append(checked, r.ID)
+				return engine.VerdictFlagged, "no limit"
+			},
+		},
+	}
+	rep := doctorReport(context.Background(), s, catalog)
+
+	if len(rep.Hero) != 1 || rep.Hero[0].Finding.Rule.ID != "hero" || rep.Hero[0].Verdict != engine.VerdictFlagged {
+		t.Errorf("hero section = %+v, want the hero rule flagged", rep.Hero)
+	}
+	if len(rep.Causes) != 1 || rep.Causes[0].RuleID != "owner" || rep.Causes[0].Verdict != engine.VerdictFlagged || rep.Causes[0].Detail != "no limit" {
+		t.Errorf("cause section = %+v, want the owner rule's row as checked", rep.Causes)
+	}
+	if len(checked) != 1 || checked[0] != "owner" {
+		t.Errorf("the check ran for %v, want the owner rule once", checked)
+	}
+}
+
+// `regrow doctor` end to end on a fixture home: the scanner it builds
+// can run a shipped check, and the row reaches both outputs.
+func TestRunDoctorReportsCauses(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".docker"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".docker", "daemon.json"), []byte(`{"builder": {"gc": {"enabled": false}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	host := engine.Host{OS: "darwin", Version: "15.7", Home: home, Root: home}
+	catalog := []engine.Rule{{
+		ID: "owner", Title: "Owner", Category: "docker", Risk: engine.RiskSafe,
+		Paths:  map[string][]engine.PathEntry{"darwin": {{Path: "~/never-there"}}},
+		Causes: []engine.Cause{{Check: "docker-build-cache-limit", Title: "Build-cache limit", Story: "why", Fix: []string{"switch it on"}}},
+	}}
+
+	var text bytes.Buffer
+	if err := runDoctor(&text, host, catalog, false); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range [][]string{
+		{"🚩", "Build-cache limit", "switches build-cache garbage collection off"},
+		{"fix:", "switch it on"},
+		{"1 cause(s) to fix above"},
+	} {
+		if !lineWith(text.String(), want...) {
+			t.Errorf("no line with %q in:\n%s", want, text.String())
+		}
+	}
+
+	var raw bytes.Buffer
+	if err := runDoctor(&raw, host, catalog, true); err != nil {
+		t.Fatal(err)
+	}
+	var rep engine.DoctorReport
+	if err := json.Unmarshal(raw.Bytes(), &rep); err != nil {
+		t.Fatalf("%v in %s", err, raw.String())
+	}
+	if len(rep.Causes) != 1 || rep.Causes[0].RuleID != "owner" || rep.Causes[0].Verdict != engine.VerdictFlagged {
+		t.Errorf("causes = %+v, want the owner's row flagged", rep.Causes)
 	}
 }

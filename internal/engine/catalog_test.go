@@ -118,3 +118,46 @@ func TestOwnerConflicts(t *testing.T) {
 		})
 	}
 }
+
+// The aerial row's fix is the owner's instructions for a download that
+// eats tens of GB: the lines that stop it must not drop out of the
+// catalog unnoticed.
+func TestAerialCauseFixText(t *testing.T) {
+	catalog, err := LoadEmbedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fix []string
+	for _, r := range catalog {
+		for _, c := range r.Causes {
+			if r.ID == "aerial-wallpapers" && c.Check == "aerial-downloads" {
+				fix = c.Fix
+			}
+		}
+	}
+	if fix == nil {
+		t.Fatal("aerial-wallpapers declares no aerial-downloads cause")
+	}
+	line := func(parts ...string) bool {
+		return slices.ContainsFunc(fix, func(l string) bool {
+			for _, p := range parts {
+				if !strings.Contains(l, p) {
+					return false
+				}
+			}
+			return true
+		})
+	}
+	for _, want := range [][]string{
+		{"Quit System Settings", "Wallpaper"},
+		{"come back", "the pane is opened"},
+		// The disable is untested against SIP; the same line must say so.
+		{"sudo launchctl disable system/com.apple.idleassetsd", "untested", "System Integrity Protection"},
+		{"sudo killall idleassetsd"},
+		{"regrow clean aerial-wallpapers"},
+	} {
+		if !line(want...) {
+			t.Errorf("no fix line with %q in:\n%s", want, strings.Join(fix, "\n"))
+		}
+	}
+}

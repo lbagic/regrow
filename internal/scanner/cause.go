@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/lbagic/regrow/internal/engine"
@@ -32,36 +33,43 @@ func (c *causeChecks) queries() map[string]CauseQuery {
 }
 
 // Causes runs the fix-the-cause checks the rules declare for this
-// host, catalog order kept. A check that the scanner does not know, or
-// that gives no answer by the query deadline, is unknown.
+// host, all at once, and returns the rows in catalog order. A check
+// that the scanner does not know, or that gives no answer by the query
+// deadline, is unknown.
 func (s *Scanner) Causes(ctx context.Context, rules []engine.Rule) []engine.CauseCheck {
+	var rows []engine.CauseCheck
+	var owners []engine.Rule
+	for _, r := range rules {
+		for _, c := range s.Host.Causes(r) {
+			rows = append(rows, engine.CauseCheck{RuleID: r.ID, Cause: c})
+			owners = append(owners, r)
+		}
+	}
+	var wg sync.WaitGroup
+	for i := range rows {
+		wg.Go(func() { rows[i].Verdict, rows[i].Detail = s.checkCause(ctx, owners[i], rows[i].Cause) })
+	}
+	wg.Wait()
+	return rows
+}
+
+func (s *Scanner) checkCause(ctx context.Context, r engine.Rule, c engine.Cause) (engine.Verdict, string) {
+	query, known := s.CauseQueries[c.Check]
+	if !known {
+		return engine.VerdictUnknown, fmt.Sprintf("unknown cause check %q", c.Check)
+	}
 	type answer struct {
 		verdict engine.Verdict
 		detail  string
 	}
-	var out []engine.CauseCheck
-	for _, r := range rules {
-		for _, c := range s.Host.Causes(r) {
-			row := engine.CauseCheck{RuleID: r.ID, Cause: c, Verdict: engine.VerdictUnknown}
-			query, known := s.CauseQueries[c.Check]
-			if !known {
-				row.Detail = fmt.Sprintf("unknown cause check %q", c.Check)
-				out = append(out, row)
-				continue
-			}
-			a, err := withDeadline(ctx, s.timeout(), func(ctx context.Context) (answer, error) {
-				v, d := query(ctx, r)
-				return answer{v, d}, nil
-			})
-			if err != nil {
-				row.Detail = err.Error()
-			} else {
-				row.Verdict, row.Detail = a.verdict, a.detail
-			}
-			out = append(out, row)
-		}
+	a, err := withDeadline(ctx, s.timeout(), func(ctx context.Context) (answer, error) {
+		v, d := query(ctx, r)
+		return answer{v, d}, nil
+	})
+	if err != nil {
+		return engine.VerdictUnknown, err.Error()
 	}
-	return out
+	return a.verdict, a.detail
 }
 
 // causeChecks is what the built-in checks read. A nil seam reads the

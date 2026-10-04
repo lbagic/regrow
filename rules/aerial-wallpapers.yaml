@@ -32,7 +32,8 @@ causes:
     title: Aerial video downloads
     story: Opening System Settings ▸ Wallpaper makes idleassetsd download the aerial catalogue (about 137 videos of roughly 0.5 GB each), even with a still wallpaper selected, and quitting System Settings does not stop a batch that is already running. Seen on macOS 15.7 — the folder went from 5 MB to 27 GB in about 90 minutes.
     fix:
-      - "The videos come back whenever System Settings ▸ Wallpaper is opened, so stop the downloader first:"
+      - "Quit System Settings after visiting Wallpaper, so the open pane cannot start another batch."
+      - "A batch already running goes on, and the videos come back the next time the pane is opened. To stop the downloader itself:"
       - "sudo launchctl disable system/com.apple.idleassetsd   (untested: System Integrity Protection may refuse it)"
       - "sudo killall idleassetsd   (stops the batch that is running now)"
       - "Then remove the videos: regrow clean aerial-wallpapers"

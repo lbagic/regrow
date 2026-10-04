@@ -20,7 +20,8 @@ const (
 
 // dockerVMMemory reads the VM's memory limit. Docker Desktop writes
 // only settings that differ from its defaults, so a missing key means
-// the default: up to half of the machine's memory.
+// the default: up to half of the machine's memory. A limit that high
+// or higher caps nothing, whoever wrote it.
 func (c *causeChecks) dockerVMMemory(ctx context.Context, _ engine.Rule) (engine.Verdict, string) {
 	for _, name := range []string{"settings-store.json", "settings.json"} {
 		path := c.host.ExpandPath(dockerSettingsDir + "/" + name)
@@ -49,11 +50,14 @@ func (c *causeChecks) dockerVMMemory(ctx context.Context, _ engine.Rule) (engine
 			if mib <= 0 {
 				break
 			}
-			detail := "capped at " + engine.HumanBytes(int64(mib)<<20)
-			if total > 0 {
-				detail += " of this Mac's " + engine.HumanBytes(total)
+			limit := int64(mib) << 20
+			switch {
+			case total == 0:
+				return engine.VerdictNormal, "capped at " + engine.HumanBytes(limit)
+			case limit >= total/2:
+				return engine.VerdictFlagged, fmt.Sprintf("the memory limit is %s, half or more of this Mac's %s", engine.HumanBytes(limit), engine.HumanBytes(total))
 			}
-			return engine.VerdictNormal, detail
+			return engine.VerdictNormal, fmt.Sprintf("capped at %s of this Mac's %s", engine.HumanBytes(limit), engine.HumanBytes(total))
 		}
 		detail := "no memory limit in Docker Desktop's settings, so its default applies: half of this Mac's memory"
 		if total > 0 {
@@ -71,9 +75,13 @@ func (c *causeChecks) totalMemory() int64 {
 	return hostMemory()
 }
 
-// dockerBuildCacheLimit reads builder.gc from the engine's config.
-// Enabled with no size still collects, under Docker's default limits;
-// only a collection that is off or never switched on has no limit.
+// dockerBuildCacheLimit reads builder.gc from the engine's config, as
+// Docker Engine 29.8 reads it (moby daemon/config/builder.go): the
+// collection is on unless enabled is false, and that has been the
+// default since Engine 28.2; a policy replaces the default sizes; and
+// defaultKeepStorage is the older name of defaultReservedSpace. So
+// only enabled: false, or a policy with no rule in it, leaves the
+// cache without a limit.
 func (c *causeChecks) dockerBuildCacheLimit(ctx context.Context, _ engine.Rule) (engine.Verdict, string) {
 	path := c.host.ExpandPath(dockerDaemonConfig)
 	shown := tilde(c.host, path)
@@ -87,12 +95,12 @@ func (c *causeChecks) dockerBuildCacheLimit(ctx context.Context, _ engine.Rule) 
 	var cfg struct {
 		Builder struct {
 			GC struct {
-				Enabled              *bool             `json:"enabled"`
-				DefaultKeepStorage   string            `json:"defaultKeepStorage"`
-				DefaultReservedSpace string            `json:"defaultReservedSpace"`
-				DefaultMaxUsedSpace  string            `json:"defaultMaxUsedSpace"`
-				DefaultMinFreeSpace  string            `json:"defaultMinFreeSpace"`
-				Policy               []json.RawMessage `json:"policy"`
+				Enabled              *bool              `json:"enabled"`
+				Policy               *[]json.RawMessage `json:"policy"`
+				DefaultReservedSpace string             `json:"defaultReservedSpace"`
+				DefaultKeepStorage   string             `json:"defaultKeepStorage"`
+				DefaultMaxUsedSpace  string             `json:"defaultMaxUsedSpace"`
+				DefaultMinFreeSpace  string             `json:"defaultMinFreeSpace"`
 			} `json:"gc"`
 		} `json:"builder"`
 	}
@@ -100,24 +108,38 @@ func (c *causeChecks) dockerBuildCacheLimit(ctx context.Context, _ engine.Rule) 
 		return engine.VerdictUnknown, shown + " is not a JSON object"
 	}
 	gc := cfg.Builder.GC
-	switch {
-	case gc.Enabled == nil:
-		return engine.VerdictFlagged, shown + " does not switch build-cache garbage collection on (builder.gc.enabled), so it sets no limit"
-	case !*gc.Enabled:
-		return engine.VerdictFlagged, shown + " switches build-cache garbage collection off (builder.gc.enabled), so the cache has no limit"
+	if gc.Enabled != nil && !*gc.Enabled {
+		return engine.VerdictFlagged, shown + " switches build-cache garbage collection off (builder.gc.enabled is false), so nothing limits the cache"
 	}
-	for _, size := range []struct{ key, value string }{
-		{"defaultKeepStorage", gc.DefaultKeepStorage},
-		{"defaultReservedSpace", gc.DefaultReservedSpace},
-		{"defaultMaxUsedSpace", gc.DefaultMaxUsedSpace},
-		{"defaultMinFreeSpace", gc.DefaultMinFreeSpace},
-	} {
-		if size.value != "" {
-			return engine.VerdictNormal, fmt.Sprintf("garbage collection on: builder.gc.%s is %s", size.key, size.value)
+	if gc.Policy != nil && len(*gc.Policy) == 0 {
+		return engine.VerdictFlagged, shown + " gives build-cache garbage collection a policy with no rule (builder.gc.policy), so nothing limits the cache"
+	}
+
+	detail := "garbage collection on, under Docker's default limits: shares of the engine's own disk, which in Docker Desktop is the VM disk"
+	if gc.Policy != nil {
+		detail = "garbage collection on, under the policy in builder.gc.policy"
+	} else {
+		// The engine reads the older name only when the newer is unset.
+		if gc.DefaultReservedSpace != "" {
+			gc.DefaultKeepStorage = ""
+		}
+		var sizes []string
+		for _, size := range []struct{ key, value string }{
+			{"defaultReservedSpace", gc.DefaultReservedSpace},
+			{"defaultKeepStorage", gc.DefaultKeepStorage},
+			{"defaultMaxUsedSpace", gc.DefaultMaxUsedSpace},
+			{"defaultMinFreeSpace", gc.DefaultMinFreeSpace},
+		} {
+			if size.value != "" {
+				sizes = append(sizes, fmt.Sprintf("builder.gc.%s is %s", size.key, size.value))
+			}
+		}
+		if len(sizes) > 0 {
+			detail = "garbage collection on: " + strings.Join(sizes, ", ")
 		}
 	}
-	if len(gc.Policy) > 0 {
-		return engine.VerdictNormal, "garbage collection on, under the policy in builder.gc.policy"
+	if gc.Enabled == nil {
+		detail += "; builder.gc.enabled is not set, which means on since Docker Engine 28.2"
 	}
-	return engine.VerdictNormal, "garbage collection on, under Docker's default limits"
+	return engine.VerdictNormal, detail
 }

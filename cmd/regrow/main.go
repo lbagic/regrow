@@ -155,7 +155,7 @@ func run(args []string) error {
 	case "clean":
 		return runClean(host, catalog, ids, opts.yes)
 	case "doctor":
-		return runDoctor(host, catalog, opts.asJSON)
+		return runDoctor(os.Stdout, host, catalog, opts.asJSON)
 	case "tick":
 		return runTick(host, catalog, opts)
 	case "prune":
@@ -304,8 +304,10 @@ func isTTY() bool {
 	return true
 }
 
-func emitJSON(v any) error {
-	enc := json.NewEncoder(os.Stdout)
+func emitJSON(v any) error { return writeJSON(os.Stdout, v) }
+
+func writeJSON(w io.Writer, v any) error {
+	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(v)
 }

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -145,6 +146,64 @@ func TestCausesRowsFollowTheCatalog(t *testing.T) {
 	}
 }
 
+// New hands out a scanner that can run every cause check the shipped
+// catalog declares; without them doctor prints only unknown rows.
+func TestNewWiresTheCauseChecks(t *testing.T) {
+	catalog, err := engine.LoadEmbedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := New(engine.Host{OS: "darwin", Version: "15.7", Home: t.TempDir()})
+	declared := 0
+	for _, r := range catalog {
+		for _, c := range r.Causes {
+			declared++
+			if s.CauseQueries[c.Check] == nil {
+				t.Errorf("New's scanner has no check %q, declared by %s", c.Check, r.ID)
+			}
+		}
+	}
+	if declared == 0 {
+		t.Fatal("the embedded catalog declares no causes")
+	}
+}
+
+// The checks run at once: each of these waits until all three have
+// started, which checks run one after another never reach.
+func TestCauseChecksRunConcurrently(t *testing.T) {
+	const n = 3
+	var started sync.WaitGroup
+	started.Add(n)
+	all := make(chan struct{})
+	go func() { started.Wait(); close(all) }()
+
+	s := &Scanner{queryTimeout: 5 * time.Second, CauseQueries: map[string]CauseQuery{}}
+	var rule engine.Rule
+	rule.ID = "r"
+	for i := range n {
+		name := fmt.Sprintf("check-%d", i)
+		rule.Causes = append(rule.Causes, engine.Cause{Check: name})
+		s.CauseQueries[name] = func(ctx context.Context, _ engine.Rule) (engine.Verdict, string) {
+			started.Done()
+			select {
+			case <-all:
+				return engine.VerdictFlagged, name
+			case <-ctx.Done():
+				return engine.VerdictUnknown, "ran alone"
+			}
+		}
+	}
+	rows := s.Causes(context.Background(), []engine.Rule{rule})
+	if len(rows) != n {
+		t.Fatalf("got %d rows, want %d", len(rows), n)
+	}
+	for i, row := range rows {
+		if want := fmt.Sprintf("check-%d", i); row.Verdict != engine.VerdictFlagged || row.Detail != want || row.Cause.Check != want {
+			t.Errorf("row %d = %s %s (%s), want flagged %s in catalog order", i, row.Cause.Check, row.Verdict, row.Detail, want)
+		}
+	}
+}
+
 func TestCauseCheckDeadlineIsUnknown(t *testing.T) {
 	stuck := make(chan struct{})
 	t.Cleanup(func() { close(stuck) })
@@ -182,7 +241,7 @@ func TestEmbeddedCausesOnAFixtureMachine(t *testing.T) {
 	}
 	plantRepo(t, filepath.Join(home, "workspace/org/svc"), "go.mod", 3)
 	writeText(t, filepath.Join(home, "Library/Group Containers/group.com.docker/settings-store.json"), `{"AutoStart": false}`)
-	writeText(t, filepath.Join(home, ".docker/daemon.json"), `{"experimental": false}`)
+	writeText(t, filepath.Join(home, ".docker/daemon.json"), `{"builder": {"gc": {"enabled": false}}}`)
 
 	catalog, err := engine.LoadEmbedded()
 	if err != nil {

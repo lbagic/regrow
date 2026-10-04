@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os"
 
 	"github.com/lbagic/regrow/internal/engine"
 	"github.com/lbagic/regrow/internal/scanner"
@@ -16,20 +15,21 @@ import (
 // and the phantom-space explainers. Read-only by construction — doctor
 // never plans and never executes; hero fix lines point at `regrow
 // clean`, cause fix lines are the owner's to run.
-func runDoctor(host engine.Host, catalog []engine.Rule, asJSON bool) error {
-	ctx := context.Background()
-	s := scanner.New(host)
-	findings := s.Scan(ctx, engine.DoctorRules(catalog))
-	report := engine.BuildDoctorReport(findings, s.Causes(ctx, catalog))
+func runDoctor(w io.Writer, host engine.Host, catalog []engine.Rule, asJSON bool) error {
+	report := doctorReport(context.Background(), scanner.New(host), catalog)
 	if asJSON {
-		return emitJSON(report)
+		return writeJSON(w, report)
 	}
-	printDoctorReport(report)
+	writeDoctorReport(w, report)
 	return nil
 }
 
-func printDoctorReport(rep engine.DoctorReport) {
-	writeDoctorReport(os.Stdout, rep)
+// doctorReport scans the doctor rules and checks the causes of every
+// rule in the catalog: a rule that carries only causes is checked
+// without being scanned.
+func doctorReport(ctx context.Context, s *scanner.Scanner, catalog []engine.Rule) engine.DoctorReport {
+	findings := s.Scan(ctx, engine.DoctorRules(catalog))
+	return engine.BuildDoctorReport(findings, s.Causes(ctx, catalog))
 }
 
 func writeDoctorReport(w io.Writer, rep engine.DoctorReport) {
