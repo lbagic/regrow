@@ -22,6 +22,13 @@ regen:
   story: Repopulated automatically by the next go build.
   cost: next builds slower once; no network
 sudo: false
+causes:
+  - check: go-worktrees-trimpath
+    title: Go worktrees without -trimpath
+    story: Go keys build-cache entries by each package's absolute directory unless -trimpath is set, so every git worktree of a module compiles its own copy of it into the cache (24 copies of one 437 MB package measured on a worktree-heavy machine). With -trimpath, worktrees at the same code share entries.
+    fix:
+      - "go env -w GOFLAGS=-trimpath   (keep any flags GOFLAGS already has; debugger and stack-trace paths become module-relative)"
+      - "Or set GOFLAGS=-trimpath only in the environment that builds in the worktrees. This row reads `go env` in regrow's own environment, so it then stays."
 fixture:
   files:
     - ~/Library/Caches/go-build/00/hash

@@ -19,11 +19,23 @@ native_command:
   - -name
   - "*.mov"
   - -delete
-note: Switch to a static wallpaper and screensaver first, or the OS immediately re-downloads every video.
+note: The videos come back whenever System Settings ▸ Wallpaper is opened, even with a still wallpaper; `regrow doctor` prints how to stop the downloads.
 regen:
-  story: macOS re-downloads any aerial still selected as wallpaper/screensaver.
-  cost: multi-GB download per video in use
+  story: macOS downloads the aerial catalogue again when System Settings ▸ Wallpaper is opened, and any aerial selected as wallpaper or screensaver.
+  cost: roughly 0.5 GB of download per video
 sudo: true
+# Seen on macOS 15.7, where idleassetsd is the downloader; the row
+# stays off the Tahoe path until the same is seen there.
+causes:
+  - check: aerial-downloads
+    os_max: "25"
+    title: Aerial video downloads
+    story: Opening System Settings ▸ Wallpaper makes idleassetsd download the aerial catalogue (about 137 videos of roughly 0.5 GB each), even with a still wallpaper selected, and quitting System Settings does not stop a batch that is already running. Seen on macOS 15.7 — the folder went from 5 MB to 27 GB in about 90 minutes.
+    fix:
+      - "The videos come back whenever System Settings ▸ Wallpaper is opened, so stop the downloader first:"
+      - "sudo launchctl disable system/com.apple.idleassetsd   (untested: System Integrity Protection may refuse it)"
+      - "sudo killall idleassetsd   (stops the batch that is running now)"
+      - "Then remove the videos: regrow clean aerial-wallpapers"
 fixture:
   files:
     - /Library/Application Support/com.apple.idleassetsd/Customer/4KSDR240FPS/a.mov

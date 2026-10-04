@@ -30,7 +30,7 @@ Usage:
                                   the engine's scan events (docs/ENGINE.md)
   regrow plan [id ...] [--json]   dry run: the exact commands that would run
   regrow clean [id ...] [--yes]   show the plan, confirm, execute
-  regrow doctor [--json]          hero-bug scan and phantom-space report
+  regrow doctor [--json]          runaway bugs, causes to fix, phantom space; read-only
   regrow tick [--autotrim]        one headroom sample: free space, forecast, alerts
   regrow prune go-build [--yes]   delete old Go build cache entries; dry run without --yes
   regrow undo [run-id]            restore the newest (or given) run's Trash moves

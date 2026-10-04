@@ -12,13 +12,15 @@ import (
 )
 
 // runDoctor is the hero-bug scan (PRODUCT.md §3): a fast pass over
-// only the rules that carry a doctor block, plus the phantom-space
-// explainers. Read-only by construction — doctor never plans and
-// never executes; the fix lines point at `regrow clean`.
+// only the rules that carry a doctor block, the fix-the-cause checks,
+// and the phantom-space explainers. Read-only by construction — doctor
+// never plans and never executes; hero fix lines point at `regrow
+// clean`, cause fix lines are the owner's to run.
 func runDoctor(host engine.Host, catalog []engine.Rule, asJSON bool) error {
-	rules := engine.DoctorRules(catalog)
-	findings := scanner.New(host).Scan(context.Background(), rules)
-	report := engine.BuildDoctorReport(findings)
+	ctx := context.Background()
+	s := scanner.New(host)
+	findings := s.Scan(ctx, engine.DoctorRules(catalog))
+	report := engine.BuildDoctorReport(findings, s.Causes(ctx, catalog))
 	if asJSON {
 		return emitJSON(report)
 	}
@@ -32,7 +34,7 @@ func printDoctorReport(rep engine.DoctorReport) {
 
 func writeDoctorReport(w io.Writer, rep engine.DoctorReport) {
 	p := func(format string, a ...any) { _, _ = fmt.Fprintf(w, format, a...) }
-	p("regrow doctor — known runaway bugs, and where the \"missing\" space hides\n\n")
+	p("regrow doctor — known runaway bugs, what keeps filling the disk, and where the \"missing\" space hides\n\n")
 
 	p("HERO BUGS\n")
 	var flagged, unknown int
@@ -56,6 +58,31 @@ func writeDoctorReport(w io.Writer, rep engine.DoctorReport) {
 			p("  ✓ %-34s %12s  not present\n", f.Rule.Title, "")
 		default:
 			p("  ✓ %-34s %12s  normal (flags above %s)\n", f.Rule.Title, size, line)
+		}
+	}
+
+	var causes, causesUnknown int
+	if len(rep.Causes) > 0 {
+		p("\nFIX THE CAUSE — what keeps filling the disk; regrow prints the fix and changes nothing\n")
+	}
+	for _, c := range rep.Causes {
+		switch c.Verdict {
+		case engine.VerdictFlagged:
+			causes++
+			p("  🚩 %-33s %s\n", c.Cause.Title, c.Detail)
+			p("       %s\n", c.Cause.Story)
+			for i, line := range c.Cause.Fix {
+				label := "fix:"
+				if i > 0 {
+					label = ""
+				}
+				p("       %-4s %s\n", label, line)
+			}
+		case engine.VerdictUnknown:
+			causesUnknown++
+			p("  ? %-34s unknown — %s\n", c.Cause.Title, c.Detail)
+		default:
+			p("  ✓ %-34s %s\n", c.Cause.Title, c.Detail)
 		}
 	}
 
@@ -83,8 +110,18 @@ func writeDoctorReport(w io.Writer, rep engine.DoctorReport) {
 		p("%d runaway bug(s) found. Fixes above are dry-run first: `regrow plan <id>` shows the exact commands.\n", flagged)
 	case unknown > 0:
 		p("No runaway bug in what could be read; %d check(s) unknown above. Phantom space is informational.\n", unknown)
+	case causes > 0 || causesUnknown > 0:
+		p("No runaway bugs on this machine. Phantom space above is informational.\n")
 	default:
 		p("No runaway bugs on this machine. Phantom space above is informational — nothing needs fixing.\n")
+	}
+	switch {
+	case causes > 0 && causesUnknown > 0:
+		p("%d cause(s) to fix above, %d more could not be checked. The fixes are yours to run: regrow changes no setting.\n", causes, causesUnknown)
+	case causes > 0:
+		p("%d cause(s) to fix above. The fixes are yours to run: regrow changes no setting.\n", causes)
+	case causesUnknown > 0:
+		p("%d cause check(s) unknown above.\n", causesUnknown)
 	}
 }
 

@@ -13,6 +13,13 @@ regen:
   story: The next docker build repopulates exactly the layers it needs.
   cost: next builds slower
 sudo: false
+causes:
+  - check: docker-build-cache-limit
+    title: Docker build-cache limit
+    story: BuildKit keeps build layers until its garbage collection removes them. With builder.gc off or never switched on in the engine's config, nothing sets a limit and the cache grows inside the Docker VM disk until someone prunes it.
+    fix:
+      - 'Docker Desktop ▸ Settings ▸ Docker Engine: add "builder": {"gc": {"enabled": true, "defaultKeepStorage": "20GB"}}, then Apply & restart'
+      - "Records unused for 30 days go with: regrow clean docker-build-cache"
 fixture:
   items:
     - label: build cache unused for 30d+

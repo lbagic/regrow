@@ -3,6 +3,7 @@ package engine
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -243,6 +244,26 @@ type Doctor struct {
 	Story string `yaml:"story" json:"story"`
 }
 
+// Cause is a fix-the-cause row of `regrow doctor`: something outside
+// regrow's reach (a setting, a daemon, a build habit) that keeps
+// filling the disk this rule's target sits on. A named scanner check
+// says whether it is in effect here; the row prints Fix for the owner
+// to apply. regrow applies none of it.
+type Cause struct {
+	// Check names the scanner's detection, as tool_query names a query.
+	Check string `yaml:"check" json:"check"`
+	Title string `yaml:"title" json:"title"`
+	// Story says why the space keeps coming back.
+	Story string `yaml:"story" json:"story"`
+	// Fix is what the owner does, one line each: a command as they
+	// would type it, or a sentence.
+	Fix []string `yaml:"fix" json:"fix"`
+	// OSMin and OSMax bound the host versions the cause was seen on,
+	// inclusive, as on a path entry.
+	OSMin string `yaml:"os_min" json:"os_min,omitempty"`
+	OSMax string `yaml:"os_max" json:"os_max,omitempty"`
+}
+
 // Rule is one declarative cleaning target (PRODUCT.md §6). Exactly
 // the data a community PR edits; code handles only the weird cases
 // via named tool queries.
@@ -284,6 +305,8 @@ type Rule struct {
 	Doctor *Doctor `yaml:"doctor" json:"doctor,omitempty"`
 	// Prune is the policy `regrow prune` and autotrim delete under.
 	Prune *Prune `yaml:"prune" json:"prune,omitempty"`
+	// Causes are the fix-the-cause rows `regrow doctor` checks.
+	Causes []Cause `yaml:"causes" json:"causes,omitempty"`
 	// Fixture is the rule's golden-test data; never serialized to JSON.
 	Fixture *Fixture `yaml:"fixture" json:"-"`
 }
@@ -399,6 +422,17 @@ func (r Rule) Validate() error {
 		}
 	}
 	errs = append(errs, r.validatePrune()...)
+	for _, c := range r.Causes {
+		if !idRe.MatchString(c.Check) {
+			errs = append(errs, fmt.Sprintf("causes: check %q must be kebab-case", c.Check))
+		}
+		if c.Title == "" || c.Story == "" {
+			errs = append(errs, fmt.Sprintf("causes: %s needs a title and a story", c.Check))
+		}
+		if len(c.Fix) == 0 || slices.Contains(c.Fix, "") {
+			errs = append(errs, fmt.Sprintf("causes: %s needs fix lines, none empty — the row exists to print them", c.Check))
+		}
+	}
 	if r.PreAction != "" {
 		if !knownPreActions[r.PreAction] {
 			errs = append(errs, fmt.Sprintf("unknown pre_action %q", r.PreAction))
