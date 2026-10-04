@@ -432,3 +432,16 @@ func TestGlobEscape(t *testing.T) {
 		}
 	}
 }
+
+func TestPruneRuleBytesFreeNowInTheLedger(t *testing.T) {
+	withCommand := pruneRule()
+	pruneOnly := pruneRule()
+	pruneOnly.ID, pruneOnly.NativeCommand = "prune-only", nil
+	led := Account([]Finding{
+		{Rule: withCommand, Items: []Item{{Path: "/u/a", Bytes: 3}}},
+		{Rule: pruneOnly, Items: []Item{{Path: "/u/b", Bytes: 4}}},
+	})
+	if led.Totals.FreesNow != 7 || led.Totals.AfterTrash != 0 {
+		t.Errorf("a rule with a prune policy frees now, got %+v", led.Totals)
+	}
+}

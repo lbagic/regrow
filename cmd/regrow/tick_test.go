@@ -69,20 +69,24 @@ func TestPreviewLines(t *testing.T) {
 	rule := engine.Rule{ID: "go-build-cache", Title: "Go build cache",
 		Prune: &engine.Prune{MinAge: engine.Duration(48 * time.Hour), KeepUnder: 15 << 30}}
 	cutoff := time.Date(2026, 10, 2, 9, 59, 59, 0, time.UTC)
-	survey := engine.PruneSurvey{Cache: "/home/dev/.cache/go-build", CacheFiles: 85000, CacheBytes: 56 * gib,
+	survey := engine.PruneSurvey{Cache: "/home/dev/ca[che]/go-build", CacheFiles: 85000, CacheBytes: 56 * gib,
 		Cutoff: cutoff, Files: 60000, Bytes: 41 * gib}
 	action := engine.Action{RuleID: "go-build-cache", Kind: engine.ActionPrune, Path: survey.Cache, Bytes: survey.Bytes,
-		Command: []string{"/usr/bin/find", survey.Cache, "-mindepth", "2", "-maxdepth", "2", "-type", "f",
-			"-name", "*-[ad]", "!", "-newermt", "2026-10-02 09:59:59 UTC", "-delete"}}
+		Command: engine.PruneCommand(survey.Cache, cutoff)}
 
 	lines := previewLines(rule, autopilot.Preview{Plan: engine.Plan{Actions: []engine.Action{action}}, Survey: survey, Running: []string{"compile"}})
 	for _, want := range [][]string{
-		{"Go build cache", "/home/dev/.cache/go-build"},
+		{"Go build cache", "/home/dev/ca[che]/go-build"},
 		{"56.0 GiB in 85000 entries"},
 		{"used in the last 48h", "an hour of entries at a time, to about 15.0 GiB"},
 		{"DRY RUN", "nothing executed"},
-		// The pattern and the date are quoted, so the line can be pasted.
-		{"[prune]", "41.0 GiB", "no undo", `-name "*-[ad]" ! -newermt "2026-10-02 09:59:59 UTC" -delete`},
+		// The path, the pattern and the date are quoted, so the line can be
+		// pasted: in double quotes the shell turns \\[ back into the \[
+		// that find needs to match the bracket literally.
+		{"[prune]", "41.0 GiB", "no undo",
+			`/usr/bin/find "/home/dev/ca[che]/go-build" -mindepth 2 -maxdepth 2 -type f ` +
+				`-path "/home/dev/ca\\[che\\]/go-build/[0123456789abcdef][0123456789abcdef]/*-[ad]" ` +
+				`! -newermt "2026-10-02 09:59:59 UTC" -delete`},
 		{"Would delete about 41.0 GiB in 60000 entries", "leaving about 15.0 GiB"},
 		{"no Trash, no undo"},
 		{"A build is running (compile)"},

@@ -210,13 +210,18 @@ func PrunePlan(ctx context.Context, host Host, r Rule, req PruneRequest) (Plan, 
 	survey.Cutoff, survey.Files, survey.Bytes = cutoff, doomed.Files, doomed.Bytes
 
 	return Plan{Actions: []Action{{
-		RuleID: r.ID,
-		Kind:   ActionPrune,
-		Command: []string{findBin, cache, "-mindepth", "2", "-maxdepth", "2", "-type", "f",
-			"-path", entryPattern(cache), "!", "-newermt", cutoff.UTC().Format("2006-01-02 15:04:05") + " UTC", "-delete"},
-		Path:  cache,
-		Bytes: doomed.Bytes,
+		RuleID:  r.ID,
+		Kind:    ActionPrune,
+		Command: PruneCommand(cache, cutoff),
+		Path:    cache,
+		Bytes:   doomed.Bytes,
 	}}}, survey, nil
+}
+
+// PruneCommand deletes the cache entries last used at or before cutoff.
+func PruneCommand(cache string, cutoff time.Time) []string {
+	return []string{findBin, cache, "-mindepth", "2", "-maxdepth", "2", "-type", "f",
+		"-path", entryPattern(cache), "!", "-newermt", cutoff.UTC().Format("2006-01-02 15:04:05") + " UTC", "-delete"}
 }
 
 // GoEnv asks the go command on PATH. An app launched outside a login

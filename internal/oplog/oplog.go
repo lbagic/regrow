@@ -14,8 +14,10 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
+	"github.com/lbagic/regrow/internal/jsonl"
 	"github.com/lbagic/regrow/internal/trash"
 )
 
@@ -96,35 +98,24 @@ func Open(path string) (*Log, error) {
 	return &Log{f: f}, nil
 }
 
+// Append holds an exclusive flock on the journal from the check for a
+// cut-short last line through the sync: two regrow processes (`clean`
+// and `tick --autotrim`) can journal at once, and one must not write
+// after the other's fragment without starting a fresh line.
 func (l *Log) Append(e Entry) error {
 	line, err := json.Marshal(e)
 	if err != nil {
 		return err
 	}
-	// A write cut short by a full disk leaves a line with no newline;
-	// starting on a fresh line keeps this one whole.
-	if !endsWithNewline(l.f) {
-		line = append([]byte{'\n'}, line...)
+	fd := int(l.f.Fd())
+	if err := syscall.Flock(fd, syscall.LOCK_EX); err != nil {
+		return fmt.Errorf("lock the oplog: %w", err)
 	}
-	if _, err := l.f.Write(append(line, '\n')); err != nil {
+	defer func() { _ = syscall.Flock(fd, syscall.LOCK_UN) }()
+	if _, err := l.f.Write(jsonl.Frame(l.f, line)); err != nil {
 		return err
 	}
 	return l.f.Sync()
-}
-
-func endsWithNewline(f *os.File) bool {
-	info, err := f.Stat()
-	if err != nil {
-		return false
-	}
-	if info.Size() == 0 {
-		return true
-	}
-	last := make([]byte, 1)
-	if _, err := f.ReadAt(last, info.Size()-1); err != nil {
-		return false
-	}
-	return last[0] == '\n'
 }
 
 func (l *Log) Close() error { return l.f.Close() }
@@ -133,8 +124,7 @@ func (l *Log) Close() error { return l.f.Close() }
 // corrupt line fails loudly: the journal is the undo contract, and
 // silently skipping lines could undo the wrong thing. Two exceptions
 // carry no entry: blank lines, and a line cut short, which is the
-// start of a JSON object and nothing else (a write that hit a full
-// disk). Skipping a cut-short line can only miss a restore, never undo
+// start of one entry and nothing else (a write that hit a full disk). Skipping a cut-short line can only miss a restore, never undo
 // the wrong thing: a start line that failed refused its action, a lost
 // done line drops its receipt, and a lost undo line leaves a receipt
 // whose restore then fails because the item is back.
@@ -169,11 +159,21 @@ func Read(path string) ([]Entry, error) {
 	return out, sc.Err()
 }
 
-// cutShort reports whether line is an unfinished JSON object: the
-// parser ran out of input with nothing wrong before that.
+// entryStart opens every encoded Entry: Time is the first field and
+// never omitted, and no nested type has a time key. It cannot occur
+// inside a string value, whose quotes the encoder escapes.
+var entryStart = []byte(`{"time":`)
+
+// cutShort reports whether line is one unfinished entry: the parser ran
+// out of input with nothing wrong before that, and no second entry
+// starts inside it. A fragment followed by a whole entry with no
+// newline between can parse to the end the same way (the entry lands
+// as a value), and must fail loudly instead of hiding the whole one.
 func cutShort(line []byte, err error) bool {
 	var se *json.SyntaxError
-	return line[0] == '{' && errors.As(err, &se) && se.Offset == int64(len(line)) &&
+	opens := bytes.HasPrefix(line, entryStart) || bytes.HasPrefix(entryStart, line)
+	return opens && !bytes.Contains(line[1:], entryStart) &&
+		errors.As(err, &se) && se.Offset == int64(len(line)) &&
 		strings.Contains(se.Error(), "unexpected end of JSON input")
 }
 

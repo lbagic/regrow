@@ -1,7 +1,7 @@
 // Package headroom watches the space the machine has left: free disk,
 // purgeable, swap. It samples, keeps a short history, forecasts
-// days-to-full and raises alerts on crossings. It imports nothing from
-// regrow, so every layer can use it.
+// days-to-full and raises alerts on crossings. It imports no other
+// layer of regrow, so every layer can use it.
 package headroom
 
 import (

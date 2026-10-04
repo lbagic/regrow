@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"sort"
 	"time"
+
+	"github.com/lbagic/regrow/internal/jsonl"
 )
 
 // FileName is the history's name inside regrow's state dir. It is not
@@ -40,25 +42,8 @@ func Append(path string, s Sample) error {
 	if err != nil {
 		return err
 	}
-	// A write cut short by a full disk leaves a line without its
-	// newline; starting on a fresh line keeps this sample readable.
-	if !endsWithNewline(f) {
-		line = append([]byte{'\n'}, line...)
-	}
-	_, werr := f.Write(append(line, '\n'))
+	_, werr := f.Write(jsonl.Frame(f, line))
 	return errors.Join(werr, f.Close())
-}
-
-func endsWithNewline(f *os.File) bool {
-	info, err := f.Stat()
-	if err != nil || info.Size() == 0 {
-		return true
-	}
-	last := make([]byte, 1)
-	if _, err := f.ReadAt(last, info.Size()-1); err != nil {
-		return false
-	}
-	return last[0] == '\n'
 }
 
 func compact(path string, cutoff time.Time) error {

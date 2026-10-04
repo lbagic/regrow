@@ -89,7 +89,7 @@ func stillLockedLines(r engine.Rule, gate error) []string {
 	if !errors.Is(gate, autopilot.ErrAutotrimLocked) {
 		return nil
 	}
-	return []string{fmt.Sprintf("Autotrim stays locked: it opens after the first `regrow prune %s --yes` that deletes, and this one did not run.",
+	return []string{fmt.Sprintf("Autotrim stays locked: it opens after the first `regrow prune %s --yes` that runs to completion, and this one did not run.",
 		autopilot.Name(r))}
 }
 
