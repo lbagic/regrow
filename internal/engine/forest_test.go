@@ -2,6 +2,7 @@ package engine
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -197,5 +198,109 @@ func TestBuildPlanRefusedAncestorDoesNotSubsume(t *testing.T) {
 	plan := BuildPlan(testHost, findings, map[string]bool{"lib": true, "tmp": true, "under-unselected": true})
 	if want := []string{"tmp/~/lib/tmp", "under-unselected/~/other/x"}; !reflect.DeepEqual(actionIDs(plan), want) {
 		t.Fatalf("only a planned ancestor subsumes: actions = %v, skips %+v", actionIDs(plan), plan.Skipped)
+	}
+}
+
+func TestBuildPlanNamesUnselectedItemsThatGoWithAnAction(t *testing.T) {
+	worktrees := Finding{
+		Rule: Rule{ID: "worktrees", Risk: RiskCaution, NativeCommand: Argv{"git", "-C", "{path}", "worktree", "remove", "{path}"}},
+		Items: []Item{
+			{Path: "/Users/t/w/a", Bytes: 100},
+			{Path: "/Users/t/w/b", Bytes: 50},
+		},
+	}
+	modules := Finding{Rule: Rule{ID: "modules", Risk: RiskCaution}, Items: []Item{
+		{Path: "/Users/t/w/a/web/node_modules", Bytes: 40},
+		{Path: "/Users/t/w/a/api/node_modules", Bytes: 30},
+	}}
+	targets := Finding{Rule: Rule{ID: "targets", Risk: RiskSafe}, Items: []Item{
+		{Path: "/Users/t/w/a/target", Bytes: 20},
+		{Path: "/Users/t/w/a/target/nested", Bytes: 5},
+	}}
+	// Same path as a worktree, from a later rule: the forest's child.
+	twin := Finding{Rule: Rule{ID: "twin", Risk: RiskCaution}, Items: []Item{{Path: "/Users/t/w/b", Bytes: 50}}}
+	findings := []Finding{worktrees, modules, targets, twin}
+
+	sel := map[string]bool{"worktrees/~/w/a": true, "worktrees/~/w/b": true, "targets/~/w/a/target": true}
+	plan := BuildPlan(testHost, findings, sel)
+	if want := []string{"worktrees/~/w/a", "worktrees/~/w/b"}; !reflect.DeepEqual(actionIDs(plan), want) {
+		t.Fatalf("actions = %v, want %v (skips %+v)", actionIDs(plan), want, plan.Skipped)
+	}
+	got := map[string][]Included{}
+	for _, a := range plan.Actions {
+		got[a.ItemKey] = a.Includes
+	}
+	want := map[string][]Included{
+		// The selected target has a skip line of its own; the item under
+		// it that nobody selected goes with the worktree too.
+		"~/w/a": {
+			{ID: "modules/~/w/a/api/node_modules", Bytes: 30},
+			{ID: "targets/~/w/a/target/nested", Bytes: 5},
+			{ID: "modules/~/w/a/web/node_modules", Bytes: 40},
+		},
+		"~/w/b": {{ID: "twin/~/w/b", Bytes: 50}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("includes = %+v, want %+v", got, want)
+	}
+	if r := skipReasons(plan)["targets/~/w/a/target"]; r != "inside worktrees/~/w/a, also selected" {
+		t.Fatalf("selected target skip reason = %q", r)
+	}
+
+	// Selecting the nested items as well leaves nothing unnamed.
+	for _, id := range []string{"modules", "targets", "twin"} {
+		sel[id] = true
+	}
+	for _, a := range BuildPlan(testHost, findings, sel).Actions {
+		if len(a.Includes) != 0 {
+			t.Fatalf("%s: every nested item is selected and skipped with a reason, includes = %+v", a.ItemKey, a.Includes)
+		}
+	}
+}
+
+func TestBuildPlanGuardsPerItemCommandPaths(t *testing.T) {
+	findings := []Finding{{
+		Rule: Rule{ID: "worktrees", Risk: RiskCaution, NativeCommand: Argv{"git", "-C", "{path}", "worktree", "remove", "{path}"}},
+		Items: []Item{
+			{Path: "/Volumes/X", Bytes: 9},
+			{Path: "/Users/t", Bytes: 9},
+			{Path: "/opt", Bytes: 9},
+			{Path: "/Users/t/w/ok", Bytes: 9},
+		},
+	}}
+	plan := BuildPlan(testHost, findings, selectRules(findings...))
+	if want := []string{"worktrees/~/w/ok"}; !reflect.DeepEqual(actionIDs(plan), want) {
+		t.Fatalf("actions = %v, want only the guarded-in path", actionIDs(plan))
+	}
+	reasons := skipReasons(plan)
+	for key, want := range map[string]string{"/Volumes/X": "mount root", "~": "home directory", "/opt": "top-level directory"} {
+		if r := reasons["worktrees/"+key]; !strings.Contains(r, "path guard: refusing "+want) {
+			t.Errorf("%s skip reason = %q, want the path guard's %q", key, r, want)
+		}
+	}
+}
+
+func TestBuildPlanNamesAnEarlierRulesItemAtTheSamePath(t *testing.T) {
+	// On equal paths the earlier rule is the forest's parent, so the
+	// later rule's action does not find it among its descendants.
+	findings := []Finding{
+		{Rule: Rule{ID: "early", Risk: RiskCaution}, Items: []Item{{Path: "/Users/t/w/c", Bytes: 70}}},
+		{Rule: Rule{ID: "late", Risk: RiskCaution, NativeCommand: Argv{"tool", "rm", "{path}"}},
+			Items: []Item{{Path: "/Users/t/w/c", Bytes: 70}}},
+	}
+	plan := BuildPlan(testHost, findings, map[string]bool{"late": true})
+	if want := []string{"late/~/w/c"}; !reflect.DeepEqual(actionIDs(plan), want) {
+		t.Fatalf("actions = %v, want %v", actionIDs(plan), want)
+	}
+	if got, want := plan.Actions[0].Includes, []Included{{ID: "early/~/w/c", Bytes: 70}}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("includes = %+v, want the unselected item of the earlier rule at the same path: %+v", got, want)
+	}
+
+	plan = BuildPlan(testHost, findings, selectRules(findings...))
+	if want := []string{"early/~/w/c"}; !reflect.DeepEqual(actionIDs(plan), want) {
+		t.Fatalf("both selected: actions = %v, want %v", actionIDs(plan), want)
+	}
+	if got := plan.Actions[0].Includes; len(got) != 0 {
+		t.Fatalf("both selected: includes = %+v, want none, the later item has its own skip line", got)
 	}
 }

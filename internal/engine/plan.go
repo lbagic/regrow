@@ -47,6 +47,17 @@ type Action struct {
 	// Sudo: Command starts with sudo and prompts for a password, so it
 	// needs a terminal.
 	Sudo bool `json:"sudo,omitempty"`
+	// Includes lists the items inside this action's targets that no
+	// action of the plan deletes on its own: they go with it, and Bytes
+	// already counts them.
+	Includes []Included `json:"includes,omitempty"`
+}
+
+// Included is an item an action deletes along with its own target,
+// such as a node_modules inside a removed worktree.
+type Included struct {
+	ID    string `json:"id"`
+	Bytes int64  `json:"bytes"`
 }
 
 // Skip records why a selected finding produced no action.
@@ -274,7 +285,7 @@ func BuildPlanWith(host Host, findings []Finding, selected map[string]bool, opts
 		var ds []draft
 		var skips []Skip
 		if len(f.Rule.NativeCommand) > 0 {
-			ds, skips = nativeDrafts(findings, tree, f.Rule, refs, partial)
+			ds, skips = nativeDrafts(findings, tree, host, f.Rule, refs, partial)
 			// Before nesting: a refused action must not cover the
 			// items nested inside it.
 			if opts.NoSudo && f.Rule.Sudo && len(ds) > 0 {
@@ -380,8 +391,10 @@ func trashDrafts(findings []Finding, tree forest, host Host, r Rule, refs []item
 // one it acts on everything at once, so a partial selection, or any
 // item holding a surface-only one, refuses the whole command. The
 // placeholder convention itself (which tokens exist, refusing empty
-// substitutions) is owned by the schema (Argv).
-func nativeDrafts(findings []Finding, tree forest, r Rule, refs []itemRef, partial bool) ([]draft, []Skip) {
+// substitutions) is owned by the schema (Argv). A per-item command's
+// item path passes the path guard, as a Trash move's does: a tool can
+// report any path, a mount root included.
+func nativeDrafts(findings []Finding, tree forest, host Host, r Rule, refs []itemRef, partial bool) ([]draft, []Skip) {
 	if !r.NativeCommand.PerItem() {
 		if partial {
 			return nil, []Skip{{RuleID: r.ID, Reason: "whole-rule command cannot target individual items — select the whole rule"}}
@@ -407,6 +420,9 @@ func nativeDrafts(findings []Finding, tree forest, r Rule, refs []itemRef, parti
 	for _, ref := range refs {
 		it := itemAt(findings, ref)
 		cmd, err := r.NativeCommand.ExpandItem(it)
+		if err == nil && it.Path != "" {
+			err = trash.GuardPath(it.Path, host.Home)
+		}
 		if err != nil {
 			skips = append(skips, Skip{RuleID: r.ID, ItemKey: it.Key, Reason: err.Error()})
 			continue
@@ -448,11 +464,13 @@ func resolveNesting(findings []Finding, tree forest, drafts []draft) ([]Action, 
 	}
 	bytes := make([]int64, len(drafts))
 	kept := make([]bool, len(drafts))
+	includes := make([][]Included, len(drafts))
 	for di, d := range drafts {
 		for _, ref := range d.items {
 			if !hasPlannedAncestor(tree, owner, ref) {
 				kept[di] = true
 				bytes[di] += itemAt(findings, ref).Bytes
+				includes[di] = append(includes[di], unplannedInside(findings, tree, owner, ref)...)
 			}
 		}
 	}
@@ -467,6 +485,7 @@ func resolveNesting(findings []Finding, tree forest, drafts []draft) ([]Action, 
 		}
 		a := d.action
 		a.Bytes = bytes[di]
+		a.Includes = includes[di]
 		if a.EmptiesTrash {
 			first = append(first, a)
 		} else {
@@ -474,6 +493,34 @@ func resolveNesting(findings []Finding, tree forest, drafts []draft) ([]Action, 
 		}
 	}
 	return append(first, rest...), skips
+}
+
+// unplannedInside lists what deleting ref takes with it that no draft
+// plans: unplanned items of earlier rules at ref's own path, and the
+// topmost unplanned items below it. Below a planned item the search
+// goes on, since that item's action is dropped in favour of ref's.
+func unplannedInside(findings []Finding, tree forest, owner map[itemRef]int, ref itemRef) []Included {
+	var out []Included
+	add := func(r itemRef) {
+		out = append(out, Included{ID: refID(findings, r), Bytes: itemAt(findings, r).Bytes})
+	}
+	for _, a := range tree.sharesPath(ref) {
+		if _, planned := owner[a]; !planned {
+			add(a)
+		}
+	}
+	var below func(r itemRef)
+	below = func(r itemRef) {
+		for _, c := range tree.children[r] {
+			if _, planned := owner[c]; planned {
+				below(c)
+			} else {
+				add(c)
+			}
+		}
+	}
+	below(ref)
+	return out
 }
 
 func hasPlannedAncestor(tree forest, owner map[itemRef]int, ref itemRef) bool {

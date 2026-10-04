@@ -300,15 +300,19 @@ func (r Rule) PerItemActionable() bool {
 // PreActionVolumeExport tarballs a docker volume into staging before
 // `docker volume rm` runs. PreActionAgentScratchRecheck judges an agent
 // session again right before its scratch goes to the Trash and refuses
-// when the session is kept now. The registry of hook names lives here
-// so a typo'd pre_action fails at load, like a typo'd placeholder; the
-// implementations are registered on the executor.
+// when the session is kept now. PreActionWorktreeRecheck rechecks a
+// worktree before `git worktree remove`, which deletes ignored files,
+// and the only reference to a detached HEAD's commits, without asking.
+// A hook failure leaves the target in place. The registry of hook names
+// lives here so a typo'd pre_action fails at load, like a typo'd
+// placeholder; the implementations are registered on the executor.
 const (
 	PreActionVolumeExport        = "docker-volume-export"
 	PreActionAgentScratchRecheck = "agent-scratch-recheck"
+	PreActionWorktreeRecheck     = "worktree-recheck"
 )
 
-var knownPreActions = map[string]bool{PreActionVolumeExport: true, PreActionAgentScratchRecheck: true}
+var knownPreActions = map[string]bool{PreActionVolumeExport: true, PreActionAgentScratchRecheck: true, PreActionWorktreeRecheck: true}
 
 // KnownPreActions lists every hook name a rule may declare, sorted. An
 // executor that will run arbitrary catalog plans registers them all.
