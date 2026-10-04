@@ -1,6 +1,6 @@
 # Engine protocol
 
-`regrow engine` lets a shell app (the menubar app) scan, plan and execute without a terminal. It reads requests on stdin and writes events on stdout, one JSON object per line. The code lives in `internal/protocol`; this document is the contract.
+`regrow engine` lets a shell app (the menubar app) watch free space, scan, plan and execute without a terminal. It reads requests on stdin and writes events on stdout, one JSON object per line. The code lives in `internal/protocol`; this document is the contract.
 
 ```sh
 regrow engine [--rules-dir DIR] [--beta-rules]
@@ -22,8 +22,8 @@ Protocol version: **1**.
 
 1. The engine starts and writes `hello` before it reads anything.
 2. The peer sends requests. Each request gets exactly one terminal event: `done` or `error`, with `re` set to the request's `id`.
-3. Only one **scan or execute** is in flight at a time. Another `scan` or `execute` sent meanwhile is refused with `error{code:"busy"}` and changes nothing. `plan` and `cancel` are answered at any time.
-4. When stdin ends, or the process gets SIGINT or SIGTERM, the engine shuts down: a scan in flight is canceled, an execute finishes the action it is running, journals it and stops there. The terminal events of both are still written. Then the engine exits 0. It waits for that action however long it takes, so a peer that cannot wait out a hung steward command sends SIGTERM twice: the first signal asks for the clean stop, the second kills the engine at once.
+3. Only one **scan, execute or tick** is in flight at a time. Another one sent meanwhile is refused with `error{code:"busy"}` and changes nothing. `plan` and `cancel` are answered at any time.
+4. When stdin ends, or the process gets SIGINT or SIGTERM, the engine shuts down: a scan in flight is canceled, an execute finishes the action it is running, journals it and stops there, and a tick runs to its end. Their terminal events are still written. Then the engine exits 0. It waits for that action however long it takes, so a peer that cannot wait out a hung steward command sends SIGTERM twice: the first signal asks for the clean stop, the second kills the engine at once.
 
 Request ids are the peer's own; the engine echoes them and does not check that they are unique.
 
@@ -35,8 +35,7 @@ Request ids are the peer's own; the engine echoes them and does not check that t
 | `plan` | `id`, `scan_id`, `select` (optional) | `plan`, then `done`; or `error` |
 | `execute` | `id`, `plan_id` | one `journal` per oplog line, then `done`; or `error` |
 | `cancel` | `id`, `target` | `done`, once `target` has ended |
-
-`tick` arrives with the headroom work (attack plan PR 4).
+| `tick` | `id`, `autotrim` (optional, default `false`) | `tick`, then `done`; or `error` |
 
 ### scan
 
@@ -48,7 +47,7 @@ Starting a scan makes it the engine's current scan and drops the previous scan's
 
 | Event | Fields |
 |---|---|
-| `headroom` | the free-space sample's own fields on the event line (`at`, `total`, `free`, `purgeable`, `swap_used`) |
+| `headroom` | the free-space sample's own fields on the event line: `at`; `total` and `free` of the data volume (`free` is what df shows); `purgeable`; `swap_used` |
 | `start` | `scan_id`: names this scan in `plan`; `rules`: how many `finding` events follow |
 | `finding` | `scan_id`; `index`: the rule's position in the catalog; `took_ms`: the rule's own scan time; `finding`: the Finding (below) |
 | `summary` | `scan_id`; `totals`: the Totals of every item; `exclusive`: item id → bytes the item frees on its own, nested items excluded |
@@ -88,20 +87,20 @@ Totals, in `summary` and `plan`, split bytes by when they become free space:
 
 | Event | Fields |
 |---|---|
-| `plan` | `plan_id`; `plan`: `{actions, skipped, unmatched}`; `totals` (`frees_now` and `after_trash` are filled) |
+| `plan` | `plan_id`; `plan`: `{actions, skipped}`; `totals` (`frees_now` and `after_trash` are filled) |
 | `done` | — |
 
-An action is `{rule_id, item_key, kind, command, pre_action, path, bytes, empties_trash, sudo}`: `kind` is `native` (a steward command, no undo) or `trash` (a Finder move that `regrow undo` restores), `command` is the exact argv, and action bytes never overlap, so they sum to the plan's total. A skip is `{rule_id, item_key, reason}`. `unmatched` lists selectors that addressed nothing in the scan. An action that would need administrator rights is never planned here: it is a skip whose reason names the Terminal command, for example ``needs administrator rights — run `regrow clean spotlight-index` in Terminal``.
+An action is `{rule_id, item_key, kind, command, pre_action, path, bytes, empties_trash, sudo}`: `kind` is `native` (a steward command, no undo) or `trash` (a Finder move that `regrow undo` restores), `command` is the exact argv, and action bytes never overlap, so they sum to the plan's total. A skip is `{rule_id, item_key, reason}`. An action that would need administrator rights is never planned here: it is a skip whose reason names the Terminal command, for example ``needs administrator rights — run `regrow clean spotlight-index` in Terminal``.
 
 A plan id:
 
 - is executable once, for 10 minutes of wall-clock time, sleep included;
 - dies when a newer scan starts, even one later canceled;
-- dies when any execute starts: that run changes what the scan measured, so every plan of the scan is dropped and planning from it again answers `scan_spent`;
+- dies when an execute of its scan starts running: that run changes what the scan measured, so every plan of the scan is dropped and planning from it again answers `scan_spent`. An execute refused before it ran (`busy`, `plan_expired`, an `execute_failed` with no `result`) spends nothing but its own plan id;
 - is the oplog run id its execution journals under, so `regrow history` and `regrow undo <plan_id>` find the run;
 - carries 128 random bits, so it cannot be guessed.
 
-Errors: `bad_request` (no `scan_id`), `unknown_scan`, `scan_running`, `scan_canceled` (scan again), `scan_superseded` (a newer scan replaced it), `scan_spent` (an execute ran against it; scan again).
+Errors: `bad_request` (no `scan_id`), `unknown_scan`, `scan_running`, `scan_canceled` (scan again), `scan_superseded` (a newer scan replaced it), `scan_spent` (an execute ran against it; scan again), `unmatched` (a selector addressed nothing in the scan; the event lists them in `unmatched` and no plan id is issued, as `regrow clean` refuses).
 
 ### execute
 
@@ -116,13 +115,13 @@ The engine executes on request: the peer's confirmation is the per-run opt-in. A
 | `journal` | `entry`: the oplog line, `{time, run, seq, event, rule_id, item_key, kind, command, path, bytes, receipt, error}`; `event` is `start`, `done` or `fail`; a done Trash move carries `receipt: {original, to, method}` |
 | `done` | `result`; `canceled`: `true` when a cancel or shutdown stopped the run before every action was attempted |
 
-`result` is `{run_id, done, failed, bytes, trash_bytes, staged_bytes, failures, skipped, stopped}`. `bytes` counts successful actions; `trash_bytes` is the part now in the Trash, freed once it is emptied; `staged_bytes` the part moved into regrow's staging directory because Finder was unavailable, which emptying the Trash never frees. One failed action does not stop the run.
+`result` is `{run_id, done, failed, bytes, trash_bytes, staged_bytes, failures, skipped, pruned, stopped}`. `bytes` counts successful actions; `trash_bytes` is the part now in the Trash, freed once it is emptied; `staged_bytes` the part moved into regrow's staging directory because Finder was unavailable, which emptying the Trash never frees. `pruned` is `{files, bytes}` deleted by prune actions; a plan from `plan` has none, only a tick's autotrim prunes. One failed action does not stop the run.
 
 A steward command runs with stdin from `/dev/null` and its stdout and stderr captured. When it fails, the last 4 KiB of that output ends the `fail` line's `error`. The docker export that precedes a volume removal is captured the same way, except that its stdout is the tarball.
 
-A Trash move that has not finished after 60 s fails with a reason, and the run goes on. A folder macOS blocks without Full Disk Access can hold a move forever, and no cancel reaches it. If Finder completes such a move later, Finder's Put Back restores the item; `regrow undo` has no receipt for it.
+A Trash move that has not finished after 60 s fails with a reason, and the run goes on. A folder macOS blocks without Full Disk Access can hold a move forever, and no cancel reaches it. If the abandoned move completes later, the item is in the Trash, where Finder's Put Back restores it, or in regrow staging if Finder failed and the fallback ran; `regrow undo` has no receipt for either.
 
-Errors: `bad_request` (no `plan_id`); `busy`; `unknown_plan` (never issued, already executed, or dropped when an execute or a newer scan started); `plan_expired`; `execute_failed` (the run could not start, for example an unreadable config file, or the journal failed and nothing more runs). The first execute that names a plan id spends it, whatever the outcome.
+Errors: `bad_request` (no `plan_id`); `busy`; `unknown_plan` (never issued, already executed, or dropped when an execute or a newer scan started); `plan_expired`; `execute_failed`, either before the run starts (an unreadable config file, a journal that cannot be opened; nothing ran) or when the journal fails mid-run (nothing more runs, and the event carries the `result` of what did). The first execute that names a plan id spends that id, whatever the outcome.
 
 ### cancel
 
@@ -130,9 +129,24 @@ Errors: `bad_request` (no `plan_id`); `busy`; `unknown_plan` (never issued, alre
 {"type":"cancel","id":"c1","target":"s1"}
 ```
 
-`target` is the `id` of a scan or execute. A scan stops at once. An execute finishes the action it is running, journals it, and runs nothing after it. The target then ends with its `done`, and only after that does the cancel get its own `done`, so a `scan` sent after the cancel's `done` is never refused as busy. A target that is not in flight has nothing left to do: the cancel gets `done` at once.
+`target` is the `id` of a scan, execute or tick. A scan stops at once. A tick is never cut short. An execute finishes the action it is running, journals it, and runs nothing after it. The target then ends with its `done`, and only after that does the cancel get its own `done`, so a `scan` sent after the cancel's `done` is never refused as busy. A target that is not in flight has nothing left to do: the cancel gets `done` at once.
 
 The target's `done` says whether the cancel cut it short. Peers read `canceled`; an execute's `result.stopped` carries the same value. A cancel that lands as the target finishes (during an execute's last action, or as a scan wraps up after its last finding) can come too late to change anything: the target then ends `canceled:false` with its full results, and a scan that ends that way can be planned.
+
+### tick
+
+```json
+{"type":"tick","id":"t1","autotrim":true}
+```
+
+One pass of the watch loop, as `regrow tick` runs it: a free-space sample appended to the headroom history, the forecast, the alerts that crossed, and with `autotrim` a prune of the Go build cache when headroom is low. Autotrim is refused until the oplog holds one completed `regrow prune go-build --yes`.
+
+| Event | Fields |
+|---|---|
+| `tick` | the sample's fields as in `headroom`, plus `days_to_full` (absent without a forecast), `alerts` (`[{kind, message, band, acute, top_process}]`, absent when none crossed) and `pruned` (what autotrim did or why it did not run: `{rule_id, skipped, run, files, bytes, free_before, free_after, error}`) |
+| `done` | — |
+
+A tick that sampled sends its `tick` event even when it then fails, so the alerts arrive. Errors: `autotrim_locked` (the gate refused a prune that low headroom called for), `tick_failed` (no sample, a history that could not be read or written, or a prune that failed).
 
 ## hello
 
@@ -153,17 +167,19 @@ The target's `done` says whether the cancel cut it short. Peers read `canceled`;
 | `bad_request` | not a JSON object of the documented shape, no `id`, or a required field missing; `re` is absent when the line is not JSON or has no string `id` |
 | `line_too_long` | the request line was over 1 MiB; no `re` |
 | `unknown_request` | unknown `type` |
-| `busy` | a scan or execute is in flight |
-| `unknown_scan`, `scan_running`, `scan_canceled`, `scan_superseded`, `scan_spent` | see plan |
+| `busy` | a scan, execute or tick is in flight |
+| `unknown_scan`, `scan_running`, `scan_canceled`, `scan_superseded`, `scan_spent`, `unmatched` | see plan |
 | `unknown_plan`, `plan_expired`, `execute_failed` | see execute |
+| `autotrim_locked`, `tick_failed` | see tick |
 
-`message` is for people; peers branch on `code`.
+`message` is for people; peers branch on `code`. An `unmatched` error also lists the selectors in `unmatched`, and an `execute_failed` that ran something carries its `result`.
 
 ## Example
 
 ```text
 ← {"event":"hello","protocol":1,"version":"0.0.0-dev","fda":"granted"}
 → {"type":"scan","id":"s1"}
+← {"event":"headroom","re":"s1","at":"2026-10-04T10:00:00Z","total":494384795648,"free":53260738560,"purgeable":580311360,"swap_used":4998168576}
 ← {"event":"start","re":"s1","scan_id":"9f2c01aa-1","rules":2}
 ← {"event":"finding","re":"s1","scan_id":"9f2c01aa-1","index":1,"took_ms":4,"finding":{…}}
 ← {"event":"finding","re":"s1","scan_id":"9f2c01aa-1","index":0,"took_ms":9,"finding":{…}}
@@ -180,8 +196,4 @@ The target's `done` says whether the cancel cut it short. Peers read `canceled`;
 
 ## regrow scan --json
 
-`regrow scan --json` prints the events of one scan, `headroom` through `done`, exactly as a `scan` request gets them, without `hello` and without `re`. It exits when the scan is done.
-
-## Not yet sent
-
-`headroom` and the `tick` request arrive with the headroom work (attack plan PR 4). Until then a scan starts with `start`.
+`regrow scan --json` prints the events of one scan, `headroom` through `done`, exactly as a `scan` request gets them, without `hello` and without `re`. It exits 0 once `done` is written, and 1 when stdout cannot be written (a full disk, a closed descriptor): a stream without its `done` line is never a success.
