@@ -25,6 +25,9 @@ func DefaultQueries() map[string]ToolQuery {
 		"simctl-runtimes":            querySimctlRuntimes,
 		"tm-snapshots":               queryTMSnapshots,
 	}
+	sessions := &agentSessions{}
+	queries["agent-scratch"] = sessions.Ended
+	queries["agent-scratch-kept"] = sessions.Kept
 	for name, q := range dockerQueries() {
 		queries[name] = q
 	}
