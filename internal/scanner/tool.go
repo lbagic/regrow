@@ -18,6 +18,7 @@ type ToolQuery func(ctx context.Context) ([]engine.Item, error)
 func DefaultQueries() map[string]ToolQuery {
 	queries := map[string]ToolQuery{
 		"apfs-purgeable":             queryAPFSPurgeable,
+		"git-worktrees":              queryGitWorktrees,
 		"hf-hub":                     queryHFHub,
 		"ollama-models":              queryOllamaModels,
 		"simctl-devices":             querySimctlDevices,
