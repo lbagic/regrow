@@ -9,11 +9,14 @@ import (
 
 // ActionKind says how an action deletes: a steward command, or a move
 // to the Trash (ARCHITECTURE.md invariant 4: native commands first).
+// A prune deletes old cache entries directly, and only PrunePlan
+// emits one.
 type ActionKind string
 
 const (
 	ActionNative ActionKind = "native"
 	ActionTrash  ActionKind = "trash"
+	ActionPrune  ActionKind = "prune"
 )
 
 // Action is one exact command the plan would run. Nothing here
@@ -77,7 +80,7 @@ func (p Plan) Totals() Totals {
 	var t Totals
 	for _, a := range p.Actions {
 		switch a.Kind {
-		case ActionNative:
+		case ActionNative, ActionPrune:
 			t.FreesNow += a.Bytes
 		case ActionTrash:
 			t.AfterTrash += a.Bytes

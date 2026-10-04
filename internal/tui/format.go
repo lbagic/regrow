@@ -12,11 +12,12 @@ import (
 // this alias keeps the TUI/CLI call sites stable.
 func HumanBytes(n int64) string { return engine.HumanBytes(n) }
 
-// ShellJoin renders argv for display, quoting args with spaces.
+// ShellJoin renders argv for display, quoting args with spaces or
+// glob characters, so a pasted line means what the argv means.
 func ShellJoin(argv []string) string {
 	parts := make([]string, len(argv))
 	for i, a := range argv {
-		if strings.ContainsAny(a, " \t\"'") {
+		if strings.ContainsAny(a, " \t\"'*?[") {
 			parts[i] = fmt.Sprintf("%q", a)
 		} else {
 			parts[i] = a

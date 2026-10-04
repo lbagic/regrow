@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -72,6 +73,9 @@ type Result struct {
 	// Skipped lists actions never attempted, with why. They are not
 	// journaled: nothing ran.
 	Skipped []string
+	// Pruned is what prune actions deleted, as measured, failed ones
+	// included: a prune that fails midway has still deleted entries.
+	Pruned oplog.Pruned
 }
 
 // NewRunID mints a journal run id: sortable timestamp + entropy so
@@ -117,6 +121,7 @@ func (e *Executor) Execute(ctx context.Context, plan engine.Plan) (Result, error
 		}
 
 		var receipt *trash.Receipt
+		var pruned *oplog.Pruned
 		var actErr error
 		switch a.Kind {
 		case engine.ActionTrash:
@@ -130,6 +135,8 @@ func (e *Executor) Execute(ctx context.Context, plan engine.Plan) (Result, error
 			if actErr == nil {
 				actErr = runNative(ctx, a.Command)
 			}
+		case engine.ActionPrune:
+			pruned, actErr = e.prune(ctx, a, runNative)
 		default:
 			actErr = fmt.Errorf("unknown action kind %q", a.Kind)
 		}
@@ -139,7 +146,13 @@ func (e *Executor) Execute(ctx context.Context, plan engine.Plan) (Result, error
 		// must still say where the backup landed.
 		after := oplog.Entry{
 			Time: now(), Run: res.RunID, Seq: seq + 1, Event: oplog.EventDone,
-			RuleID: a.RuleID, Receipt: receipt,
+			RuleID: a.RuleID, Receipt: receipt, Pruned: pruned,
+		}
+		freed := a.Bytes
+		if pruned != nil {
+			freed = pruned.Bytes
+			res.Pruned.Files += pruned.Files
+			res.Pruned.Bytes += pruned.Bytes
 		}
 		if actErr != nil {
 			after.Event = oplog.EventFail
@@ -151,7 +164,7 @@ func (e *Executor) Execute(ctx context.Context, plan engine.Plan) (Result, error
 			}
 		} else {
 			res.Done++
-			res.Bytes += a.Bytes
+			res.Bytes += freed
 			if a.Kind == engine.ActionTrash && receipt != nil {
 				switch receipt.Method {
 				case trash.MethodFinder:
@@ -185,6 +198,30 @@ func (e *Executor) runPreAction(ctx context.Context, a engine.Action) (*trash.Re
 		return nil, fmt.Errorf("pre-action %q is not registered, refusing to run %s bare", a.PreAction, a.RuleID)
 	}
 	return hook(ctx, a)
+}
+
+// prune runs a prune action and measures what it deleted as the cache
+// before minus after, since find reports nothing itself. This is the
+// one action that deletes without the Trash, so the target is checked
+// again right before it runs.
+func (e *Executor) prune(ctx context.Context, a engine.Action, runNative func(context.Context, []string) error) (*oplog.Pruned, error) {
+	if err := engine.VerifyGoCache(a.Path); err != nil {
+		return nil, err
+	}
+	before, err := engine.MeasureCache(ctx, a.Path)
+	if err != nil {
+		return nil, fmt.Errorf("measure the cache before pruning: %w", err)
+	}
+	cmdErr := runNative(ctx, a.Command)
+	// A canceled prune has still deleted entries; the journal says how many.
+	after, err := engine.MeasureCache(context.WithoutCancel(ctx), a.Path)
+	if err != nil {
+		return nil, errors.Join(cmdErr, fmt.Errorf("measure the cache after pruning: %w", err))
+	}
+	return &oplog.Pruned{
+		Files: max(before.Files-after.Files, 0),
+		Bytes: max(before.Bytes-after.Bytes, 0),
+	}, cmdErr
 }
 
 // UndoResult summarises one undo pass.

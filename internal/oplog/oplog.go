@@ -39,7 +39,16 @@ type Entry struct {
 	Path    string         `json:"path,omitempty"`
 	Bytes   int64          `json:"bytes,omitempty"`
 	Receipt *trash.Receipt `json:"receipt,omitempty"`
-	Error   string         `json:"error,omitempty"`
+	// Pruned rides a prune action's done or fail line: what the command
+	// deleted, as measured. Bytes on the start line is the estimate.
+	Pruned *Pruned `json:"pruned,omitempty"`
+	Error  string  `json:"error,omitempty"`
+}
+
+// Pruned counts the cache entries a prune deleted.
+type Pruned struct {
+	Files int   `json:"files"`
+	Bytes int64 `json:"bytes"`
 }
 
 // StateDir is ~/.local/state/regrow (honouring XDG_STATE_HOME) — the
