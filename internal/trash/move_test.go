@@ -148,6 +148,17 @@ func TestRestoreRefusesToOverwrite(t *testing.T) {
 	}
 }
 
+func TestRestoreRefusesExportReceipts(t *testing.T) {
+	r := Receipt{Original: "docker volume dakr_db", To: "/staging/dakr_db.tar", Method: MethodExport}
+	if r.Restorable() {
+		t.Fatal("export receipts must not be restorable")
+	}
+	err := Restore(r)
+	if err == nil || !strings.Contains(err.Error(), "dakr_db.tar") {
+		t.Fatalf("restore must refuse and point at the tarball, got %v", err)
+	}
+}
+
 func TestRestoreReportsEmptiedTrash(t *testing.T) {
 	err := Restore(Receipt{Original: "/Users/t/x", To: filepath.Join(t.TempDir(), "gone"), Method: MethodFinder})
 	if err == nil || !strings.Contains(err.Error(), "gone") {

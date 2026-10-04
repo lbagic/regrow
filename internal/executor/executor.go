@@ -28,6 +28,12 @@ type Journal interface {
 	Append(oplog.Entry) error
 }
 
+// PreAction runs before a native action's command and makes its
+// target recoverable first (docker volume export to staging). A
+// pre-action failure fails the whole action: no backup, no deletion.
+// The receipt it returns is journaled like a trash receipt.
+type PreAction func(ctx context.Context, a engine.Action) (*trash.Receipt, error)
+
 // Executor runs plan actions one at a time, journaling each before and
 // after. One failed action never aborts the run: every action is
 // independent, and a half-finished run is exactly what the oplog and
@@ -35,6 +41,10 @@ type Journal interface {
 type Executor struct {
 	Trash Mover
 	Log   Journal
+	// PreActions maps the pre-action names rules declare (validated by
+	// the schema) to their implementations, wired up by the caller. An
+	// action naming an unregistered hook fails instead of running bare.
+	PreActions map[string]PreAction
 	// RunNative executes a native steward command. Nil means real
 	// exec with inherited stdio (sudo can prompt, docker can stream).
 	RunNative func(ctx context.Context, argv []string) error
@@ -47,11 +57,21 @@ type Executor struct {
 
 // Result summarises one executed run.
 type Result struct {
-	RunID    string
-	Done     int
-	Failed   int
-	Bytes    int64 // reclaimed by successful actions
-	Failures []string
+	RunID  string
+	Done   int
+	Failed int
+	Bytes  int64 // reclaimed by successful actions
+	// TrashBytes is the part of Bytes Finder moved to the Trash: it
+	// frees nothing until the Trash is emptied.
+	TrashBytes int64
+	// StagedBytes is the part of Bytes renamed into regrow's staging
+	// dir because Finder was unavailable: emptying the Trash never
+	// frees it.
+	StagedBytes int64
+	Failures    []string
+	// Skipped lists actions never attempted, with why. They are not
+	// journaled: nothing ran.
+	Skipped []string
 }
 
 // NewRunID mints a journal run id: sortable timestamp + entropy so
@@ -78,9 +98,14 @@ func (e *Executor) Execute(ctx context.Context, plan engine.Plan) (Result, error
 	if res.RunID == "" {
 		res.RunID = NewRunID(now())
 	}
+	trashUnsafe := false
 	for seq, a := range plan.Actions {
 		if ctx.Err() != nil {
 			return res, ctx.Err()
+		}
+		if trashUnsafe && a.Kind == engine.ActionTrash {
+			res.Skipped = append(res.Skipped, fmt.Sprintf("%s: emptying the Trash failed, and Finder may still be emptying it", actionID(a)))
+			continue
 		}
 		entry := oplog.Entry{
 			Time: now(), Run: res.RunID, Seq: seq + 1, Event: oplog.EventStart,
@@ -101,11 +126,17 @@ func (e *Executor) Execute(ctx context.Context, plan engine.Plan) (Result, error
 			}
 			actErr = err
 		case engine.ActionNative:
-			actErr = runNative(ctx, a.Command)
+			receipt, actErr = e.runPreAction(ctx, a)
+			if actErr == nil {
+				actErr = runNative(ctx, a.Command)
+			}
 		default:
 			actErr = fmt.Errorf("unknown action kind %q", a.Kind)
 		}
 
+		// The receipt rides the after-entry even on failure: if the
+		// export succeeded but the command then failed, the journal
+		// must still say where the backup landed.
 		after := oplog.Entry{
 			Time: now(), Run: res.RunID, Seq: seq + 1, Event: oplog.EventDone,
 			RuleID: a.RuleID, Receipt: receipt,
@@ -115,15 +146,45 @@ func (e *Executor) Execute(ctx context.Context, plan engine.Plan) (Result, error
 			after.Error = actErr.Error()
 			res.Failed++
 			res.Failures = append(res.Failures, fmt.Sprintf("%s: %v", a.RuleID, actErr))
+			if a.EmptiesTrash {
+				trashUnsafe = true
+			}
 		} else {
 			res.Done++
 			res.Bytes += a.Bytes
+			if a.Kind == engine.ActionTrash && receipt != nil {
+				switch receipt.Method {
+				case trash.MethodFinder:
+					res.TrashBytes += a.Bytes
+				case trash.MethodStaging:
+					res.StagedBytes += a.Bytes
+				}
+			}
 		}
 		if err := e.Log.Append(after); err != nil {
 			return res, fmt.Errorf("oplog append failed after acting — journal is incomplete: %w", err)
 		}
 	}
 	return res, nil
+}
+
+func actionID(a engine.Action) string {
+	if a.ItemKey == "" {
+		return a.RuleID
+	}
+	return engine.ItemID(a.RuleID, a.ItemKey)
+}
+
+// runPreAction runs the action's pre-action hook, if it names one.
+func (e *Executor) runPreAction(ctx context.Context, a engine.Action) (*trash.Receipt, error) {
+	if a.PreAction == "" {
+		return nil, nil
+	}
+	hook := e.PreActions[a.PreAction]
+	if hook == nil {
+		return nil, fmt.Errorf("pre-action %q is not registered, refusing to run %s bare", a.PreAction, a.RuleID)
+	}
+	return hook(ctx, a)
 }
 
 // UndoResult summarises one undo pass.
@@ -134,6 +195,9 @@ type UndoResult struct {
 	// NativeSkipped counts the run's native actions, which are not
 	// undoable — their regen story is the recovery path.
 	NativeSkipped int
+	// ExportSkipped counts export receipts (docker volume tarballs):
+	// not auto-restorable, recovery is manual from the staging file.
+	ExportSkipped int
 }
 
 // Undo restores a run's undoable trash receipts, last moved first,
@@ -145,8 +209,14 @@ func (e *Executor) Undo(run oplog.Run) (UndoResult, error) {
 	}
 	var res UndoResult
 	for _, entry := range run.Entries {
-		if entry.Event == oplog.EventDone && entry.Receipt == nil {
+		if entry.Event != oplog.EventDone {
+			continue
+		}
+		switch {
+		case entry.Receipt == nil:
 			res.NativeSkipped++
+		case !entry.Receipt.Restorable():
+			res.ExportSkipped++
 		}
 	}
 	for _, entry := range run.Undoable() {

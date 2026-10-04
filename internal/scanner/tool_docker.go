@@ -2,92 +2,54 @@ package scanner
 
 import (
 	"context"
-	"strconv"
-	"strings"
+	"fmt"
+	"os"
+	"path/filepath"
 
+	"github.com/lbagic/regrow/internal/docker"
 	"github.com/lbagic/regrow/internal/engine"
 )
 
-// `docker system df` is the only reclaimable-space view Docker gives
-// without walking the VM. Items are per-type aggregates because the
-// daemon does not track last-used for images (only build cache has
-// it, via df -v) — per-image aging is a later extension.
-
-func queryDockerReclaimable(ctx context.Context) ([]engine.Item, error) {
-	rows, err := dockerDF(ctx)
-	if err != nil || rows == nil {
-		return nil, err
+// The docker rules share one provider (internal/docker): the daemon
+// is enumerated and classified once per scan, and each rule's query
+// reads its tier. Docker installed but daemon down is the everyday
+// laptop case — the provider reports it as "does not apply", never as
+// a scan error.
+func dockerQueries() map[string]ToolQuery {
+	p := &docker.Provider{}
+	return map[string]ToolQuery{
+		"docker-volumes-named":      p.VolumesNamed,
+		"docker-volumes-anon":       p.VolumesAnon,
+		"docker-volumes-kept":       p.VolumesKept,
+		"docker-containers-stopped": p.ContainersStopped,
+		"docker-images-dangling":    p.ImagesDangling,
+		"docker-build-cache":        p.BuildCache,
+		"docker-vm-disk":            queryDockerVMDisk,
 	}
-	var items []engine.Item
-	for _, want := range []struct{ dfType, label string }{
-		{"Images", "dangling images"},
-		{"Containers", "stopped containers"},
-		{"Build Cache", "build cache"},
-	} {
-		if b := rows[want.dfType]; b > 0 {
-			items = append(items, engine.Item{Label: want.label, Bytes: b})
-		}
-	}
-	return items, nil
 }
 
-func queryDockerVolumes(ctx context.Context) ([]engine.Item, error) {
-	rows, err := dockerDF(ctx)
-	if err != nil || rows == nil {
-		return nil, err
-	}
-	if b := rows["Local Volumes"]; b > 0 {
-		return []engine.Item{{Label: "unused volumes", Bytes: b}}, nil
-	}
-	return nil, nil
-}
-
-// dockerDF returns reclaimable bytes by df type. Docker installed but
-// daemon not running is the everyday case on laptops, so any exec
-// failure means "does not apply right now", not a scan error.
-func dockerDF(ctx context.Context) (map[string]int64, error) {
-	out, ok, err := runTool(ctx, "docker", "system", "df", "--format", "{{.Type}}\t{{.Reclaimable}}")
-	if !ok || err != nil {
+// queryDockerVMDisk sizes the Docker Desktop VM disk real-vs-logical
+// (Prompt H phantom space): the file is sparse, so allocated blocks
+// (what deletion would reclaim — but we never delete it) sit far below
+// the apparent size Finder-style tools report. A file stat, not a
+// daemon call: the phantom explainer must work with Docker stopped.
+func queryDockerVMDisk(ctx context.Context) ([]engine.Item, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
 		return nil, nil
 	}
-	return parseDockerDF(string(out)), nil
-}
-
-func parseDockerDF(out string) map[string]int64 {
-	rows := map[string]int64{}
-	for _, line := range strings.Split(out, "\n") {
-		typ, size, found := strings.Cut(line, "\t")
-		if !found {
+	for _, name := range []string{"Docker.raw", "Docker.qcow2"} {
+		p := filepath.Join(home, "Library/Containers/com.docker.docker/Data/vms/0/data", name)
+		fi, err := os.Stat(p)
+		if err != nil {
 			continue
 		}
-		if b, ok := parseDockerSize(strings.TrimSpace(size)); ok {
-			rows[strings.TrimSpace(typ)] = b
-		}
+		real := physicalSize(fi)
+		return []engine.Item{{
+			Label: fmt.Sprintf("%s — %s real of %s sparse", name, engine.HumanBytes(real), engine.HumanBytes(fi.Size())),
+			Path:  p,
+			Bytes: real,
+		}}, nil
 	}
-	return rows
-}
-
-// parseDockerSize parses go-units output like "1.5GB (50%)" or "0B".
-// Docker uses SI units: kB = 1000 bytes.
-func parseDockerSize(s string) (int64, bool) {
-	if before, _, found := strings.Cut(s, " "); found {
-		s = before
-	}
-	i := strings.IndexFunc(s, func(r rune) bool {
-		return r != '.' && (r < '0' || r > '9')
-	})
-	if i <= 0 {
-		return 0, false
-	}
-	val, err := strconv.ParseFloat(s[:i], 64)
-	if err != nil {
-		return 0, false
-	}
-	mult, ok := map[string]float64{
-		"B": 1, "kB": 1e3, "KB": 1e3, "MB": 1e6, "GB": 1e9, "TB": 1e12,
-	}[s[i:]]
-	if !ok {
-		return 0, false
-	}
-	return int64(val * mult), true
+	return nil, nil
 }

@@ -282,11 +282,71 @@ func TestPlanScreen(t *testing.T) {
 	if !strings.Contains(view, "Would reclaim: 20.0 GiB") {
 		t.Fatalf("plan total wrong, got:\n%s", view)
 	}
+	for _, want := range [][2]string{
+		{"[native] go-build-cache", "no undo"},
+		{"Frees now", "20.0 GiB"},
+		{"Frees after Trash", " 0 B"},
+	} {
+		if !lineHas(view, want[0], want[1]) {
+			t.Fatalf("plan screen needs a line with %q and %q, got:\n%s", want[0], want[1], view)
+		}
+	}
+	if strings.Contains(view, "Trash first") {
+		t.Fatalf("a native-only plan must not claim Trash-first undo, got:\n%s", view)
+	}
 
 	// esc returns to the checklist.
 	m = press(t, m, "esc")
 	if m.state != stateList {
 		t.Fatalf("esc should return to list, state=%d", m.state)
+	}
+}
+
+func TestExecuteConfirmFlow(t *testing.T) {
+	m := press(t, newTestModel(t), "enter", "x")
+	if m.state != stateConfirm {
+		t.Fatalf("x on the plan screen should open the confirm screen, state=%d", m.state)
+	}
+	view := m.View()
+	if !strings.Contains(view, "CONFIRM") || !strings.Contains(view, "go clean -cache") {
+		t.Fatalf("confirm screen must restate the actions, got:\n%s", view)
+	}
+
+	// esc backs out without confirming; so does n.
+	if out := press(t, m, "esc"); out.state != statePlan || out.confirmed {
+		t.Fatalf("esc must return to plan unconfirmed, state=%d confirmed=%v", out.state, out.confirmed)
+	}
+	if out := press(t, m, "n"); out.state != statePlan || out.confirmed {
+		t.Fatalf("n must return to plan unconfirmed, state=%d confirmed=%v", out.state, out.confirmed)
+	}
+
+	// enter is inert on the confirm screen: plan-screen muscle memory
+	// must not execute.
+	if out := press(t, m, "enter"); out.state != stateConfirm || out.confirmed {
+		t.Fatal("enter must not confirm execution")
+	}
+
+	// y confirms and quits; the caller reads plan+confirmed off the model.
+	next, cmd := m.Update(key("y"))
+	m = next.(Model)
+	if !m.confirmed {
+		t.Fatal("y should mark the plan confirmed")
+	}
+	if cmd == nil || cmd() != tea.Quit() {
+		t.Fatal("y should quit so the caller can execute")
+	}
+}
+
+func TestExecuteNeedsActions(t *testing.T) {
+	m := newTestModel(t)
+	m.selected = map[string]bool{} // nothing selected → empty plan
+	m = press(t, m, "enter", "x")
+	if m.state != statePlan {
+		t.Fatalf("x must be inert on an empty plan, state=%d", m.state)
+	}
+	// y outside the confirm screen must never confirm.
+	if out := press(t, m, "y"); out.confirmed {
+		t.Fatal("y outside the confirm screen must not confirm")
 	}
 }
 
@@ -352,4 +412,14 @@ func TestScanningState(t *testing.T) {
 	if view := next.(Model).View(); !strings.Contains(view, "Nothing found") {
 		t.Fatalf("empty scan should say nothing found, got:\n%s", view)
 	}
+}
+
+// lineHas reports whether one line of view contains both fragments.
+func lineHas(view, a, b string) bool {
+	for _, line := range strings.Split(view, "\n") {
+		if strings.Contains(line, a) && strings.Contains(line, b) {
+			return true
+		}
+	}
+	return false
 }

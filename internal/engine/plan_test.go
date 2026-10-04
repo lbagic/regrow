@@ -8,6 +8,15 @@ import (
 
 var testHost = Host{OS: "darwin", Version: "15.5", Home: "/Users/t"}
 
+// selectRules selects every given finding's rule as a whole.
+func selectRules(findings ...Finding) map[string]bool {
+	sel := map[string]bool{}
+	for _, f := range findings {
+		sel[f.Rule.ID] = true
+	}
+	return sel
+}
+
 func TestBuildPlanNativeWholeRule(t *testing.T) {
 	f := Finding{
 		Rule: Rule{ID: "go-build-cache", Risk: RiskSafe, NativeCommand: Argv{"go", "clean", "-cache"}},
@@ -15,7 +24,7 @@ func TestBuildPlanNativeWholeRule(t *testing.T) {
 			{Path: "/Users/t/Library/Caches/go-build", Bytes: 100},
 		},
 	}
-	plan := BuildPlan(testHost, []Finding{f}, nil)
+	plan := BuildPlan(testHost, []Finding{f}, selectRules(f))
 	if len(plan.Actions) != 1 {
 		t.Fatalf("want 1 action, got %+v", plan.Actions)
 	}
@@ -33,13 +42,28 @@ func TestBuildPlanNativePerItemPlaceholders(t *testing.T) {
 			{Label: "iOS 18.0", Arg: "9B3D", Bytes: 20},
 		},
 	}
-	plan := BuildPlan(testHost, []Finding{f}, nil)
+	plan := BuildPlan(testHost, []Finding{f}, selectRules(f))
 	if len(plan.Actions) != 2 {
 		t.Fatalf("want 2 actions, got %+v", plan.Actions)
 	}
 	want := []string{"sudo", "xcrun", "simctl", "runtime", "delete", "8A2C"}
 	if !reflect.DeepEqual(plan.Actions[0].Command, want) {
 		t.Errorf("command = %v, want %v", plan.Actions[0].Command, want)
+	}
+}
+
+func TestBuildPlanCarriesPreAction(t *testing.T) {
+	f := Finding{
+		Rule: Rule{
+			ID: "docker-volumes-named", Risk: RiskCaution,
+			NativeCommand: Argv{"docker", "volume", "rm", "{arg}"},
+			PreAction:     PreActionVolumeExport,
+		},
+		Items: []Item{{Label: "dakr_db", Arg: "dakr_db", Bytes: 10}},
+	}
+	plan := BuildPlan(testHost, []Finding{f}, selectRules(f))
+	if len(plan.Actions) != 1 || plan.Actions[0].PreAction != PreActionVolumeExport {
+		t.Fatalf("action must carry the rule's pre-action, got %+v", plan.Actions)
 	}
 }
 
@@ -50,7 +74,7 @@ func TestBuildPlanTrashFallback(t *testing.T) {
 			{Path: "/Users/t/Library/Developer/Xcode/DerivedData", Bytes: 42},
 		},
 	}
-	plan := BuildPlan(testHost, []Finding{f}, nil)
+	plan := BuildPlan(testHost, []Finding{f}, selectRules(f))
 	if len(plan.Actions) != 1 {
 		t.Fatalf("want 1 action, got %+v", plan.Actions)
 	}
@@ -68,7 +92,7 @@ func TestBuildPlanSurfaceOnlyNeverActs(t *testing.T) {
 		Rule:  Rule{ID: "ios-backups", Risk: RiskSurfaceOnly},
 		Items: []Item{{Path: "/Users/t/Library/Application Support/MobileSync/Backup/x", Bytes: 1 << 30}},
 	}
-	plan := BuildPlan(testHost, []Finding{f}, nil)
+	plan := BuildPlan(testHost, []Finding{f}, selectRules(f))
 	if len(plan.Actions) != 0 {
 		t.Fatalf("surface-only produced actions: %+v", plan.Actions)
 	}
@@ -82,7 +106,7 @@ func TestBuildPlanGuardRejectsDangerousPaths(t *testing.T) {
 		Rule:  Rule{ID: "broken-rule", Risk: RiskSafe},
 		Items: []Item{{Path: "/Users/t", Bytes: 1}}, // home itself
 	}
-	plan := BuildPlan(testHost, []Finding{f}, nil)
+	plan := BuildPlan(testHost, []Finding{f}, selectRules(f))
 	if len(plan.Actions) != 0 {
 		t.Fatalf("guard let home through: %+v", plan.Actions)
 	}
@@ -107,7 +131,7 @@ func TestBuildPlanPathlessItemWithoutNativeCommand(t *testing.T) {
 		Rule:  Rule{ID: "odd", Risk: RiskSafe},
 		Items: []Item{{Label: "ghost", Bytes: 5}},
 	}
-	plan := BuildPlan(testHost, []Finding{f}, nil)
+	plan := BuildPlan(testHost, []Finding{f}, selectRules(f))
 	if len(plan.Actions) != 0 || len(plan.Skipped) != 1 {
 		t.Fatalf("pathless item mishandled: %+v", plan)
 	}
@@ -224,11 +248,109 @@ func TestBuildPlanSkipsItemWithEmptyPlaceholderValue(t *testing.T) {
 			{Label: "bad-no-arg", Bytes: 20},
 		},
 	}
-	plan := BuildPlan(testHost, []Finding{f}, nil)
+	plan := BuildPlan(testHost, []Finding{f}, selectRules(f))
 	if len(plan.Actions) != 1 || plan.Actions[0].Command[len(plan.Actions[0].Command)-1] != "8A2C" {
 		t.Fatalf("want 1 action for the good item, got %+v", plan.Actions)
 	}
 	if len(plan.Skipped) != 1 || !strings.Contains(plan.Skipped[0].Reason, "{arg}") {
 		t.Fatalf("empty placeholder value must be a skip with reason, got %+v", plan.Skipped)
+	}
+}
+
+func TestBuildPlanEmptySelectionPlansNothing(t *testing.T) {
+	findings := []Finding{
+		{Rule: Rule{ID: "safe-cache", Risk: RiskSafe}, Items: []Item{{Path: "/Users/t/cache", Bytes: 10}}},
+		{Rule: Rule{ID: "go-build-cache", Risk: RiskSafe, NativeCommand: Argv{"go", "clean", "-cache"}}, Items: []Item{{Path: "/Users/t/gb", Bytes: 20}}},
+	}
+	for name, sel := range map[string]map[string]bool{
+		"nil":       nil,
+		"empty":     {},
+		"all false": {"safe-cache": false, "go-build-cache/~/gb": false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			plan := BuildPlan(testHost, findings, sel)
+			if len(plan.Actions) != 0 || len(plan.Skipped) != 0 || len(plan.Unmatched) != 0 {
+				t.Fatalf("an empty selection must plan nothing, got %+v", plan)
+			}
+		})
+	}
+}
+
+func TestDefaultSelection(t *testing.T) {
+	findings := []Finding{
+		{Rule: Rule{ID: "safe-found", Risk: RiskSafe}, Items: []Item{{Path: "/Users/t/a", Bytes: 1}}},
+		{Rule: Rule{ID: "safe-empty", Risk: RiskSafe}},
+		{Rule: Rule{ID: "safe-errored", Risk: RiskSafe}, Items: []Item{{Path: "/Users/t/b", Bytes: 1}}, Err: "partly unreadable"},
+		{Rule: Rule{ID: "caution-found", Risk: RiskCaution}, Items: []Item{{Path: "/Users/t/c", Bytes: 1}}},
+		{Rule: Rule{ID: "surface-found", Risk: RiskSurfaceOnly}, Items: []Item{{Path: "/Users/t/d", Bytes: 1}}},
+	}
+	got := DefaultSelection(findings)
+	want := map[string]bool{"safe-found": true}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("DefaultSelection = %v, want %v", got, want)
+	}
+}
+
+func TestBuildPlanEmptiesTrashFirst(t *testing.T) {
+	findings := []Finding{
+		{Rule: Rule{ID: "cache-a", Risk: RiskSafe}, Items: []Item{{Path: "/Users/t/a", Bytes: 1}}},
+		{Rule: Rule{ID: "empty-the-trash", Risk: RiskCaution, NativeCommand: Argv{"empty-trash"}, EmptiesTrash: true},
+			Items: []Item{{Path: "/Users/t/.Trash", Bytes: 5}}},
+		{Rule: Rule{ID: "cache-b", Risk: RiskSafe}, Items: []Item{{Path: "/Users/t/b", Bytes: 1}}},
+	}
+	plan := BuildPlan(testHost, findings, selectRules(findings...))
+	var order []string
+	for _, a := range plan.Actions {
+		order = append(order, a.RuleID)
+	}
+	if want := []string{"empty-the-trash", "cache-a", "cache-b"}; !reflect.DeepEqual(order, want) {
+		t.Fatalf("action order = %v, want %v (Trash emptied before this run's moves, the rest in catalog order)", order, want)
+	}
+}
+
+// The embedded catalog's trash-empty must carry empties_trash: a plan
+// over every actionable rule runs it before anything else.
+func TestCatalogPlanRunsTrashEmptyFirst(t *testing.T) {
+	catalog, err := LoadEmbedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var findings []Finding
+	sel := map[string]bool{}
+	for _, r := range catalog {
+		if !r.Risk.Actionable() {
+			continue
+		}
+		findings = append(findings, Finding{Rule: r, Items: []Item{{
+			Path:  "/Users/t/fixture/" + r.ID,
+			Arg:   "arg-" + r.ID,
+			Label: r.ID,
+			Bytes: 1,
+		}}})
+		sel[r.ID] = true
+	}
+	plan := BuildPlan(testHost, findings, sel)
+	if len(plan.Actions) < 2 {
+		t.Fatalf("want a multi-rule plan, got %+v", plan)
+	}
+	if plan.Actions[0].RuleID != "trash-empty" {
+		t.Fatalf("first action = %s, want trash-empty", plan.Actions[0].RuleID)
+	}
+	for _, a := range plan.Actions[1:] {
+		if a.RuleID == "trash-empty" {
+			t.Fatal("trash-empty planned twice")
+		}
+	}
+}
+
+func TestPlanTotalsSplitByKind(t *testing.T) {
+	p := Plan{Actions: []Action{
+		{Kind: ActionTrash, Bytes: 100},
+		{Kind: ActionNative, Bytes: 20},
+		{Kind: ActionTrash, Bytes: 3},
+	}}
+	got := p.Totals()
+	if got.FreesNow != 20 || got.AfterTrash != 103 {
+		t.Fatalf("Totals = %+v, want FreesNow 20, AfterTrash 103", got)
 	}
 }

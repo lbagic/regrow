@@ -2,7 +2,10 @@
 // findings grouped by category, size-ranked, risk-colored, the regen
 // story shown for the row under the cursor, and a plan screen (the
 // exact commands) before anything would run. Nothing here executes —
-// the plan screen is the contract the Phase 2 executor fulfils.
+// confirming the plan (plan screen → x → confirm screen → y) quits
+// the UI and hands the plan back to the caller, which runs the
+// executor with normal terminal stdio (sudo can prompt, docker can
+// stream).
 package tui
 
 import (
@@ -24,6 +27,7 @@ const (
 	stateScanning state = iota
 	stateList
 	statePlan
+	stateConfirm
 )
 
 // Plain ANSI palette so the user's terminal theme applies. Risk colors
@@ -105,6 +109,10 @@ type Model struct {
 	// per-rule rows are the default UX; expansion is opt-in (G0).
 	expanded map[string]bool
 	plan     engine.Plan
+	// confirmed means the user walked plan → x → confirm → y. The
+	// caller reads it off the final model and executes the plan after
+	// the alt-screen is gone — the TUI itself never executes.
+	confirmed bool
 
 	width  int
 	height int
@@ -125,10 +133,16 @@ func New(host engine.Host, version string, scan func(context.Context) []engine.F
 }
 
 // Run starts the interactive UI; the scan runs in the background so
-// the screen is responsive immediately.
-func Run(host engine.Host, version string, scan func(context.Context) []engine.Finding) error {
-	_, err := tea.NewProgram(New(host, version, scan), tea.WithAltScreen()).Run()
-	return err
+// the screen is responsive immediately. It returns the built plan and
+// whether the user confirmed execution — the caller executes, not the
+// TUI, so native commands get real terminal stdio.
+func Run(host engine.Host, version string, scan func(context.Context) []engine.Finding) (engine.Plan, bool, error) {
+	final, err := tea.NewProgram(New(host, version, scan), tea.WithAltScreen()).Run()
+	if err != nil {
+		return engine.Plan{}, false, err
+	}
+	m := final.(Model)
+	return m.plan, m.confirmed, nil
 }
 
 func (m Model) Init() tea.Cmd {
@@ -160,10 +174,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.rows = buildRows(m.findings, m.expanded)
 		m.cursor = firstCursorable(m.rows)
-		// Safe findings start selected (PRODUCT.md pillar 2: auto-clean
-		// class); caution needs a human tick; surface-only never.
+		def := engine.DefaultSelection(m.findings)
 		for _, f := range m.findings {
-			if f.Rule.Risk == engine.RiskSafe && len(f.Items) > 0 && f.Err == "" {
+			if def[f.Rule.ID] {
 				m.selectAllItems(f)
 			}
 		}
@@ -182,8 +195,33 @@ func (m Model) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 
 	case "esc":
-		if m.state == statePlan {
+		switch m.state {
+		case stateConfirm:
+			m.state = statePlan
+		case statePlan:
 			m.state = stateList
+		}
+		return m, nil
+
+	case "x":
+		// First gate: the plan screen has been read; ask once more.
+		if m.state == statePlan && len(m.plan.Actions) > 0 {
+			m.state = stateConfirm
+		}
+		return m, nil
+
+	case "y":
+		// Second gate: quit with the plan marked confirmed; the caller
+		// executes it outside the alt-screen.
+		if m.state == stateConfirm {
+			m.confirmed = true
+			return m, tea.Quit
+		}
+		return m, nil
+
+	case "n":
+		if m.state == stateConfirm {
+			m.state = statePlan
 		}
 		return m, nil
 
@@ -411,6 +449,8 @@ func (m Model) View() string {
 		return m.viewScanning()
 	case statePlan:
 		return m.viewPlan()
+	case stateConfirm:
+		return m.viewConfirm()
 	default:
 		return m.viewList()
 	}
@@ -636,16 +676,40 @@ func (m Model) viewPlan() string {
 		b.WriteString("  Nothing selected found anything to reclaim.\n")
 	}
 	for _, a := range m.plan.Actions {
-		fmt.Fprintf(&b, "  [%s] %-24s %10s  %s\n",
-			a.Kind, a.RuleID, HumanBytes(a.Bytes), ShellJoin(a.Command))
+		b.WriteString("  " + ActionLine(a) + "\n")
 	}
 	for _, s := range m.plan.Skipped {
 		b.WriteString(styleFaint.Render(fmt.Sprintf("  [skip]   %-22s %s", s.RuleID, s.Reason)) + "\n")
 	}
 
-	fmt.Fprintf(&b, "\n  Would reclaim: %s\n", styleTitle.Render(HumanBytes(m.plan.TotalBytes())))
-	b.WriteString(styleFaint.Render("  Execute with `regrow clean [id ...]` — trash first, `regrow undo` restores.") + "\n\n")
-	b.WriteString(styleFaint.Render("  esc back · q quit") + "\n")
+	b.WriteString("\n")
+	for _, line := range TotalsLines(m.plan) {
+		b.WriteString("  " + line + "\n")
+	}
+	fmt.Fprintf(&b, "  Would reclaim: %s\n", styleTitle.Render(HumanBytes(m.plan.TotalBytes())))
+	b.WriteString(styleFaint.Render("  Also scriptable: `regrow clean [id ...]`.") + "\n\n")
+	b.WriteString(styleFaint.Render("  x execute (asks again) · esc back · q quit") + "\n")
+	return b.String()
+}
+
+// viewConfirm is the second gate: the same action list the plan
+// screen showed, restated as about-to-run. Only y proceeds — enter is
+// deliberately inert so plan-screen muscle memory can't execute.
+func (m Model) viewConfirm() string {
+	var b strings.Builder
+	b.WriteString(m.header())
+	b.WriteString(styleCaution.Render("  CONFIRM — about to execute") + "\n\n")
+
+	for _, a := range m.plan.Actions {
+		b.WriteString("  " + ActionLine(a) + "\n")
+	}
+
+	b.WriteString("\n")
+	for _, line := range TotalsLines(m.plan) {
+		b.WriteString("  " + line + "\n")
+	}
+	b.WriteString("  Steward commands are not undoable — their data comes back via the regen story.\n\n")
+	b.WriteString(styleCaution.Render("  y execute") + styleFaint.Render(" · esc back · q quit without executing") + "\n")
 	return b.String()
 }
 

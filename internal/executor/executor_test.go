@@ -102,7 +102,7 @@ func TestExecuteContinuesPastFailures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Done != 1 || res.Failed != 1 || res.Bytes != 200 {
+	if res.Done != 1 || res.Failed != 1 || res.Bytes != 200 || res.TrashBytes+res.StagedBytes != 0 {
 		t.Fatalf("one failure must not abort the run: %+v", res)
 	}
 	if log.entries[1].Event != oplog.EventFail || !strings.Contains(log.entries[1].Error, "vanished") {
@@ -120,6 +120,123 @@ func TestExecuteStopsOnCancel(t *testing.T) {
 	}
 	if len(log.entries) != 0 {
 		t.Fatal("cancelled run must not journal or act")
+	}
+}
+
+func exportPlan() engine.Plan {
+	return engine.Plan{Actions: []engine.Action{{
+		RuleID: "docker-volumes-named", ItemKey: "dakr_db", Kind: engine.ActionNative,
+		Command: []string{"docker", "volume", "rm", "dakr_db"}, Bytes: 500,
+		PreAction: engine.PreActionVolumeExport,
+	}}}
+}
+
+func TestExecutePreActionRunsBeforeCommand(t *testing.T) {
+	log := &memLog{}
+	var order []string
+	e := &Executor{Log: log, Now: fixedNow,
+		PreActions: map[string]PreAction{
+			engine.PreActionVolumeExport: func(_ context.Context, a engine.Action) (*trash.Receipt, error) {
+				order = append(order, "export:"+a.ItemKey)
+				return &trash.Receipt{Original: "docker volume " + a.ItemKey, To: "/staging/dakr_db.tar", Method: trash.MethodExport}, nil
+			},
+		},
+		RunNative: func(_ context.Context, argv []string) error {
+			order = append(order, "native:"+strings.Join(argv, " "))
+			return nil
+		}}
+	res, err := e.Execute(context.Background(), exportPlan())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Done != 1 || res.Failed != 0 {
+		t.Fatalf("result wrong: %+v", res)
+	}
+	want := "export:dakr_db,native:docker volume rm dakr_db"
+	if strings.Join(order, ",") != want {
+		t.Fatalf("order = %v, want export before rm", order)
+	}
+	if log.entries[1].Receipt == nil || log.entries[1].Receipt.Method != trash.MethodExport {
+		t.Fatalf("done entry must carry the export receipt: %+v", log.entries[1])
+	}
+}
+
+func TestExecutePreActionFailureBlocksCommand(t *testing.T) {
+	log := &memLog{}
+	nativeRan := false
+	e := &Executor{Log: log, Now: fixedNow,
+		PreActions: map[string]PreAction{
+			engine.PreActionVolumeExport: func(context.Context, engine.Action) (*trash.Receipt, error) {
+				return nil, errors.New("export failed, refusing to remove")
+			},
+		},
+		RunNative: func(context.Context, []string) error { nativeRan = true; return nil }}
+	res, err := e.Execute(context.Background(), exportPlan())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nativeRan {
+		t.Fatal("no backup, no deletion: the command must not run after a failed pre-action")
+	}
+	if res.Failed != 1 || log.entries[1].Event != oplog.EventFail {
+		t.Fatalf("failed pre-action must fail the action: %+v, %+v", res, log.entries[1])
+	}
+}
+
+func TestExecutePreActionReceiptJournaledOnCommandFailure(t *testing.T) {
+	// Export succeeded, rm then failed: the journal must still say
+	// where the backup landed.
+	log := &memLog{}
+	e := &Executor{Log: log, Now: fixedNow,
+		PreActions: map[string]PreAction{
+			engine.PreActionVolumeExport: func(context.Context, engine.Action) (*trash.Receipt, error) {
+				return &trash.Receipt{Original: "docker volume dakr_db", To: "/staging/dakr_db.tar", Method: trash.MethodExport}, nil
+			},
+		},
+		RunNative: func(context.Context, []string) error { return errors.New("daemon died") }}
+	res, err := e.Execute(context.Background(), exportPlan())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Failed != 1 {
+		t.Fatalf("result wrong: %+v", res)
+	}
+	fail := log.entries[1]
+	if fail.Event != oplog.EventFail || fail.Receipt == nil || fail.Receipt.To != "/staging/dakr_db.tar" {
+		t.Fatalf("fail entry must keep the export receipt: %+v", fail)
+	}
+}
+
+func TestExecuteUnregisteredPreActionFails(t *testing.T) {
+	log := &memLog{}
+	nativeRan := false
+	e := &Executor{Log: log, Now: fixedNow,
+		RunNative: func(context.Context, []string) error { nativeRan = true; return nil }}
+	res, err := e.Execute(context.Background(), exportPlan())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nativeRan || res.Failed != 1 {
+		t.Fatalf("an unregistered pre-action must never run the command bare: %+v", res)
+	}
+}
+
+func TestUndoCountsExportReceipts(t *testing.T) {
+	log := &memLog{}
+	e := &Executor{Log: log, Now: fixedNow}
+	run := oplog.Run{ID: "r1", Entries: []oplog.Entry{
+		{Run: "r1", Seq: 1, Event: oplog.EventDone, RuleID: "docker-volumes-named",
+			Receipt: &trash.Receipt{Original: "docker volume dakr_db", To: "/staging/dakr_db.tar", Method: trash.MethodExport}},
+	}}
+	res, err := e.Undo(run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.ExportSkipped != 1 || res.Restored != 0 || res.Failed != 0 {
+		t.Fatalf("export receipts are counted, never restored: %+v", res)
+	}
+	if len(log.entries) != 0 {
+		t.Fatal("nothing to journal when nothing was restored")
 	}
 }
 
@@ -187,4 +304,81 @@ func writeFile(path, content string) error {
 func exists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+func TestExecuteSplitsTrashFromStaging(t *testing.T) {
+	tests := []struct {
+		name               string
+		finder             func(context.Context, string) (string, error)
+		wantTrash, wantStg int64
+	}{
+		{"Finder moves to the Trash", func(_ context.Context, path string) (string, error) {
+			to := filepath.Join(filepath.Dir(path), ".Trash-fixture")
+			return to, os.Rename(path, to)
+		}, 100, 0},
+		{"Finder unavailable stages", func(context.Context, string) (string, error) {
+			return "", errors.New("no Finder over ssh")
+		}, 0, 100},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			target := filepath.Join(home, "proj", "cache")
+			if err := writeFile(filepath.Join(target, "a.bin"), "x"); err != nil {
+				t.Fatal(err)
+			}
+			e := &Executor{
+				Trash: &trash.Mover{Home: home, StagingDir: t.TempDir(), RunFinder: tt.finder},
+				Log:   &memLog{}, Now: fixedNow,
+				RunNative: func(context.Context, []string) error { t.Fatal("no native action planned"); return nil },
+			}
+			plan := engine.Plan{Actions: []engine.Action{
+				{RuleID: "cache", Kind: engine.ActionTrash, Path: target, Bytes: 100, Command: trash.PreviewCommand(target)},
+			}}
+			res, err := e.Execute(context.Background(), plan)
+			if err != nil || res.Done != 1 {
+				t.Fatalf("execute: %+v, %v", res, err)
+			}
+			if res.TrashBytes != tt.wantTrash || res.StagedBytes != tt.wantStg {
+				t.Fatalf("TrashBytes %d StagedBytes %d, want %d %d", res.TrashBytes, res.StagedBytes, tt.wantTrash, tt.wantStg)
+			}
+		})
+	}
+}
+
+func TestExecuteSkipsTrashMovesAfterFailedEmpty(t *testing.T) {
+	log := &memLog{}
+	mover := &fakeMover{}
+	var ran []string
+	e := &Executor{Trash: mover, Log: log, Now: fixedNow,
+		RunNative: func(_ context.Context, argv []string) error {
+			ran = append(ran, argv[0])
+			if argv[0] == "empty-trash" {
+				return errors.New("AppleEvent timed out")
+			}
+			return nil
+		}}
+	plan := engine.Plan{Actions: []engine.Action{
+		{RuleID: "trash-empty", Kind: engine.ActionNative, Command: []string{"empty-trash"}, Bytes: 10, EmptiesTrash: true},
+		{RuleID: "npm-cache", Kind: engine.ActionTrash, Path: "/u/.npm", Bytes: 100, Command: trash.PreviewCommand("/u/.npm")},
+		{RuleID: "go-build-cache", Kind: engine.ActionNative, Command: []string{"go", "clean", "-cache"}, Bytes: 200},
+	}}
+	res, err := e.Execute(context.Background(), plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mover.moved) != 0 {
+		t.Fatalf("no Trash move may run after a failed empty, moved %v", mover.moved)
+	}
+	if want := []string{"empty-trash", "go"}; strings.Join(ran, ",") != strings.Join(want, ",") {
+		t.Fatalf("native commands run = %v, want %v (steward commands do not touch the Trash)", ran, want)
+	}
+	if res.Failed != 1 || res.Done != 1 || len(res.Skipped) != 1 || !strings.HasPrefix(res.Skipped[0], "npm-cache: emptying the Trash failed") {
+		t.Fatalf("result = %+v", res)
+	}
+	for _, en := range log.entries {
+		if en.RuleID == "npm-cache" {
+			t.Fatalf("a skipped action must not be journaled: %+v", en)
+		}
+	}
 }

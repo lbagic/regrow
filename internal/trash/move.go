@@ -15,6 +15,11 @@ type Method string
 const (
 	MethodFinder  Method = "finder"  // OS Trash, "Put Back" works
 	MethodStaging Method = "staging" // rename into the staging dir
+	// MethodExport is a copy, not a move: a docker volume tarball'd
+	// into staging before `docker volume rm` (Prompt G2). The original
+	// is not a host path, so undo cannot rename it back — recovery is
+	// manual (docker volume create + untar), pointed at by the receipt.
+	MethodExport Method = "export"
 )
 
 // Receipt records where a trashed path actually landed so undo can
@@ -25,6 +30,11 @@ type Receipt struct {
 	To       string `json:"to"`
 	Method   Method `json:"method"`
 }
+
+// Restorable reports whether Restore can undo this receipt. Export
+// receipts cannot be renamed back — Original names a docker volume,
+// not a path.
+func (r Receipt) Restorable() bool { return r.Method != MethodExport }
 
 // Mover makes paths recoverable-gone (ARCHITECTURE.md invariant 2):
 // Finder move to the OS Trash first, rename into StagingDir when
@@ -94,6 +104,9 @@ func (m *Mover) stage(path string) (string, error) {
 // original path. It refuses to overwrite anything that reappeared at
 // the original location.
 func Restore(r Receipt) error {
+	if !r.Restorable() {
+		return fmt.Errorf("restore %s: %s receipts are not auto-restorable (backup kept at %s)", r.Original, r.Method, r.To)
+	}
 	if _, err := os.Lstat(r.To); err != nil {
 		return fmt.Errorf("restore %s: trashed copy is gone (Trash emptied?): %w", r.Original, err)
 	}

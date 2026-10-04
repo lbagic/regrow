@@ -100,6 +100,55 @@ func TestValidate(t *testing.T) {
 			func(r *Rule) { r.NativeCommand = Argv{"tool", "rm", "{arg}"} },
 			"only tool_query items supply args",
 		},
+		{
+			"unknown pre_action",
+			func(r *Rule) {
+				r.ToolQuery = "q"
+				r.NativeCommand = Argv{"docker", "volume", "rm", "{arg}"}
+				r.PreAction = "docker-volume-exprot"
+			},
+			"unknown pre_action",
+		},
+		{
+			"pre_action on whole-rule command",
+			func(r *Rule) {
+				r.NativeCommand = Argv{"docker", "system", "prune"}
+				r.PreAction = PreActionVolumeExport
+			},
+			"per-item native_command",
+		},
+		{
+			"empties_trash without native command",
+			func(r *Rule) { r.Risk = RiskCaution; r.EmptiesTrash = true },
+			"whole-rule native_command",
+		},
+		{
+			"empties_trash on per-item command",
+			func(r *Rule) {
+				r.Risk = RiskCaution
+				r.NativeCommand = Argv{"trash-tool", "purge", "{path}"}
+				r.EmptiesTrash = true
+			},
+			"whole-rule native_command",
+		},
+		{
+			"empties_trash on safe rule",
+			func(r *Rule) {
+				r.NativeCommand = Argv{"osascript", "-e", "empty"}
+				r.EmptiesTrash = true
+			},
+			"must not be safe",
+		},
+		{
+			"doctor without threshold",
+			func(r *Rule) { r.Doctor = &Doctor{Story: "known bug"} },
+			"flag_above",
+		},
+		{
+			"doctor without story",
+			func(r *Rule) { r.Doctor = &Doctor{FlagAbove: 1 << 30} },
+			"doctor.story",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -144,5 +193,52 @@ func TestArgvExpandItemRefusesEmptyValue(t *testing.T) {
 	a := Argv{"tool", "rm", "{arg}"}
 	if _, err := a.ExpandItem(Item{Label: "no-arg-item"}); err == nil {
 		t.Fatal("empty {arg} substitution must fail, not produce a blank argument")
+	}
+}
+
+func TestParseByteSize(t *testing.T) {
+	tests := []struct {
+		in   string
+		want ByteSize
+	}{
+		{"20GB", 20 << 30},
+		{"20GiB", 20 << 30},
+		{"5 gb", 5 << 30},
+		{"500MB", 500 << 20},
+		{"2TB", 2 << 40},
+		{"1.5KB", 1536},
+		{"512B", 512},
+		{"512", 512},
+	}
+	for _, tt := range tests {
+		got, err := ParseByteSize(tt.in)
+		if err != nil {
+			t.Errorf("ParseByteSize(%q): %v", tt.in, err)
+			continue
+		}
+		if got != tt.want {
+			t.Errorf("ParseByteSize(%q) = %d, want %d", tt.in, got, tt.want)
+		}
+	}
+	for _, bad := range []string{"", "GB", "-5GB", "5XB", "lots"} {
+		if got, err := ParseByteSize(bad); err == nil {
+			t.Errorf("ParseByteSize(%q) = %d, want error", bad, got)
+		}
+	}
+}
+
+func TestByteSizeYAML(t *testing.T) {
+	var got struct {
+		Doctor Doctor `yaml:"doctor"`
+	}
+	src := "doctor:\n  flag_above: 20GB\n  story: runaway index\n"
+	if err := yaml.Unmarshal([]byte(src), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Doctor.FlagAbove != 20<<30 || got.Doctor.Story != "runaway index" {
+		t.Fatalf("parsed wrong: %+v", got.Doctor)
+	}
+	if err := yaml.Unmarshal([]byte("doctor:\n  flag_above: soon\n"), &got); err == nil {
+		t.Fatal("want error for unparseable flag_above")
 	}
 }

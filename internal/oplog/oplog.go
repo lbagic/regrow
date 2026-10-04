@@ -42,17 +42,27 @@ type Entry struct {
 	Error   string         `json:"error,omitempty"`
 }
 
-// DefaultPath is ~/.local/state/regrow/oplog.jsonl, honouring
-// XDG_STATE_HOME.
-func DefaultPath() (string, error) {
+// StateDir is ~/.local/state/regrow (honouring XDG_STATE_HOME) — the
+// journal's home, and the shared root for staging and the docker
+// usage ledger.
+func StateDir() (string, error) {
 	if dir := os.Getenv("XDG_STATE_HOME"); dir != "" {
-		return filepath.Join(dir, "regrow", "oplog.jsonl"), nil
+		return filepath.Join(dir, "regrow"), nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".local", "state", "regrow", "oplog.jsonl"), nil
+	return filepath.Join(home, ".local", "state", "regrow"), nil
+}
+
+// DefaultPath is StateDir()/oplog.jsonl.
+func DefaultPath() (string, error) {
+	dir, err := StateDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "oplog.jsonl"), nil
 }
 
 // Log is an append-only jsonl journal. Every Append is synced before
@@ -148,7 +158,9 @@ func Runs(entries []Entry) []Run {
 
 // Undoable returns the run's trash receipts that can still be
 // restored — done actions minus those already undone — in reverse
-// execution order (last moved, first restored).
+// execution order (last moved, first restored). Non-restorable
+// receipts (volume export tarballs) are excluded: they are recovery
+// pointers, not rename-back moves.
 func (r Run) Undoable() []Entry {
 	undone := map[int]bool{}
 	for _, e := range r.Entries {
@@ -158,7 +170,7 @@ func (r Run) Undoable() []Entry {
 	}
 	var out []Entry
 	for _, e := range r.Entries {
-		if e.Event == EventDone && e.Receipt != nil && !undone[e.Seq] {
+		if e.Event == EventDone && e.Receipt != nil && e.Receipt.Restorable() && !undone[e.Seq] {
 			out = append(out, e)
 		}
 	}

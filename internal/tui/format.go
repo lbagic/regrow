@@ -3,21 +3,14 @@ package tui
 import (
 	"fmt"
 	"strings"
+
+	"github.com/lbagic/regrow/internal/engine"
 )
 
 // HumanBytes renders a byte count the way the sketch does: "20.1 GiB".
-func HumanBytes(n int64) string {
-	const unit = 1024
-	if n < unit {
-		return fmt.Sprintf("%d B", n)
-	}
-	div, exp := int64(unit), 0
-	for m := n / unit; m >= unit; m /= unit {
-		div *= unit
-		exp++
-	}
-	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
-}
+// The implementation lives in engine (scanner labels use it too);
+// this alias keeps the TUI/CLI call sites stable.
+func HumanBytes(n int64) string { return engine.HumanBytes(n) }
 
 // ShellJoin renders argv for display, quoting args with spaces.
 func ShellJoin(argv []string) string {
@@ -30,4 +23,43 @@ func ShellJoin(argv []string) string {
 		}
 	}
 	return strings.Join(parts, " ")
+}
+
+// ActionCommand renders an action's command for plan output, spelling
+// out the pre-action so the export-then-remove sequence is visible on
+// every plan surface, not just in the rule's note.
+func ActionCommand(a engine.Action) string {
+	s := ShellJoin(a.Command)
+	switch a.PreAction {
+	case "":
+	case engine.PreActionVolumeExport:
+		s += "  (tarball to staging first)"
+	default:
+		s += "  (pre: " + a.PreAction + ")"
+	}
+	return s
+}
+
+// Reversibility says what `regrow undo` can do for an action once it
+// has run: only Trash moves come back.
+func Reversibility(a engine.Action) string {
+	if a.Kind == engine.ActionTrash {
+		return "undo restores"
+	}
+	return "no undo"
+}
+
+// ActionLine renders one plan action identically on every plan surface.
+func ActionLine(a engine.Action) string {
+	return fmt.Sprintf("%-8s %-24s %10s  %-13s  %s",
+		"["+string(a.Kind)+"]", a.RuleID, HumanBytes(a.Bytes), Reversibility(a), ActionCommand(a))
+}
+
+// TotalsLines splits a plan's total by when the space comes back.
+func TotalsLines(p engine.Plan) []string {
+	t := p.Totals()
+	return []string{
+		fmt.Sprintf("Frees now          %10s  steward commands, no undo", HumanBytes(t.FreesNow)),
+		fmt.Sprintf("Frees after Trash  %10s  moved to the Trash; `regrow undo` restores until it is emptied", HumanBytes(t.AfterTrash)),
+	}
 }

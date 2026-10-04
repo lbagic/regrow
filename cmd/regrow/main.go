@@ -1,26 +1,15 @@
 // Command regrow scans the disk for regenerable caches and junk,
 // explains what everything is and how it comes back, and reclaims
-// space reversibly (dry-run → trash → undo).
-//
-//	regrow [scan] [--rules-dir DIR] [--json]   interactive checklist on a TTY;
-//	                                           plain listing when piped or --json
-//	regrow plan [id ...] [--json]              dry-run: exact command list
-//	regrow clean [id ...] [--yes]              execute: no ids = safe rules only
-//
-// Ids are rule ids ("sim-devices") or item ids ("sim-devices/AAA-111",
-// as listed by scan output and the TUI footer).
-//
-//	regrow undo [run-id]                       restore the last (or given) run
-//	regrow history [--json]                    past runs from the oplog
-//	regrow rules                               list the catalog
-//	regrow version
+// space. `regrow help` lists the subcommands.
 package main
 
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strings"
@@ -33,6 +22,27 @@ import (
 // version is overridden at release time via -ldflags.
 var version = "0.0.0-dev"
 
+const usageText = `regrow: what is on your disk, and how it comes back.
+
+Usage:
+  regrow [scan] [--json]          interactive checklist on a terminal;
+                                  plain listing when piped or with --json
+  regrow plan [id ...] [--json]   dry run: the exact commands that would run
+  regrow clean [id ...] [--yes]   show the plan, confirm, execute
+  regrow doctor [--json]          hero-bug scan and phantom-space report
+  regrow undo [run-id]            restore the newest (or given) run's Trash moves
+  regrow history [--json]         past runs from the oplog
+  regrow rules [--json]           list the rule catalog
+  regrow version                  print the version
+  regrow help                     print this help
+
+Ids are rule ids ("sim-devices") or item ids ("sim-devices/AAA-111"), as
+scan output and the TUI footer list them. Without ids, plan and clean use
+the default selection: every safe rule that found something.
+
+Flags go before ids:
+`
+
 func main() {
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "regrow:", err)
@@ -40,58 +50,102 @@ func main() {
 	}
 }
 
-func run(args []string) error {
-	cmd := "scan"
+type options struct {
+	rulesDir  string
+	asJSON    bool
+	betaRules bool
+	yes       bool
+}
+
+func newFlagSet(name string, o *options) *flag.FlagSet {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.StringVar(&o.rulesDir, "rules-dir", "", "load rules from a directory instead of the embedded catalog")
+	fs.BoolVar(&o.asJSON, "json", false, "machine-readable output")
+	fs.BoolVar(&o.betaRules, "beta-rules", false, "include rules still in staged rollout")
+	fs.BoolVar(&o.yes, "yes", false, "clean: skip the confirmation prompt")
+	return fs
+}
+
+// parseArgs splits the subcommand from its flags and ids. help is set
+// by `regrow help` and by -h/--help after any subcommand.
+func parseArgs(args []string) (cmd string, opts options, ids []string, help bool, err error) {
+	cmd = "scan"
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		cmd, args = args[0], args[1:]
 	}
-
-	fs := flag.NewFlagSet(cmd, flag.ExitOnError)
-	rulesDir := fs.String("rules-dir", "", "load rules from a directory instead of the embedded catalog")
-	asJSON := fs.Bool("json", false, "machine-readable output")
-	betaRules := fs.Bool("beta-rules", false, "include rules still in staged rollout")
-	yes := fs.Bool("yes", false, "clean: skip the confirmation prompt")
+	fs := newFlagSet(cmd, &opts)
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return cmd, opts, nil, true, nil
+		}
+		return cmd, opts, nil, false, fmt.Errorf("%w (`regrow help` lists commands and flags)", err)
+	}
+	return cmd, opts, fs.Args(), cmd == "help", nil
+}
+
+func printUsage(w io.Writer) {
+	_, _ = io.WriteString(w, usageText)
+	fs := newFlagSet("regrow", &options{})
+	fs.SetOutput(w)
+	fs.PrintDefaults()
+}
+
+func run(args []string) error {
+	cmd, opts, ids, help, err := parseArgs(args)
+	if err != nil {
 		return err
 	}
-
+	if help {
+		printUsage(os.Stdout)
+		return nil
+	}
 	if cmd == "version" {
 		fmt.Println("regrow", version)
 		return nil
 	}
 
-	catalog, err := loadCatalog(*rulesDir)
+	catalog, err := loadCatalog(opts.rulesDir)
 	if err != nil {
 		return err
 	}
-	if !*betaRules {
+	if !opts.betaRules {
 		catalog = engine.WithoutBeta(catalog)
 	}
 	host := engine.DetectHost()
 
 	switch cmd {
 	case "rules":
-		return printRules(catalog, *asJSON)
+		return printRules(catalog, opts.asJSON)
 	case "scan":
-		if !*asJSON && isTTY() {
-			return tui.Run(host, version, func(ctx context.Context) []engine.Finding {
+		if !opts.asJSON && isTTY() {
+			plan, confirmed, err := tui.Run(host, version, func(ctx context.Context) []engine.Finding {
 				return scanner.New(host).Scan(ctx, catalog)
 			})
+			if err != nil || !confirmed {
+				return err
+			}
+			// Confirmed twice in the TUI (plan → x → confirm → y);
+			// execute here so native commands get real terminal stdio.
+			printPlanActions(plan)
+			return executePlan(host, plan)
 		}
 		findings := scanner.New(host).Scan(context.Background(), catalog)
-		return printFindings(findings, *asJSON)
+		return printFindings(findings, opts.asJSON)
 	case "plan":
 		findings := scanner.New(host).Scan(context.Background(), catalog)
-		plan := engine.BuildPlan(host, findings, selection(fs.Args()))
-		return printPlan(plan, *asJSON)
+		plan := engine.BuildPlan(host, findings, selectionFor(ids, findings))
+		return printPlan(plan, opts.asJSON)
 	case "clean":
-		return runClean(host, catalog, fs.Args(), *yes)
+		return runClean(host, catalog, ids, opts.yes)
+	case "doctor":
+		return runDoctor(host, catalog, opts.asJSON)
 	case "undo":
-		return runUndo(fs.Args())
+		return runUndo(ids)
 	case "history":
-		return runHistory(*asJSON)
+		return runHistory(opts.asJSON)
 	default:
-		return fmt.Errorf("unknown command %q (scan, plan, clean, undo, history, rules, version)", cmd)
+		return fmt.Errorf("unknown command %q (`regrow help` lists commands)", cmd)
 	}
 }
 
@@ -102,11 +156,12 @@ func loadCatalog(dir string) ([]engine.Rule, error) {
 	return engine.LoadEmbedded()
 }
 
-// selection turns `regrow plan id1 id2` args into a selection set;
-// no args means plan everything the scan found.
-func selection(ids []string) map[string]bool {
+// selectionFor turns command-line ids into selection atoms. No ids
+// means the default selection; BuildPlan itself plans nothing for an
+// empty selection.
+func selectionFor(ids []string, findings []engine.Finding) map[string]bool {
 	if len(ids) == 0 {
-		return nil
+		return engine.DefaultSelection(findings)
 	}
 	sel := make(map[string]bool, len(ids))
 	for _, id := range ids {
@@ -146,7 +201,7 @@ func printFindings(findings []engine.Finding, asJSON bool) error {
 	for _, c := range categories {
 		group := byCategory[c]
 		sort.Slice(group, func(i, j int) bool { return group[i].TotalBytes() > group[j].TotalBytes() })
-		fmt.Printf("%s  %s\n", strings.ToUpper(c), tui.HumanBytes(categoryBytes(group)))
+		fmt.Printf("%s  %s\n", strings.ToUpper(strings.ReplaceAll(c, "-", " ")), tui.HumanBytes(categoryBytes(group)))
 		for _, f := range group {
 			total += f.TotalBytes()
 			switch {
@@ -176,7 +231,7 @@ func printPlan(plan engine.Plan, asJSON bool) error {
 	}
 	fmt.Println("DRY RUN — commands that WOULD run (nothing executed):")
 	for _, a := range plan.Actions {
-		fmt.Printf("  [%s] %-24s %10s  %s\n", a.Kind, a.RuleID, tui.HumanBytes(a.Bytes), tui.ShellJoin(a.Command))
+		fmt.Println("  " + tui.ActionLine(a))
 	}
 	for _, s := range plan.Skipped {
 		fmt.Printf("  [skip] %-22s %s\n", s.RuleID, s.Reason)
@@ -184,7 +239,11 @@ func printPlan(plan engine.Plan, asJSON bool) error {
 	for _, u := range plan.Unmatched {
 		fmt.Printf("  [unmatched] %-17s selector matched nothing in this scan\n", u)
 	}
-	fmt.Printf("\nWould reclaim: %s\n", tui.HumanBytes(plan.TotalBytes()))
+	fmt.Println()
+	for _, line := range tui.TotalsLines(plan) {
+		fmt.Println(line)
+	}
+	fmt.Printf("Would reclaim: %s\n", tui.HumanBytes(plan.TotalBytes()))
 	return nil
 }
 

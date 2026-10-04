@@ -1,0 +1,19 @@
+# Untagged images no container references, removed by ID. Tagged
+# images are never aged out: image Created is build time (months
+# before the pull, verified live), so `image prune --filter until=`
+# would delete actively-used images — regrow never runs it.
+id: docker-images-dangling
+title: Docker dangling images
+category: docker
+risk: safe
+tool_query: docker-images-dangling
+native_command: docker image rm {arg}
+regen:
+  story: Dangling layers are superseded build leftovers; the next build or pull recreates what is still needed.
+  cost: next build slower; network for re-pulled layers
+sudo: false
+fixture:
+  items:
+    - label: aaa1119c3e1c (dangling)
+      arg: aaa1119c3e1c
+      bytes: 500000000

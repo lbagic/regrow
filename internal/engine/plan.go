@@ -27,9 +27,18 @@ type Action struct {
 	Kind    ActionKind `json:"kind"`
 	// Command is the exact argv, sudo included when the rule needs it.
 	Command []string `json:"command"`
+	// PreAction names the executor hook that must succeed before
+	// Command runs (docker volume export to staging).
+	PreAction string `json:"pre_action,omitempty"`
 	// Path is the filesystem target for trash actions.
-	Path  string `json:"path,omitempty"`
-	Bytes int64  `json:"bytes"`
+	Path string `json:"path,omitempty"`
+	// Bytes counts only items that no other action of the plan
+	// contains.
+	Bytes int64 `json:"bytes"`
+	// EmptiesTrash: the action permanently empties the Trash. The
+	// planner puts it first; if it fails, the executor skips the run's
+	// Trash moves, since Finder may still be emptying.
+	EmptiesTrash bool `json:"empties_trash,omitempty"`
 }
 
 // Skip records why a selected finding produced no action.
@@ -51,7 +60,8 @@ type Plan struct {
 	Unmatched []string `json:"unmatched,omitempty"`
 }
 
-// TotalBytes sums the bytes the plan would reclaim.
+// TotalBytes is the union of what the plan deletes: BuildPlan keeps
+// action bytes disjoint, so the sum counts every byte once.
 func (p Plan) TotalBytes() int64 {
 	var n int64
 	for _, a := range p.Actions {
@@ -60,19 +70,44 @@ func (p Plan) TotalBytes() int64 {
 	return n
 }
 
+// Totals buckets the plan's bytes by when they become free space: a
+// steward command frees them as it runs, a Trash move frees nothing
+// until the Trash is emptied.
+func (p Plan) Totals() Totals {
+	var t Totals
+	for _, a := range p.Actions {
+		switch a.Kind {
+		case ActionNative:
+			t.FreesNow += a.Bytes
+		case ActionTrash:
+			t.AfterTrash += a.Bytes
+		}
+	}
+	return t
+}
+
+// DefaultSelection is the selection every face starts from (the TUI's
+// pre-ticks, `plan` and `clean` without ids): whole safe rules that
+// found items and reported no error, as rule atoms.
+func DefaultSelection(findings []Finding) map[string]bool {
+	sel := map[string]bool{}
+	for _, f := range findings {
+		if f.Rule.Risk == RiskSafe && len(f.Items) > 0 && f.Err == "" {
+			sel[f.Rule.ID] = true
+		}
+	}
+	return sel
+}
+
 // selection is the parsed form of the atom map: whole-rule atoms and
 // per-item atoms ("ruleID/key"), kept separate so partial selections
 // are detectable.
 type selection struct {
-	all   bool
 	rules map[string]bool
 	items map[string]map[string]bool
 }
 
 func parseSelection(selected map[string]bool) selection {
-	if selected == nil {
-		return selection{all: true}
-	}
 	sel := selection{rules: map[string]bool{}, items: map[string]map[string]bool{}}
 	for atom, on := range selected {
 		if !on {
@@ -91,29 +126,31 @@ func parseSelection(selected map[string]bool) selection {
 	return sel
 }
 
-// itemsFor resolves the selection against one finding: the items to
-// plan, whether the rule is engaged at all, and whether the pick is a
-// strict subset (partial). Matched item atoms are marked in `matched`
-// so unaddressed atoms can be reported.
-func (s selection) itemsFor(f Finding, home string, matched map[string]bool) (items []Item, engaged, partial bool) {
-	if s.all || s.rules[f.Rule.ID] {
-		return f.Items, true, false
+func (s selection) empty() bool { return len(s.rules) == 0 && len(s.items) == 0 }
+
+// itemsFor resolves the selection against one finding whose items
+// carry keys: the indexes of the items to plan, whether the rule is
+// engaged at all, and whether the pick is a strict subset (partial).
+// Matched item atoms are marked in `matched` so unaddressed atoms can
+// be reported.
+func (s selection) itemsFor(f Finding, matched map[string]bool) (idx []int, engaged, partial bool) {
+	if s.rules[f.Rule.ID] {
+		for i := range f.Items {
+			idx = append(idx, i)
+		}
+		return idx, true, false
 	}
 	keys := s.items[f.Rule.ID]
 	if len(keys) == 0 {
 		return nil, false, false
 	}
-	for _, it := range f.Items {
-		key := it.Key
-		if key == "" {
-			key = it.DeriveKey(home)
-		}
-		if key != "" && keys[key] {
-			items = append(items, it)
-			matched[ItemID(f.Rule.ID, key)] = true
+	for i, it := range f.Items {
+		if it.Key != "" && keys[it.Key] {
+			idx = append(idx, i)
+			matched[ItemID(f.Rule.ID, it.Key)] = true
 		}
 	}
-	return items, true, len(items) < len(f.Items)
+	return idx, true, len(idx) < len(f.Items)
 }
 
 // unmatched returns every selection atom that addressed nothing:
@@ -142,19 +179,38 @@ func (s selection) unmatched(findings []Finding, matched map[string]bool) []stri
 	return out
 }
 
+// draft is an action before nesting is resolved, with the items it
+// deletes.
+type draft struct {
+	action Action
+	items  []itemRef
+}
+
 // BuildPlan turns selected findings into the exact command list.
 // Selection atoms are rule ids ("sim-devices") or item ids
-// ("sim-devices/AAA-111"); nil selects every finding. Architectural
-// invariants are enforced here, not in the UI: surface-only rules
-// never produce actions, every trash target passes the path guard,
-// and a whole-rule command is never planned for a partial selection —
-// it would delete more than was selected.
+// ("sim-devices/AAA-111"); a nil or empty selection plans nothing.
+// Invariants are enforced here, not in the UI:
+//   - a surface-only item is never deleted: not when selected, not
+//     inside a selected item, not at a path another rule shares;
+//   - every trash target passes the path guard;
+//   - a whole-rule command is never planned for a partial selection;
+//   - an item inside another planned item is not planned again, so
+//     action bytes are disjoint and TotalBytes is their union;
+//   - actions that empty the Trash run first, so this run's moves
+//     stay restorable.
 func BuildPlan(host Host, findings []Finding, selected map[string]bool) Plan {
 	var plan Plan
 	sel := parseSelection(selected)
+	if sel.empty() {
+		return plan
+	}
+	findings = withItemKeys(findings, host.Home)
+	tree := buildForest(findings)
 	matched := map[string]bool{}
-	for _, f := range findings {
-		items, engaged, partial := sel.itemsFor(f, host.Home, matched)
+
+	var drafts []draft
+	for fi, f := range findings {
+		idx, engaged, partial := sel.itemsFor(f, matched)
 		if !engaged {
 			continue
 		}
@@ -162,91 +218,234 @@ func BuildPlan(host Host, findings []Finding, selected map[string]bool) Plan {
 			plan.Skipped = append(plan.Skipped, Skip{RuleID: f.Rule.ID, Reason: "surface-only: report, never delete"})
 			continue
 		}
-		if len(items) == 0 {
+		if len(idx) == 0 {
 			continue
 		}
-		// Resolve keys on a copy: scanner-produced findings carry them,
-		// hand-built ones (tests, library callers) may not, and actions
-		// must always name their item.
-		resolved := make([]Item, len(items))
-		copy(resolved, items)
-		for i := range resolved {
-			if resolved[i].Key == "" {
-				resolved[i].Key = resolved[i].DeriveKey(host.Home)
-			}
+		refs := make([]itemRef, len(idx))
+		for i, ii := range idx {
+			refs[i] = itemRef{fi, ii}
 		}
-		items = resolved
+		var ds []draft
+		var skips []Skip
 		if len(f.Rule.NativeCommand) > 0 {
-			actions, skips := nativeActions(f.Rule, items, partial)
-			plan.Actions = append(plan.Actions, actions...)
-			plan.Skipped = append(plan.Skipped, skips...)
+			ds, skips = nativeDrafts(findings, tree, f.Rule, refs, partial)
+		} else {
+			ds, skips = trashDrafts(findings, tree, host, f.Rule, refs)
+		}
+		drafts = append(drafts, ds...)
+		plan.Skipped = append(plan.Skipped, skips...)
+	}
+
+	actions, skips := resolveNesting(findings, tree, drafts)
+	plan.Actions = actions
+	plan.Skipped = append(plan.Skipped, skips...)
+	plan.Unmatched = sel.unmatched(findings, matched)
+	return plan
+}
+
+// withItemKeys returns a copy of findings whose items carry keys:
+// hand-built findings may lack them, and actions must name their item.
+func withItemKeys(findings []Finding, home string) []Finding {
+	out := make([]Finding, len(findings))
+	for i, f := range findings {
+		items := make([]Item, len(f.Items))
+		copy(items, f.Items)
+		for j := range items {
+			if items[j].Key == "" {
+				items[j].Key = items[j].DeriveKey(home)
+			}
+		}
+		f.Items = items
+		out[i] = f
+	}
+	return out
+}
+
+func itemAt(findings []Finding, ref itemRef) Item {
+	return findings[ref.finding].Items[ref.item]
+}
+
+func refID(findings []Finding, ref itemRef) string {
+	return ItemID(findings[ref.finding].Rule.ID, itemAt(findings, ref).Key)
+}
+
+// surfaceOnlyConflict finds a surface-only item that deleting ref
+// would take with it: one nested below it, or one at the same path
+// under an earlier rule (on equal paths the earlier rule is the parent,
+// so it is not a descendant).
+func surfaceOnlyConflict(findings []Finding, tree forest, ref itemRef) (itemRef, bool) {
+	for _, d := range tree.descendants(ref) {
+		if !findings[d.finding].Rule.Risk.Actionable() {
+			return d, true
+		}
+	}
+	for _, a := range tree.sharesPath(ref) {
+		if !findings[a.finding].Rule.Risk.Actionable() {
+			return a, true
+		}
+	}
+	return itemRef{}, false
+}
+
+func surfaceOnlyReason(findings []Finding, conflict itemRef) string {
+	return fmt.Sprintf("contains %s, which regrow never deletes", refID(findings, conflict))
+}
+
+func trashDrafts(findings []Finding, tree forest, host Host, r Rule, refs []itemRef) ([]draft, []Skip) {
+	var ds []draft
+	var skips []Skip
+	for _, ref := range refs {
+		it := itemAt(findings, ref)
+		if it.Path == "" {
+			skips = append(skips, Skip{RuleID: r.ID, ItemKey: it.Key, Reason: fmt.Sprintf("item %q has no path and the rule has no native command", it.Label)})
 			continue
 		}
-		for _, it := range items {
-			if it.Path == "" {
-				plan.Skipped = append(plan.Skipped, Skip{RuleID: f.Rule.ID, ItemKey: it.Key, Reason: fmt.Sprintf("item %q has no path and the rule has no native command", it.Label)})
-				continue
-			}
-			if err := trash.GuardPath(it.Path, host.Home); err != nil {
-				plan.Skipped = append(plan.Skipped, Skip{RuleID: f.Rule.ID, ItemKey: it.Key, Reason: err.Error()})
-				continue
-			}
-			plan.Actions = append(plan.Actions, Action{
-				RuleID:  f.Rule.ID,
+		if err := trash.GuardPath(it.Path, host.Home); err != nil {
+			skips = append(skips, Skip{RuleID: r.ID, ItemKey: it.Key, Reason: err.Error()})
+			continue
+		}
+		if c, ok := surfaceOnlyConflict(findings, tree, ref); ok {
+			skips = append(skips, Skip{RuleID: r.ID, ItemKey: it.Key, Reason: surfaceOnlyReason(findings, c)})
+			continue
+		}
+		ds = append(ds, draft{
+			action: Action{
+				RuleID:  r.ID,
 				ItemKey: it.Key,
 				Kind:    ActionTrash,
 				Command: trash.PreviewCommand(it.Path),
 				Path:    it.Path,
-				Bytes:   it.Bytes,
-			})
-		}
+			},
+			items: []itemRef{ref},
+		})
 	}
-	if !sel.all {
-		plan.Unmatched = sel.unmatched(findings, matched)
-	}
-	return plan
+	return ds, skips
 }
 
-// nativeActions expands the rule's native command over the selected
+// nativeDrafts expands the rule's native command over the selected
 // items. With a placeholder the command runs once per item; without
-// one it acts on everything at once, so a partial selection is
-// refused (skipped with reason) instead of over-deleting. The
+// one it acts on everything at once, so a partial selection, or any
+// item holding a surface-only one, refuses the whole command. The
 // placeholder convention itself (which tokens exist, refusing empty
 // substitutions) is owned by the schema (Argv).
-func nativeActions(r Rule, items []Item, partial bool) ([]Action, []Skip) {
+func nativeDrafts(findings []Finding, tree forest, r Rule, refs []itemRef, partial bool) ([]draft, []Skip) {
 	if !r.NativeCommand.PerItem() {
 		if partial {
 			return nil, []Skip{{RuleID: r.ID, Reason: "whole-rule command cannot target individual items — select the whole rule"}}
 		}
-		var total int64
-		for _, it := range items {
-			total += it.Bytes
+		for _, ref := range refs {
+			if c, ok := surfaceOnlyConflict(findings, tree, ref); ok {
+				return nil, []Skip{{RuleID: r.ID, Reason: surfaceOnlyReason(findings, c)}}
+			}
 		}
-		return []Action{{
-			RuleID:  r.ID,
-			Kind:    ActionNative,
-			Command: withSudo(r.Sudo, r.NativeCommand),
-			Bytes:   total,
+		return []draft{{
+			action: Action{
+				RuleID:       r.ID,
+				Kind:         ActionNative,
+				Command:      withSudo(r.Sudo, r.NativeCommand),
+				EmptiesTrash: r.EmptiesTrash,
+			},
+			items: refs,
 		}}, nil
 	}
-	var actions []Action
+	var ds []draft
 	var skips []Skip
-	for _, it := range items {
+	for _, ref := range refs {
+		it := itemAt(findings, ref)
 		cmd, err := r.NativeCommand.ExpandItem(it)
 		if err != nil {
 			skips = append(skips, Skip{RuleID: r.ID, ItemKey: it.Key, Reason: err.Error()})
 			continue
 		}
-		actions = append(actions, Action{
-			RuleID:  r.ID,
-			ItemKey: it.Key,
-			Kind:    ActionNative,
-			Command: withSudo(r.Sudo, cmd),
-			Path:    it.Path,
-			Bytes:   it.Bytes,
+		if c, ok := surfaceOnlyConflict(findings, tree, ref); ok {
+			skips = append(skips, Skip{RuleID: r.ID, ItemKey: it.Key, Reason: surfaceOnlyReason(findings, c)})
+			continue
+		}
+		ds = append(ds, draft{
+			action: Action{
+				RuleID:    r.ID,
+				ItemKey:   it.Key,
+				Kind:      ActionNative,
+				Command:   withSudo(r.Sudo, cmd),
+				PreAction: r.PreAction,
+				Path:      it.Path,
+			},
+			items: []itemRef{ref},
 		})
 	}
-	return actions, skips
+	return ds, skips
+}
+
+// resolveNesting applies the containment forest to the drafts. An item
+// with a planned ancestor is deleted by that ancestor's action, so its
+// bytes are not counted again, and a draft left with no item of its
+// own is dropped. Dropping one never uncovers anything: the topmost
+// planned ancestor of a covered item has no planned ancestor itself,
+// so its action always runs. A whole-rule command cannot leave items
+// out, so it still runs while any of its items is uncovered.
+// Trash-emptying actions move to the front.
+func resolveNesting(findings []Finding, tree forest, drafts []draft) ([]Action, []Skip) {
+	owner := map[itemRef]int{}
+	for di, d := range drafts {
+		for _, ref := range d.items {
+			owner[ref] = di
+		}
+	}
+	bytes := make([]int64, len(drafts))
+	kept := make([]bool, len(drafts))
+	for di, d := range drafts {
+		for _, ref := range d.items {
+			if !hasPlannedAncestor(tree, owner, ref) {
+				kept[di] = true
+				bytes[di] += itemAt(findings, ref).Bytes
+			}
+		}
+	}
+	var first, rest []Action
+	var skips []Skip
+	for di, d := range drafts {
+		if !kept[di] {
+			cover := runningAncestor(tree, owner, kept, d.items[0])
+			skips = append(skips, Skip{RuleID: d.action.RuleID, ItemKey: d.action.ItemKey,
+				Reason: fmt.Sprintf("inside %s, also selected", refID(findings, cover))})
+			continue
+		}
+		a := d.action
+		a.Bytes = bytes[di]
+		if a.EmptiesTrash {
+			first = append(first, a)
+		} else {
+			rest = append(rest, a)
+		}
+	}
+	return append(first, rest...), skips
+}
+
+func hasPlannedAncestor(tree forest, owner map[itemRef]int, ref itemRef) bool {
+	for _, a := range tree.ancestors(ref) {
+		if _, planned := owner[a]; planned {
+			return true
+		}
+	}
+	return false
+}
+
+// runningAncestor is the nearest ancestor of a covered item whose
+// action stays in the plan. The topmost planned ancestor always
+// qualifies, so the loop returns before falling through.
+func runningAncestor(tree forest, owner map[itemRef]int, kept []bool, ref itemRef) itemRef {
+	var top itemRef
+	for _, a := range tree.ancestors(ref) {
+		oi, planned := owner[a]
+		if !planned {
+			continue
+		}
+		if kept[oi] {
+			return a
+		}
+		top = a
+	}
+	return top
 }
 
 func withSudo(sudo bool, argv []string) []string {

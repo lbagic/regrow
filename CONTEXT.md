@@ -36,6 +36,21 @@ One concrete thing a rule found: a directory, or a tool-reported entry like a do
 **Regen story**:
 What brings deleted data back and what that costs. Shown next to every finding; the product's core promise.
 
+**Exclusive bytes**:
+An item's size counted as what deleting *it alone* frees — bytes in blobs shared with other items are excluded and annotated in the label instead (ollama models). Sizes never promise space deletion won't reclaim.
+_Avoid_: logical size, reported size
+
+**Usage ledger**:
+Regrow's own persisted record of derived last-used timestamps (docker volumes), merged on every scan so history survives the objects that supplied it (containers). Keyed by identity + creation time to defeat name reuse.
+_Avoid_: cache, database
+
+**Kept tier**:
+Objects a provider deliberately withholds from deletion — in use, keep-listed, over a safety cap, or too recent — surfaced in one surface-only rule with the reason in each row.
+
+**Keep-list**:
+User config that durably protects objects regrow could otherwise offer (docker volumes by name glob or compose project). Exists because docker labels are immutable after creation.
+_Avoid_: whitelist, ignore list
+
 ### Planning
 
 **Plan**:
@@ -50,6 +65,22 @@ _Avoid_: native command (in prose; the YAML field keeps its name)
 
 **Preview command**:
 The exact command the trash mechanism would run for a path, shown on the plan screen before anything executes.
+
+**Default selection**:
+What every face starts from when nothing is named: whole safe rules that found items without an error. An empty selection plans nothing.
+
+**Containment forest**:
+Every scanned item placed under the nearest item, from any rule, whose path contains it (on equal paths the later rule is the child). The planner uses it to plan nested selections once and to refuse deleting anything that holds a surface-only item.
+
+**Frees now / after Trash**:
+The two plan subtotals: steward commands free space as they run; Trash moves free nothing until the Trash is emptied.
+
+**Pre-action**:
+A named executor hook a rule declares (`pre_action:`) that must succeed before each item's steward command runs — the docker volume tarball export. No backup, no deletion.
+_Avoid_: pre-hook, before-script
+
+**Export receipt**:
+The journal record of a pre-delete backup that cannot be renamed back (a volume tarball in staging). Undo reports it and points at the file; recovery is manual.
 
 **Risk class**:
 Architectural handling class of a rule: safe (auto-clean), caution (review), surface-only (never deletable through regrow).
@@ -72,3 +103,15 @@ _Avoid_: audit log
 
 **Golden test**:
 A rule's snapshot test: scan its fixture, plan, compare the normalized command list. Every rule has one.
+
+### Doctor
+
+**Hero bug**:
+A known runaway bug whose signature is a rule's target growing past a size no healthy machine reaches. Declared on the rule (`doctor:` block: healthy line + story); `regrow doctor` flags crossings.
+_Avoid_: health check, diagnostic
+
+**Phantom space**:
+Disk usage Finder counts but your files don't add up to — TM snapshots, sparse VM disks, APFS purgeable. Its own category, surfaced with "why Finder still shows full" copy; mostly surface-only.
+
+**Purgeable**:
+Space macOS has promised it can free on demand; Finder counts it as free, df does not. Measured as the gap between those two numbers.

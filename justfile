@@ -17,6 +17,10 @@ golden:
 run:
     go run ./cmd/regrow scan
 
+# hero-bug scan + phantom-space report (read-only, never plans)
+doctor:
+    go run ./cmd/regrow doctor
+
 # plain outputs for piping/scripting
 scan-json:
     go run ./cmd/regrow scan --json
