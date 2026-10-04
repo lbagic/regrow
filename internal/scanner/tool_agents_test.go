@@ -55,10 +55,17 @@ func writeText(t *testing.T, path, text string) {
 
 // agentFixture lays out a scratch root holding one session per role,
 // plus entries that are not sessions, all last changed three days ago
-// unless the role says otherwise.
-func agentFixture(t *testing.T, now time.Time) (root string) {
+// unless the role says otherwise. Everything, git links included, is
+// written through a symlinked folder; real is the root's real path.
+func agentFixture(t *testing.T, now time.Time) (root, real string) {
 	t.Helper()
-	tmp := t.TempDir()
+	tmp := filepath.Join(t.TempDir(), "via")
+	if err := os.Mkdir(filepath.Join(filepath.Dir(tmp), "real"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("real", tmp); err != nil {
+		t.Fatal(err)
+	}
 	root = filepath.Join(tmp, "claude-1000")
 	repo := filepath.Join(tmp, "repo", ".git", "worktrees", "wt")
 	if err := os.MkdirAll(repo, 0o755); err != nil {
@@ -96,12 +103,16 @@ func agentFixture(t *testing.T, now time.Time) (root string) {
 	if err := os.Chtimes(filepath.Join(other, sidWriting, "tasks", "job.output"), recent, recent); err != nil {
 		t.Fatal(err)
 	}
-	return root
+	real, err := filepath.EvalSymlinks(root)
+	if err != nil || real == root {
+		t.Fatalf("fixture root must be reached through a symlink: %q, %v", real, err)
+	}
+	return root, real
 }
 
 func TestAgentSessionsSplit(t *testing.T) {
 	now := time.Now()
-	root := agentFixture(t, now)
+	root, real := agentFixture(t, now)
 	runningCalls := 0
 	transcripts := map[string]time.Time{
 		"-Users-dev-proj/" + sidChatting: now.Add(-2 * time.Hour),
@@ -145,10 +156,12 @@ func TestAgentSessionsSplit(t *testing.T) {
 	if ids := slices.Sorted(maps.Keys(gotEnded)); !slices.Equal(ids, []string{sidEnded, sidInnerLinks, sidOrphanWT, sidOldChat}) {
 		t.Errorf("ended sessions = %v", ids)
 	}
-	for _, it := range ended {
-		if filepath.Base(it.Path) != it.Arg || !strings.HasPrefix(it.Path, root+"/") {
-			t.Errorf("ended item %q: path %q does not name its session dir", it.Arg, it.Path)
+	for _, it := range slices.Concat(ended, kept) {
+		if want := filepath.Join(real, filepath.Base(filepath.Dir(it.Path)), it.Arg); it.Path != want {
+			t.Errorf("item %q: path %q, want its session dir by real path %q", it.Arg, it.Path, want)
 		}
+	}
+	for _, it := range ended {
 		if it.Bytes < 40_000 {
 			t.Errorf("ended item %q measured %d bytes, want its scratch (≥ 40000)", it.Arg, it.Bytes)
 		}
@@ -183,7 +196,7 @@ func TestAgentSessionsSplit(t *testing.T) {
 
 func TestAgentSessionsUnknownLivenessOffersNothing(t *testing.T) {
 	now := time.Now()
-	root := agentFixture(t, now)
+	root, _ := agentFixture(t, now)
 	a := &agentSessions{
 		Root:     root,
 		Running:  func(context.Context) (map[string]bool, error) { return nil, errors.New("ps failed") },

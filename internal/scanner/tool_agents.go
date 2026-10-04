@@ -104,6 +104,13 @@ func (a *agentSessions) list(ctx context.Context) (ended, kept []engine.Item, er
 	if root == "" || !w.isDir(ctx, root) {
 		return nil, nil, nil
 	}
+	// Items carry the real path: git reports worktrees by real path,
+	// and the containment forest compares paths as written.
+	given := root
+	root, err = bounded(ctx, w, given, func() (string, error) { return filepath.EvalSymlinks(given) })
+	if err != nil {
+		return nil, nil, fmt.Errorf("resolve %s: %w", given, err)
+	}
 	sessions, partial, err := listSessions(ctx, w, root)
 	if err != nil {
 		return nil, nil, err
@@ -267,9 +274,9 @@ func linkedOutside(ctx context.Context, w *walker, session string, links gitLink
 }
 
 // crossesOut reports whether the link file points outside the session
-// at something that exists. The target is the file's first line, after
-// prefix; relative targets resolve against the file's folder. A file
-// without a target is not a link.
+// at something that exists, comparing real paths. The target is the
+// file's first line, after prefix; relative targets resolve against the
+// file's folder. A file without a target is not a link.
 func crossesOut(ctx context.Context, w *walker, session, file, prefix string) bool {
 	data, err := bounded(ctx, w, file, func() ([]byte, error) {
 		f, err := os.Open(file)
@@ -291,11 +298,11 @@ func crossesOut(ctx context.Context, w *walker, session, file, prefix string) bo
 	if !filepath.IsAbs(target) {
 		target = filepath.Join(filepath.Dir(file), target)
 	}
-	if strings.HasPrefix(filepath.Clean(target), session+string(filepath.Separator)) {
-		return false
+	real, err := bounded(ctx, w, target, func() (string, error) { return filepath.EvalSymlinks(target) })
+	if err != nil {
+		return !absent(err)
 	}
-	_, err = w.stat(ctx, target)
-	return err == nil || !absent(err)
+	return !strings.HasPrefix(real, session+string(filepath.Separator))
 }
 
 func relTo(base, path string) string {
