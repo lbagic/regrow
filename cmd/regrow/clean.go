@@ -41,7 +41,9 @@ func runClean(host engine.Host, catalog []engine.Rule, ids []string, yes bool) e
 			strings.Join(plan.Unmatched, ", "), hint)
 	}
 	if len(plan.Actions) == 0 {
-		fmt.Println("Nothing to clean: no selected rule found anything.")
+		for _, line := range nothingToClean(plan) {
+			fmt.Println(line)
+		}
 		return nil
 	}
 
@@ -121,12 +123,49 @@ func executePlan(host engine.Host, plan engine.Plan) error {
 		return err
 	}
 
-	fmt.Printf("\nDone: %d ok, %d failed. Freed now: %s. In the Trash: %s, freed once it is emptied. Run %s — `regrow undo` restores Trash moves.\n",
-		res.Done, res.Failed, tui.HumanBytes(res.Bytes-res.TrashBytes), tui.HumanBytes(res.TrashBytes), res.RunID)
-	for _, f := range res.Failures {
-		fmt.Println("  failed:", f)
+	fmt.Println()
+	for _, line := range runSummary(res) {
+		fmt.Println(line)
 	}
 	return nil
+}
+
+// nothingToClean explains an empty plan: refusals and skips are why a
+// named rule did nothing, so they are never hidden.
+func nothingToClean(plan engine.Plan) []string {
+	if len(plan.Skipped) == 0 {
+		return []string{"Nothing to clean: no selected rule found anything."}
+	}
+	lines := []string{"Nothing to clean: everything selected was skipped."}
+	for _, s := range plan.Skipped {
+		id := s.RuleID
+		if s.ItemKey != "" {
+			id = engine.ItemID(s.RuleID, s.ItemKey)
+		}
+		lines = append(lines, fmt.Sprintf("  [skip] %-22s %s", id, s.Reason))
+	}
+	return lines
+}
+
+// runSummary reports an executed run by where the space went: freed,
+// in the Trash, or in regrow staging (Finder unavailable), which
+// emptying the Trash never frees.
+func runSummary(res executor.Result) []string {
+	lines := []string{
+		fmt.Sprintf("Done: %d ok, %d failed. Run %s.", res.Done, res.Failed, res.RunID),
+		fmt.Sprintf("  Freed now          %10s", tui.HumanBytes(res.Bytes-res.TrashBytes-res.StagedBytes)),
+		fmt.Sprintf("  In the Trash       %10s  freed once it is emptied; `regrow undo` restores", tui.HumanBytes(res.TrashBytes)),
+	}
+	if res.StagedBytes > 0 {
+		lines = append(lines, fmt.Sprintf("  In regrow staging  %10s  Finder was unavailable; emptying the Trash does not free it; `regrow undo` restores", tui.HumanBytes(res.StagedBytes)))
+	}
+	for _, f := range res.Failures {
+		lines = append(lines, "  failed: "+f)
+	}
+	for _, s := range res.Skipped {
+		lines = append(lines, "  skipped: "+s)
+	}
+	return lines
 }
 
 // runUndo restores the newest run that still has something to restore,

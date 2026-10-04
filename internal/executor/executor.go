@@ -61,10 +61,17 @@ type Result struct {
 	Done   int
 	Failed int
 	Bytes  int64 // reclaimed by successful actions
-	// TrashBytes is the part of Bytes moved to the Trash: it frees
-	// nothing until the Trash is emptied.
+	// TrashBytes is the part of Bytes Finder moved to the Trash: it
+	// frees nothing until the Trash is emptied.
 	TrashBytes int64
-	Failures   []string
+	// StagedBytes is the part of Bytes renamed into regrow's staging
+	// dir because Finder was unavailable: emptying the Trash never
+	// frees it.
+	StagedBytes int64
+	Failures    []string
+	// Skipped lists actions never attempted, with why. They are not
+	// journaled: nothing ran.
+	Skipped []string
 }
 
 // NewRunID mints a journal run id: sortable timestamp + entropy so
@@ -91,9 +98,14 @@ func (e *Executor) Execute(ctx context.Context, plan engine.Plan) (Result, error
 	if res.RunID == "" {
 		res.RunID = NewRunID(now())
 	}
+	trashUnsafe := false
 	for seq, a := range plan.Actions {
 		if ctx.Err() != nil {
 			return res, ctx.Err()
+		}
+		if trashUnsafe && a.Kind == engine.ActionTrash {
+			res.Skipped = append(res.Skipped, fmt.Sprintf("%s: emptying the Trash failed, and Finder may still be emptying it", actionID(a)))
+			continue
 		}
 		entry := oplog.Entry{
 			Time: now(), Run: res.RunID, Seq: seq + 1, Event: oplog.EventStart,
@@ -134,11 +146,19 @@ func (e *Executor) Execute(ctx context.Context, plan engine.Plan) (Result, error
 			after.Error = actErr.Error()
 			res.Failed++
 			res.Failures = append(res.Failures, fmt.Sprintf("%s: %v", a.RuleID, actErr))
+			if a.EmptiesTrash {
+				trashUnsafe = true
+			}
 		} else {
 			res.Done++
 			res.Bytes += a.Bytes
-			if a.Kind == engine.ActionTrash {
-				res.TrashBytes += a.Bytes
+			if a.Kind == engine.ActionTrash && receipt != nil {
+				switch receipt.Method {
+				case trash.MethodFinder:
+					res.TrashBytes += a.Bytes
+				case trash.MethodStaging:
+					res.StagedBytes += a.Bytes
+				}
 			}
 		}
 		if err := e.Log.Append(after); err != nil {
@@ -146,6 +166,13 @@ func (e *Executor) Execute(ctx context.Context, plan engine.Plan) (Result, error
 		}
 	}
 	return res, nil
+}
+
+func actionID(a engine.Action) string {
+	if a.ItemKey == "" {
+		return a.RuleID
+	}
+	return engine.ItemID(a.RuleID, a.ItemKey)
 }
 
 // runPreAction runs the action's pre-action hook, if it names one.

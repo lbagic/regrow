@@ -60,7 +60,7 @@ func TestExecuteJournalsBeforeActing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Done != 2 || res.Failed != 0 || res.Bytes != 300 || res.TrashBytes != 100 {
+	if res.Done != 2 || res.Failed != 0 || res.Bytes != 300 {
 		t.Fatalf("result wrong: %+v", res)
 	}
 	// start(1), done(1), start(2), done(2) — start always precedes its action's outcome line.
@@ -102,7 +102,7 @@ func TestExecuteContinuesPastFailures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Done != 1 || res.Failed != 1 || res.Bytes != 200 || res.TrashBytes != 0 {
+	if res.Done != 1 || res.Failed != 1 || res.Bytes != 200 || res.TrashBytes+res.StagedBytes != 0 {
 		t.Fatalf("one failure must not abort the run: %+v", res)
 	}
 	if log.entries[1].Event != oplog.EventFail || !strings.Contains(log.entries[1].Error, "vanished") {
@@ -304,4 +304,81 @@ func writeFile(path, content string) error {
 func exists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+func TestExecuteSplitsTrashFromStaging(t *testing.T) {
+	tests := []struct {
+		name               string
+		finder             func(context.Context, string) (string, error)
+		wantTrash, wantStg int64
+	}{
+		{"Finder moves to the Trash", func(_ context.Context, path string) (string, error) {
+			to := filepath.Join(filepath.Dir(path), ".Trash-fixture")
+			return to, os.Rename(path, to)
+		}, 100, 0},
+		{"Finder unavailable stages", func(context.Context, string) (string, error) {
+			return "", errors.New("no Finder over ssh")
+		}, 0, 100},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			target := filepath.Join(home, "proj", "cache")
+			if err := writeFile(filepath.Join(target, "a.bin"), "x"); err != nil {
+				t.Fatal(err)
+			}
+			e := &Executor{
+				Trash: &trash.Mover{Home: home, StagingDir: t.TempDir(), RunFinder: tt.finder},
+				Log:   &memLog{}, Now: fixedNow,
+				RunNative: func(context.Context, []string) error { t.Fatal("no native action planned"); return nil },
+			}
+			plan := engine.Plan{Actions: []engine.Action{
+				{RuleID: "cache", Kind: engine.ActionTrash, Path: target, Bytes: 100, Command: trash.PreviewCommand(target)},
+			}}
+			res, err := e.Execute(context.Background(), plan)
+			if err != nil || res.Done != 1 {
+				t.Fatalf("execute: %+v, %v", res, err)
+			}
+			if res.TrashBytes != tt.wantTrash || res.StagedBytes != tt.wantStg {
+				t.Fatalf("TrashBytes %d StagedBytes %d, want %d %d", res.TrashBytes, res.StagedBytes, tt.wantTrash, tt.wantStg)
+			}
+		})
+	}
+}
+
+func TestExecuteSkipsTrashMovesAfterFailedEmpty(t *testing.T) {
+	log := &memLog{}
+	mover := &fakeMover{}
+	var ran []string
+	e := &Executor{Trash: mover, Log: log, Now: fixedNow,
+		RunNative: func(_ context.Context, argv []string) error {
+			ran = append(ran, argv[0])
+			if argv[0] == "empty-trash" {
+				return errors.New("AppleEvent timed out")
+			}
+			return nil
+		}}
+	plan := engine.Plan{Actions: []engine.Action{
+		{RuleID: "trash-empty", Kind: engine.ActionNative, Command: []string{"empty-trash"}, Bytes: 10, EmptiesTrash: true},
+		{RuleID: "npm-cache", Kind: engine.ActionTrash, Path: "/u/.npm", Bytes: 100, Command: trash.PreviewCommand("/u/.npm")},
+		{RuleID: "go-build-cache", Kind: engine.ActionNative, Command: []string{"go", "clean", "-cache"}, Bytes: 200},
+	}}
+	res, err := e.Execute(context.Background(), plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mover.moved) != 0 {
+		t.Fatalf("no Trash move may run after a failed empty, moved %v", mover.moved)
+	}
+	if want := []string{"empty-trash", "go"}; strings.Join(ran, ",") != strings.Join(want, ",") {
+		t.Fatalf("native commands run = %v, want %v (steward commands do not touch the Trash)", ran, want)
+	}
+	if res.Failed != 1 || res.Done != 1 || len(res.Skipped) != 1 || !strings.HasPrefix(res.Skipped[0], "npm-cache: emptying the Trash failed") {
+		t.Fatalf("result = %+v", res)
+	}
+	for _, en := range log.entries {
+		if en.RuleID == "npm-cache" {
+			t.Fatalf("a skipped action must not be journaled: %+v", en)
+		}
+	}
 }
