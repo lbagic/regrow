@@ -1,6 +1,6 @@
 # Direction after the blind reviews
 
-**Status:** proposed — D1 decided on evidence; D2–D4 await the owner. Prototype on branch `proto/web-serve`.
+**Status:** D1, D2, D5, D6 decided (2026-10-04); D3 decided with the go-build policy below pending a go-ahead; D4 proposed. Prototype on branch `proto/web-serve`.
 
 Four blind agents looked at this machine and at regrow without reading the repo's code, docs or rule catalog: a disk-usage inspector, a residue/growth inspector, a product reviewer using the binary (dry-run only), and a first-principles product designer. Their raw reports name private projects and paths, so they live outside the repo (`~/.claude/handoffs/regrow-blind-review-2026-10-04/`). This doc keeps the generic findings and the decisions.
 
@@ -45,22 +45,29 @@ Bugs, each reproduced by the reviewer:
 **D1 — No rewrite. Keep Go.** (decided, evidence)
 The scan is bound by kernel file-metadata work, not the language: C `du` 9.6 s vs sequential Go 11.6 s on the same 411k-entry tree; the system/user CPU split of a full scan is 35 s / 6 s. Parallel walking within a tree is the lever: 4 workers → 3.2 s (8–32 no better). `getattrlistbulk` with 8 threads measured 1.9–2.7 s on that tree, a further ~25% — worth having later, not a reason to switch languages. One walk instantiates ~379k vnodes, more than the kernel keeps cached, which is why a second scan is no faster.
 
-**D2 — The face becomes a local web UI served by the Go binary; the TUI stops being primary.** (proposed)
-The prototype shows it works: first rows render 10 ms after open, the full scan streams in 17–20 s, totals stay honest by subtracting nested rows, and the loopback hardening (exact Host, per-run token, same-origin POST) rejects what it should. Later the same UI goes inside a small menubar shell (SwiftUI + WKWebView, or Tauri) that holds Full Disk Access as a stable .app identity and can send alerts — a browser tab cannot. Electron is ruled out on footprint. Trap to remember: a bare binary under launchd loses its TCC grant on every rebuild (ad-hoc signature changes).
+**D2 — Straight to a menubar app; no browser-tab stage.** (decided by the owner)
+A SwiftUI `MenuBarExtra` shell owns the long-running loop (headroom watch, alerts, autopilot) and holds Full Disk Access as a stable .app identity; the Go binary ships inside the bundle as the engine and streams JSON lines over stdio (the prototype's SSE events map 1:1). Rich views can reuse the prototype page in a `WKWebView`. Buildable with the Command Line Tools alone (Swift 6.1, SwiftUI/AppKit/WebKit/ServiceManagement in the SDK) — no Xcode, which would cost ~40 GiB to install on a disk-starved machine. Signing: a self-signed code-signing certificate, so the TCC grant survives rebuilds (none exists yet). Electron ruled out on footprint; the localhost server stays a debugging aid at most.
 
-**D3 — The product loop shifts from "cleaner you run" to "never run out".** (proposed)
+**D3 — The product loop shifts from "cleaner you run" to "never run out".** (decided in principle; go-build policy below awaits a go-ahead)
 Watch headroom (free space and swap) and forecast days-to-full; alert before the crunch. Autopilot only the self-regenerating classes under explicit per-rule policy (e.g. go-build entries untouched > 48 h, scratch dirs of dead agent sessions), opt-in after the owner has run the rule by hand once. Everything else lands in a short review queue where every byte has an owner (app, repo/worktree, toolchain, container engine, OS, user) and residue is "owner gone or done".
+
+Go build cache policy (reasoned 2026-10-04): Go itself deletes entries unused for 5 days (`trimLimit`, checked daily; use refreshes mtime at most hourly), so any age threshold ≥ 5 days — "a week" included — reclaims nothing. Measured age split of the 55 GiB: < 24 h 0.1, 24–48 h 13.4, 48–72 h 13.4, 3–5 d 28.1. Policy: never touch entries used in the last 48 h (active worktrees refresh theirs on every build, so only idle ones pay a one-off main-module recompile); trigger only on low headroom (free < 50 GiB or days-to-full < 3), deleting oldest-first until free space recovers or the cache is ≤ 15 GiB; skip while a `go` build is running. Go has no "trim older than" command, so this mirrors Go's own trim (direct delete, no Trash) — an explicit exception to trash-not-rm for tool-owned, purely regenerable caches, oplog-recorded with bytes. `-trimpath` attacks the cause: worktrees at the same code share entries (two-worktree test: +13 cache files without it, +4 with it).
 
 **D4 — Coverage priority follows the table above, not the old catalog order.** (proposed)
 New coverage, highest value first: worktrees (merged by ancestry or PR + clean + idle; delete only ignored build dirs when unmerged), agent scratch dirs with no live session, project build output in stale projects (`.next`, `dist`, `.turbo`, `.venv`, `target`), unused Docker images, toolchains nothing references (Node versions — guard versions hard-coded in LaunchAgents — Android NDKs, simulator runtimes without Xcode), app leftovers by bundle id (archive, don't delete), installers in Downloads, npx cache, stale macOS installer data. Plus a "fix the cause" channel: `-trimpath` for worktree-heavy Go repos, aerial shuffle off, Docker build-cache limit.
+
+**D5 — Personal tool first.** (decided by the owner) Optimize for this machine's crunch; launch work (PLAN.md Prompt I, M2 publish, notarization, brew) is parked.
+
+**D6 — Grant Full Disk Access** (decided by the owner): to the terminal now, to the menubar app once it exists.
 
 ## Plan
 
 1. **Stop the bleeding (owner, manual, now).** Kill runaway processes; `go clean -cache` (55 GiB, will regrow); try `GOFLAGS=-trimpath` in the worktree-heavy repos and watch whether worktrees start sharing cache; switch the wallpaper/screensaver off aerial shuffle; prune merged worktrees; reboot clears agent scratch. Expected: roughly +80–100 GiB of headroom on top of whatever the runaway's swap gives back.
 2. **Correctness and trust** (fix B1–B8). Merge the open probe, the parallel walker and `ScanStream` from the prototype; dedupe nested paths in totals and show macOS-managed space outside them; explicit "unreadable — grant Full Disk Access" state; last-used from newest file mtime; Empty Trash always last; split the total into *frees now / after Trash is emptied / macOS-managed / regrows within N days*.
-3. **Web UI as primary** (`regrow ui`): the prototype hardened, plus the execute path behind the existing double confirm and the executor. Retire or freeze the TUI.
-4. **Coverage** per D4, each new rule with its golden fixture.
-5. **Watch and autopilot**: a launchd agent sampling free space and swap, days-to-full forecast, notifications; opt-in autopilot rules. Then the menubar shell.
+3. **Engine protocol**: `regrow engine` speaking JSON lines over stdio — scan stream, plan, execute — the contract the menubar shell consumes.
+4. **Menubar shell**: free space, swap and days-to-full at a glance; scan window; execute behind the double confirm; launch at login; self-signed so Full Disk Access sticks. TUI frozen.
+5. **Watch and autopilot** inside the shell: headroom sampling, alerts, the go-build policy above, agent scratch of dead sessions.
+6. **Coverage** per D4, each new rule with its golden fixture.
 
 Performance work rides along with 2–3: walk each subtree once (container rules subtract children instead of re-walking them), stream cheapest-first, later `getattrlistbulk` and a persistent index refreshed by FSEvents.
 
@@ -68,9 +75,9 @@ Performance work rides along with 2–3: walk each subtree once (container rules
 
 Question: does a localhost web UI feel better than the TUI and is it fast enough? Answer: yes on speed and information density — rows stream in as rules finish instead of a 28 s spinner, and the honest per-row "unique" size makes double counting visible. It deliberately has no execute endpoint, so the execute flow in a browser is still unproven. Run it with `just proto` (or `go run ./cmd/regrow proto-serve`).
 
-## Open questions for the owner
+## Owner answers (2026-10-04)
 
-1. D2: local web UI now and a menubar shell later — or go straight to the menubar app?
-2. D3: is regrow allowed to trim go-build entries untouched for 48 h without asking each time?
-3. Scope: is regrow a personal tool first (fix this machine's crunch) or still the launch product of PLAN.md Phase 4? The answer reorders everything after step 2.
-4. Grant Full Disk Access to the terminal so scans can see Trash, Mail, Messages and the Spotlight index (~20 GiB currently invisible)?
+1. Straight to menubar → D2.
+2. Autopilot go-build trim: yes in principle, "reason about it first; is a week better?" → policy under D3 (a week is a no-op); awaiting go-ahead.
+3. Personal first → D5.
+4. Full Disk Access: yes → D6.
