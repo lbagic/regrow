@@ -20,7 +20,7 @@ Each phase = one or a few Claude sessions with a ready prompt. Milestones (M1–
 - [x] P3-H doctor + phantom space (2026-07-13): `regrow doctor` (hero-bug `doctor:` rule metadata + phantom-space category), new rules claude-code-cache / playwright-cache / apfs-purgeable (JXA Finder-vs-df probe), tm-snapshots + docker-vm-disk moved to phantom-space, docker-vm-disk real-vs-sparse label; docker rules graduated from beta — [design doc](plans/2026-07-13-doctor-phantom.md). **M3 check, honest status:** this machine is healthy — no hero flag fired (flagged rendering verified via lowered threshold); phantom section explains 60.8 GiB (25.3 purgeable + 35.5 real of 1 TiB sparse Docker VM). "Dramatic on ≥1 real machine" still wants a machine with a live runaway.
 - [ ] P4-I launch kit → **M4 public**
 
-**Now:** Prompt I (launch kit → M4). Still pending manual: publish v0.1 (create `lbagic/homebrew-tap` repo, add `TAP_GITHUB_TOKEN` secret, `git tag v0.1.0 && git push --tags`); buy regrow.sh; revisit the `regrow` name before tagging (P0-A said revisit before M2); run `regrow doctor` on a second real machine for the M3 screenshot.
+**Now:** direction reset after blind reviews — [direction doc](plans/2026-10-04-direction.md): fix scan hang/double counting (B1–B8), then local web UI as primary (prototype on `proto/web-serve`), coverage for worktrees/agent scratch/residue, then watch + autopilot. Owner to answer the doc's 4 open questions; Prompt I (launch kit) parked until scope (Q3) is settled.
 
 ```mermaid
 flowchart TD
