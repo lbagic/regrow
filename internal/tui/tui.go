@@ -80,6 +80,12 @@ type row struct {
 
 type scanDoneMsg struct{ findings []engine.Finding }
 
+// selectionSummary is the footer's view of the current selection.
+type selectionSummary struct {
+	items, skipped int
+	bytes          int64
+}
+
 type tickMsg time.Time
 
 func tick() tea.Cmd {
@@ -110,7 +116,10 @@ type Model struct {
 	// expanded tracks which rules show their per-item rows. Collapsed
 	// per-rule rows are the default UX; expansion is opt-in (G0).
 	expanded map[string]bool
-	plan     engine.Plan
+	// sel summarizes the selection for the footer, recomputed only
+	// when the selection changes.
+	sel  selectionSummary
+	plan engine.Plan
 	// confirmed means the user walked plan → x → confirm → y. The
 	// caller reads it off the final model and executes the plan after
 	// the alt-screen is gone — the TUI itself never executes.
@@ -175,7 +184,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.findings[i].FillItemKeys(m.host.Home)
 		}
 		m.ledger = engine.Account(m.findings)
-		m.rows = buildRows(m.findings, m.expanded, m.ledger.Exclusive)
+		m.rows = buildRows(m.findings, m.expanded, m.ledger)
 		m.cursor = firstCursorable(m.rows)
 		def := engine.DefaultSelection(m.findings)
 		for _, f := range m.findings {
@@ -183,6 +192,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.selectAllItems(f)
 			}
 		}
+		m.refreshSelection()
 		m.state = stateList
 		return m, nil
 
@@ -277,6 +287,7 @@ func (m Model) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				} else {
 					m.selected[id] = true
 				}
+				m.refreshSelection()
 			}
 			return m, nil
 		}
@@ -288,6 +299,7 @@ func (m Model) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		} else {
 			m.selectAllItems(*f)
 		}
+		m.refreshSelection()
 		return m, nil
 
 	case "enter":
@@ -323,6 +335,23 @@ func (m Model) currentItem() *engine.Item {
 	return &m.findings[r.finding].Items[r.item]
 }
 
+// refreshSelection recomputes the footer's selection summary; call it
+// after every change to m.selected. The bytes are the plan's union
+// (a selected item inside another counts once), and skipped counts the
+// plan's skips, so the figure and the count describe the same plan.
+func (m *Model) refreshSelection() {
+	var n int
+	for _, f := range m.findings {
+		for _, it := range f.Items {
+			if m.selected[engine.ItemID(f.Rule.ID, it.Key)] {
+				n++
+			}
+		}
+	}
+	plan := engine.BuildPlan(m.host, m.findings, m.selected)
+	m.sel = selectionSummary{items: n, bytes: plan.TotalBytes(), skipped: len(plan.Skipped)}
+}
+
 func (m *Model) selectAllItems(f engine.Finding) {
 	for _, it := range f.Items {
 		m.selected[engine.ItemID(f.Rule.ID, it.Key)] = true
@@ -343,7 +372,7 @@ func (m Model) selectionCount(f engine.Finding) (selected, total int) {
 // cursor on the toggled rule's row (collapsing from an item row must
 // not strand the cursor).
 func (m *Model) rebuildRows(ruleID string) {
-	m.rows = buildRows(m.findings, m.expanded, m.ledger.Exclusive)
+	m.rows = buildRows(m.findings, m.expanded, m.ledger)
 	for i, r := range m.rows {
 		if r.kind == rowFinding && m.findings[r.finding].Rule.ID == ruleID {
 			m.cursor = i
@@ -364,7 +393,7 @@ func toggleable(f engine.Finding) bool {
 // by the bytes only they hold (exclusive, so a container rule does not
 // lift its category twice), findings by their whole size. Expanded
 // findings contribute item rows, size-ranked, key as tiebreak.
-func buildRows(findings []engine.Finding, expanded map[string]bool, exclusive map[string]int64) []row {
+func buildRows(findings []engine.Finding, expanded map[string]bool, ledger engine.Ledger) []row {
 	byCategory := map[string][]int{}
 	for i, f := range findings {
 		if len(f.Items) == 0 && f.Err == "" {
@@ -376,9 +405,7 @@ func buildRows(findings []engine.Finding, expanded map[string]bool, exclusive ma
 	totals := map[string]int64{}
 	for c, idxs := range byCategory {
 		for _, i := range idxs {
-			for _, it := range findings[i].Items {
-				totals[c] += exclusive[engine.ItemID(findings[i].Rule.ID, it.Key)]
-			}
+			totals[c] += ledger.Share(findings[i])
 		}
 	}
 	categories := make([]string, 0, len(byCategory))
@@ -649,24 +676,17 @@ func (m Model) listFooter() string {
 		}
 	}
 
-	var selCount int
-	for _, f := range m.findings {
-		for _, it := range f.Items {
-			if m.selected[engine.ItemID(f.Rule.ID, it.Key)] {
-				selCount++
-			}
-		}
+	sel := fmt.Sprintf("  selected %d · plan ~%s", m.sel.items, HumanBytes(m.sel.bytes))
+	if m.sel.skipped > 0 {
+		sel += fmt.Sprintf(" · %d skipped", m.sel.skipped)
 	}
-	// The plan's total is the union of the selection: a selected item
-	// inside another selected item counts once.
-	selBytes := engine.BuildPlan(m.host, m.findings, m.selected).TotalBytes()
 	buckets := ledgerLines(m.ledger.Totals)
 
 	return styleFaint.Render(strings.Repeat("─", min(m.width, 72))) + "\n" +
 		styleFaint.Render(truncate("  "+note, m.width)) + "\n" +
 		styleFaint.Render(truncate("  "+buckets[0], m.width)) + "\n" +
 		styleFaint.Render(truncate("  "+buckets[1], m.width)) + "\n" +
-		fmt.Sprintf("  selected %d · ~%s   ", selCount, HumanBytes(selBytes)) +
+		sel + "   " +
 		styleFaint.Render("space toggle · →← expand · enter plan · ↑↓ move · q quit") + "\n"
 }
 

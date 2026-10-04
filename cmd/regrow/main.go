@@ -200,13 +200,6 @@ func printFindings(findings []engine.Finding, asJSON bool) error {
 // totals at the end count every byte once, in the bucket of the
 // innermost row that holds it.
 func writeFindings(w io.Writer, findings []engine.Finding, ledger engine.Ledger) {
-	own := func(f engine.Finding) int64 {
-		var n int64
-		for _, it := range f.Items {
-			n += ledger.Exclusive[engine.ItemID(f.Rule.ID, it.Key)]
-		}
-		return n
-	}
 	byCategory := map[string][]engine.Finding{}
 	for _, f := range findings {
 		byCategory[f.Rule.Category] = append(byCategory[f.Rule.Category], f)
@@ -218,7 +211,7 @@ func writeFindings(w io.Writer, findings []engine.Finding, ledger engine.Ledger)
 	categoryOwn := func(c string) int64 {
 		var n int64
 		for _, f := range byCategory[c] {
-			n += own(f)
+			n += ledger.Share(f)
 		}
 		return n
 	}

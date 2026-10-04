@@ -83,3 +83,19 @@ func TestAccountNeverNegative(t *testing.T) {
 		t.Errorf("totals = %+v, want %+v", led.Totals, want)
 	}
 }
+
+// Items that share an ID share one Exclusive entry; a finding's share
+// counts that entry once, not once per item.
+func TestLedgerShareCountsASharedIDOnce(t *testing.T) {
+	f := Finding{Rule: trashRule("twice"), Items: []Item{
+		{Path: "/Users/t/x", Key: "~/x", Bytes: 10},
+		{Path: "/Users/t/x", Key: "~/x", Bytes: 10},
+	}}
+	led := Account([]Finding{f})
+	if got := led.Exclusive["twice/~/x"]; got != 10 {
+		t.Fatalf("exclusive = %d, want 10", got)
+	}
+	if got := led.Share(f); got != 10 {
+		t.Errorf("share = %d, want 10: one target, counted once", got)
+	}
+}

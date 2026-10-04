@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 )
 
@@ -36,10 +37,11 @@ const (
 	// APFS: 4 workers cut a 411k-entry walk from 11.6 s to 3.2 s; 8–32
 	// were no faster, the kernel's metadata path is the ceiling.
 	walkWorkers = 4
-	// readBatch is how many entries a worker reads per ReadDir call;
-	// each batch counts as progress, so a huge healthy directory is
-	// never mistaken for a blocked one.
-	readBatch = 256
+	// readBatch is how many entries a worker reads, and visits, between
+	// two progress marks: a huge healthy directory, or a visit that
+	// stats or reads every entry, keeps making progress and is never
+	// mistaken for a blocked one.
+	readBatch = 32
 	// maxWriteOffs bounds the replacement workers one walk may start
 	// for written-off directories; past it the walk ends partial.
 	maxWriteOffs = 16
@@ -187,6 +189,14 @@ func bounded[T any](ctx context.Context, w *walker, path string, fn func() (T, e
 			mu.Unlock()
 			return zero, errBlocked
 		case <-ctx.Done():
+			// A call still in flight may be stuck: block its path
+			// until it answers, so a rescan does not join it.
+			mu.Lock()
+			if !answered {
+				writtenOff = true
+				w.blocked.add(path)
+			}
+			mu.Unlock()
 			return zero, ctx.Err()
 		}
 	}
@@ -205,22 +215,38 @@ func (w *walker) isDir(ctx context.Context, path string) bool {
 	return err == nil && fi.IsDir()
 }
 
-// readDir lists dir through the walker's opener.
-func (w *walker) readDir(ctx context.Context, dir string) ([]fs.DirEntry, error) {
-	return bounded(ctx, w, dir, func() ([]fs.DirEntry, error) {
-		h, err := w.open(dir)
-		if err != nil {
-			return nil, err
+// list reads one directory's entries through the walk machinery:
+// batched, under the watchdog, cancellable. partial means the
+// directory refused, blocked or failed mid-listing; err is ctx's.
+func (w *walker) list(ctx context.Context, dir string) (entries []fs.DirEntry, partial bool, err error) {
+	var mu sync.Mutex
+	closed := false
+	var out []fs.DirEntry
+	partial, err = w.walk(ctx, dir, func(_ string, batch []fs.DirEntry) ([]string, bool) {
+		mu.Lock()
+		defer mu.Unlock()
+		if !closed {
+			out = append(out, batch...)
 		}
-		defer func() { _ = h.Close() }()
-		return h.ReadDir(-1)
+		return nil, true
 	})
+	mu.Lock()
+	defer mu.Unlock()
+	closed = true
+	return out, partial, err
+}
+
+// absent reports an error that means nothing is at the path: it does
+// not exist, or a component of it is a file, not a directory.
+func absent(err error) bool {
+	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR)
 }
 
 // unreadable reports an error that leaves a measurement incomplete: a
-// refusal or a block, as opposed to a path that vanished mid-scan.
+// refusal or a block, as opposed to a path that is absent or vanished
+// mid-scan.
 func unreadable(err error) bool {
-	return err != nil && !errors.Is(err, fs.ErrNotExist)
+	return err != nil && !absent(err)
 }
 
 // visitFunc handles one batch of a directory's entries and returns the
@@ -254,6 +280,15 @@ func (w *walker) walk(ctx context.Context, root string, visit visitFunc) (partia
 		case <-ctx.Done():
 			s.mu.Lock()
 			defer s.mu.Unlock()
+			// Directories still in flight may be stuck: block them
+			// until their workers come back, so a rescan does not
+			// join them.
+			for _, sl := range s.slots {
+				if sl.busy && !sl.gone {
+					sl.gone = true
+					s.w.blocked.add(sl.dir)
+				}
+			}
 			s.stop()
 			return true, ctx.Err()
 		case now := <-tick.C:
@@ -389,7 +424,7 @@ func (s *walkState) read(sl *slot, dir string) (subdirs []string, complete bool)
 			return subdirs, complete
 		}
 		if err != nil {
-			return subdirs, false
+			return subdirs, complete && !unreadable(err)
 		}
 	}
 }

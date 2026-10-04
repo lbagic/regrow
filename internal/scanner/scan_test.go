@@ -174,3 +174,59 @@ func TestScanCancelledMarksFindings(t *testing.T) {
 		t.Fatal("a cancelled finding must stay out of the default selection")
 	}
 }
+
+// A tool query that never answers ends at the query deadline with the
+// deadline in Finding.Err, whether it honours its ctx or ignores it
+// (parked on a lock another query holds).
+func TestToolQueryDeadline(t *testing.T) {
+	stuck := make(chan struct{})
+	t.Cleanup(func() { close(stuck) })
+	queries := map[string]ToolQuery{
+		"honours-ctx": func(ctx context.Context) ([]engine.Item, error) {
+			<-ctx.Done()
+			return nil, nil // a killed CLI often reads as "not available"
+		},
+		"ignores-ctx": func(context.Context) ([]engine.Item, error) {
+			<-stuck
+			return []engine.Item{{Label: "late", Bytes: 1}}, nil
+		},
+	}
+	for name := range queries {
+		t.Run(name, func(t *testing.T) {
+			s := &Scanner{Host: engine.Host{OS: "darwin", Home: t.TempDir()}, Queries: queries, fs: testWalker(), queryTimeout: 50 * time.Millisecond}
+			rule := engine.Rule{ID: "tool", Title: "tool", Category: "test", Risk: engine.RiskSafe, ToolQuery: name, NativeCommand: engine.Argv{"tool", "rm", "{arg}"}}
+			done := make(chan engine.Finding, 1)
+			go func() { done <- s.Scan(context.Background(), []engine.Rule{rule})[0] }()
+			select {
+			case f := <-done:
+				if !strings.Contains(f.Err, "no answer within 50ms") || len(f.Items) != 0 {
+					t.Fatalf("finding = %+v, want the deadline in Err and no items", f)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("scan did not return past the query deadline")
+			}
+		})
+	}
+}
+
+func TestToolQueryAnswerInTimeKeepsItems(t *testing.T) {
+	s := &Scanner{Host: engine.Host{OS: "darwin", Home: t.TempDir()}, fs: testWalker(), queryTimeout: time.Second,
+		Queries: map[string]ToolQuery{"q": fixedItems(engine.Item{Label: "img", Arg: "img", Bytes: 7})}}
+	rule := engine.Rule{ID: "tool", Title: "tool", Category: "test", Risk: engine.RiskSafe, ToolQuery: "q", NativeCommand: engine.Argv{"tool", "rm", "{arg}"}}
+	f := s.Scan(context.Background(), []engine.Rule{rule})[0]
+	if f.Err != "" || len(f.Items) != 1 || f.Items[0].Bytes != 7 {
+		t.Fatalf("finding = %+v, want the query's item", f)
+	}
+}
+
+// A path under a regular file (ENOTDIR) is absent, not unreadable: no
+// item, so nothing to plan.
+func TestScanPathUnderAFileIsAbsent(t *testing.T) {
+	home := t.TempDir()
+	writeFile(t, filepath.Join(home, "file"), 10)
+	s := &Scanner{Host: engine.Host{OS: "darwin", Home: home}, fs: testWalker()}
+	f := s.Scan(context.Background(), []engine.Rule{pathRule("under-file", "~/file/cache", "~/file/*.bin")})[0]
+	if f.Err != "" || len(f.Items) != 0 {
+		t.Fatalf("finding = %+v, want no items and no error", f)
+	}
+}

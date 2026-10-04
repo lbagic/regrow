@@ -483,8 +483,16 @@ func TestSelectedEstimateCountsNestedSelectionOnce(t *testing.T) {
 	}
 	m = press(t, m, " ")
 	view := m.View()
-	if !strings.Contains(view, "selected 2 · ~70.0 GiB") {
+	// go-build is skipped as "inside app-caches": both selected, the
+	// outer size counted once, and the skip counted with it.
+	if !strings.Contains(view, "selected 2 · plan ~70.0 GiB · 1 skipped") {
 		t.Fatalf("selecting a folder and a folder inside it must estimate the outer size once, got:\n%s", view)
+	}
+
+	// The summary follows the selection: untick the container again.
+	m = press(t, m, " ")
+	if view := m.View(); !strings.Contains(view, "selected 1 · plan ~55.0 GiB   ") {
+		t.Fatalf("after unticking the container, got:\n%s", view)
 	}
 }
 

@@ -45,6 +45,21 @@ func Account(findings []Finding) Ledger {
 	return led
 }
 
+// Share is the bytes only f's items hold: their exclusive shares, each
+// distinct item ID once (items that share an ID share one entry).
+func (l Ledger) Share(f Finding) int64 {
+	seen := map[string]bool{}
+	var n int64
+	for _, it := range f.Items {
+		id := ItemID(f.Rule.ID, it.Key)
+		if !seen[id] {
+			seen[id] = true
+			n += l.Exclusive[id]
+		}
+	}
+	return n
+}
+
 // add counts n bytes of rule r's items in the bucket the rule implies.
 // Phantom space comes first: macOS manages it whatever command the
 // rule carries.

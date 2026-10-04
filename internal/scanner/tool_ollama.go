@@ -150,7 +150,7 @@ func scanOllamaModels(ctx context.Context, w *walker, manifestsDir string) ([]en
 		items = append(items, engine.Item{Label: label, Arg: m.name, Bytes: exclusive, LastUsed: m.lastUsed})
 	}
 	if partial {
-		items = append(items, unreadableMarker("manifests under "+manifestsDir))
+		items = append(items, unreadableMarker("manifests under "+homeTilde(manifestsDir)))
 	}
 	return items, nil
 }

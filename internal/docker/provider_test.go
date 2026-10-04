@@ -352,3 +352,22 @@ func TestParseDockerTime(t *testing.T) {
 		}
 	}
 }
+
+// A docker CLI killed at the query deadline is not a stopped daemon:
+// every docker rule must report the deadline instead of "not found",
+// including rules that read the memoized snapshot afterwards.
+func TestSnapshotDeadlineIsAnError(t *testing.T) {
+	wedged := func(ctx context.Context, _ ...string) ([]byte, bool, error) {
+		<-ctx.Done()
+		return nil, true, errors.New("signal: killed")
+	}
+	p := testProvider(t, wedged)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	if _, err := p.BuildCache(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("wedged daemon = %v, want the deadline", err)
+	}
+	if _, err := p.ImagesDangling(context.Background()); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("a later rule = %v, want the same deadline, not an empty result", err)
+	}
+}

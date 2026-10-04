@@ -142,3 +142,34 @@ func TestDiscoverFollowsASymlinkedRoot(t *testing.T) {
 		t.Errorf("discover = %v, want %v", got, want)
 	}
 }
+
+// A root inside another, reached through a symlink, keeps the hits
+// that lie deeper than the outer root's depth limit.
+func TestDiscoverInnerRootKeepsItsDeepHits(t *testing.T) {
+	home := t.TempDir()
+	deep := filepath.Join(home, "workspace", "a", "b", "c", "node_modules")
+	touch(t, filepath.Join(deep, "x", "index.js"))
+	if err := os.Symlink(filepath.Join(home, "workspace", "a"), filepath.Join(home, "code")); err != nil {
+		t.Fatal(err)
+	}
+	spec := engine.Discover{Roots: []string{"~/workspace", "~/code"}, Name: "node_modules", MaxDepth: 3}
+	got, _ := discover(context.Background(), testWalker(), engine.Host{OS: "darwin", Home: home}, spec)
+	if want := []string{filepath.Join(home, "code", "b", "c", "node_modules")}; !reflect.DeepEqual(got, want) {
+		t.Errorf("discover = %v, want the hit through the inner root %v", got, want)
+	}
+}
+
+// A home written with a trailing slash must not shift every depth.
+func TestDiscoverDepthWithTrailingSlashRoot(t *testing.T) {
+	home := t.TempDir()
+	touch(t, filepath.Join(home, "a", "b", "target", "CACHEDIR.TAG"))
+	spec := engine.Discover{Roots: []string{"~"}, Name: "target", Markers: []string{"CACHEDIR.TAG"}, MaxDepth: 2}
+	host := engine.Host{OS: "darwin", Home: home + "/"}
+	if got, _ := discover(context.Background(), testWalker(), host, spec); len(got) != 0 {
+		t.Errorf("depth-3 hit found under max_depth 2: %v", got)
+	}
+	spec.MaxDepth = 3
+	if got, _ := discover(context.Background(), testWalker(), host, spec); len(got) != 1 {
+		t.Errorf("depth-3 hit missed under max_depth 3: %v", got)
+	}
+}

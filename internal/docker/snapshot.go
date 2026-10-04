@@ -22,7 +22,10 @@ func realExec(ctx context.Context, args ...string) ([]byte, bool, error) {
 	if _, err := exec.LookPath("docker"); err != nil {
 		return nil, false, nil
 	}
-	out, err := exec.CommandContext(ctx, "docker", args...).Output()
+	cmd := exec.CommandContext(ctx, "docker", args...)
+	// A killed CLI may leave a child holding stdout; stop waiting.
+	cmd.WaitDelay = 5 * time.Second
+	out, err := cmd.Output()
 	return out, true, err
 }
 
@@ -202,6 +205,11 @@ type imageMetaJSON struct {
 // error: a half-visible daemon must not classify volumes as dangling.
 func loadSnapshot(ctx context.Context, run Exec) (*Snapshot, error) {
 	out, found, err := run(ctx, "system", "df", "-v", "--format", "{{json .}}")
+	if ctxErr := ctx.Err(); err != nil && ctxErr != nil {
+		// The query's deadline, not a stopped daemon: every docker
+		// rule must report it rather than "not found".
+		return nil, fmt.Errorf("docker system df: %w", ctxErr)
+	}
 	if !found || err != nil {
 		return nil, nil
 	}

@@ -4,12 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/lbagic/regrow/internal/engine"
@@ -22,7 +22,14 @@ type Scanner struct {
 	Queries map[string]ToolQuery
 	// fs bounds the scan's filesystem calls; nil means defaultWalker.
 	fs *walker
+	// queryTimeout bounds each tool query; 0 means toolQueryTimeout.
+	queryTimeout time.Duration
 }
+
+// toolQueryTimeout bounds one tool query. A wedged Docker VM or
+// CoreSimulatorService leaves its CLI waiting on a socket forever;
+// `docker system df -v` sizes every volume, so the bound is generous.
+const toolQueryTimeout = 2 * time.Minute
 
 // New builds a scanner for the host with the built-in tool queries.
 func New(host engine.Host) *Scanner {
@@ -104,7 +111,7 @@ func (s *Scanner) scanRule(ctx context.Context, r engine.Rule) engine.Finding {
 		query, known := s.Queries[r.ToolQuery]
 		if !known {
 			f.Err = joinErr(f.Err, fmt.Errorf("unknown tool query %q", r.ToolQuery))
-		} else if items, err := query(ctx); err != nil {
+		} else if items, err := s.runQuery(ctx, query); err != nil {
 			f.Err = joinErr(f.Err, err)
 		} else {
 			f.Items = append(f.Items, items...)
@@ -121,6 +128,41 @@ func (s *Scanner) scanRule(ctx context.Context, r engine.Rule) engine.Finding {
 	// "ruleID/key" is how selection atoms and --json address it.
 	f.FillItemKeys(s.Host.Home)
 	return f
+}
+
+// runQuery runs a tool query under the query deadline. It stops
+// waiting at the deadline even for a query that ignores its ctx (one
+// parked on a lock another query holds), and a query that answers
+// after its deadline passed reports the deadline, not its own outcome:
+// a killed CLI often reads as "tool not available".
+func (s *Scanner) runQuery(ctx context.Context, query ToolQuery) ([]engine.Item, error) {
+	timeout := s.queryTimeout
+	if timeout <= 0 {
+		timeout = toolQueryTimeout
+	}
+	qctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	type result struct {
+		items []engine.Item
+		err   error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		items, err := query(qctx)
+		ch <- result{items, err}
+	}()
+	var r result
+	select {
+	case r = <-ch:
+	case <-qctx.Done():
+	}
+	if ctx.Err() == nil && (errors.Is(qctx.Err(), context.DeadlineExceeded) || errors.Is(r.err, context.DeadlineExceeded)) {
+		return nil, fmt.Errorf("tool gave no answer within %s", timeout)
+	}
+	if r.err == nil && ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	return r.items, r.err
 }
 
 // measure sizes one path. Absent paths are not an item: most rules
@@ -149,6 +191,16 @@ func tilde(host engine.Host, path string) string {
 	return path
 }
 
+// homeTilde abbreviates the process's home, for tool queries that
+// resolve their own locations.
+func homeTilde(path string) string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return path
+	}
+	return tilde(engine.Host{Home: home}, path)
+}
+
 // glob resolves metacharacters against the filesystem so rules can
 // target patterns like /Applications/Install macOS*.app, listing each
 // parent through the walker. Literal paths pass through untouched; a
@@ -168,13 +220,11 @@ func (w *walker) glob(ctx context.Context, pattern string) (matches []string, pa
 		parents, partial = w.glob(ctx, dir)
 	}
 	for _, d := range parents {
-		entries, err := w.readDir(ctx, d)
+		entries, incomplete, err := w.list(ctx, d)
 		if err != nil {
-			if unreadable(err) && !errors.Is(err, syscall.ENOTDIR) {
-				partial = true
-			}
-			continue
+			return matches, true
 		}
+		partial = partial || incomplete
 		for _, e := range entries {
 			if ok, _ := filepath.Match(file, e.Name()); ok {
 				matches = append(matches, filepath.Join(d, e.Name()))

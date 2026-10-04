@@ -3,6 +3,10 @@ package scanner
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
 	"maps"
 	"os"
 	"os/exec"
@@ -286,5 +290,165 @@ func TestBlockedFolderIsReadAgainOnceItAnswers(t *testing.T) {
 	}
 	if n := opens.Load(); n != 2 {
 		t.Errorf("blocked folder opened %d times, want 2: the stuck call and one retry after it answered", n)
+	}
+}
+
+// slowDir is a directory that answers slowly but steadily: each
+// ReadDir batch takes delay, and a whole-listing ReadDir(-1) takes the
+// sum. Its entries are 1000-byte files whose Info takes infoDelay.
+type slowDir struct {
+	entries []fs.DirEntry
+	pos     int
+	delay   time.Duration
+}
+
+func newSlowDir(n int, delay, infoDelay time.Duration, suffix string) *slowDir {
+	d := &slowDir{delay: delay}
+	for i := range n {
+		d.entries = append(d.entries, slowEntry{name: fmt.Sprintf("f%04d%s", i, suffix), delay: infoDelay})
+	}
+	return d
+}
+
+func (d *slowDir) ReadDir(n int) ([]fs.DirEntry, error) {
+	rest := len(d.entries) - d.pos
+	if n <= 0 {
+		time.Sleep(d.delay * time.Duration((rest+readBatch-1)/readBatch))
+		out := d.entries[d.pos:]
+		d.pos = len(d.entries)
+		return out, nil
+	}
+	if rest == 0 {
+		return nil, io.EOF
+	}
+	time.Sleep(d.delay)
+	out := d.entries[d.pos : d.pos+min(n, rest)]
+	d.pos += len(out)
+	return out, nil
+}
+
+func (d *slowDir) Close() error { return nil }
+
+type slowEntry struct {
+	name  string
+	delay time.Duration
+}
+
+func (e slowEntry) Name() string      { return e.name }
+func (e slowEntry) IsDir() bool       { return false }
+func (e slowEntry) Type() fs.FileMode { return 0 }
+func (e slowEntry) Info() (fs.FileInfo, error) {
+	time.Sleep(e.delay)
+	return slowInfo{e.name}, nil
+}
+
+type slowInfo struct{ name string }
+
+func (i slowInfo) Name() string       { return i.name }
+func (i slowInfo) Size() int64        { return 1000 }
+func (i slowInfo) Mode() fs.FileMode  { return 0o644 }
+func (i slowInfo) ModTime() time.Time { return time.Unix(0, 0) }
+func (i slowInfo) IsDir() bool        { return false }
+func (i slowInfo) Sys() any           { return nil }
+
+func slowWalker(path string, dir func() *slowDir) *walker {
+	return &walker{
+		open: func(p string) (dirHandle, error) {
+			if p == path {
+				return dir(), nil
+			}
+			return openDir(p)
+		},
+		stall: testStall, workers: walkWorkers, blocked: &blockedSet{},
+	}
+}
+
+// A glob parent whose listing takes several stall windows, batch by
+// batch, is slow, not blocked: every match comes back.
+func TestGlobOverASlowHugeListing(t *testing.T) {
+	dir := t.TempDir()
+	const n = 40 * readBatch // 40 batches × 30 ms ≈ 5 stall windows
+	w := slowWalker(dir, func() *slowDir { return newSlowDir(n, 30*time.Millisecond, 0, ".gguf") })
+	matches, partial := w.glob(context.Background(), filepath.Join(dir, "*.gguf"))
+	if partial || len(matches) != n {
+		t.Fatalf("glob = %d matches, partial %v; want %d, complete", len(matches), partial, n)
+	}
+}
+
+// A visit that stats every entry keeps making progress: a directory
+// whose entries take several stall windows to stat, a few at a time,
+// is measured in full.
+func TestWalkCountsVisitWorkAsProgress(t *testing.T) {
+	dir := t.TempDir()
+	const n = 320 // 320 × 3 ms ≈ 4 stall windows; 32 × 3 ms is well under one
+	w := slowWalker(dir, func() *slowDir { return newSlowDir(n, 0, 3*time.Millisecond, "") })
+	u, _, err := w.usage(context.Background(), dir)
+	if err != nil || u.Partial || u.Bytes != n*1000 {
+		t.Fatalf("usage = %+v, %v; want %d bytes, complete", u, err, n*1000)
+	}
+}
+
+// Cancelling a scan blocks the call still in flight until it answers:
+// a rescan neither joins it nor reports the folder healthy, and once
+// it answers the next scan reads the folder.
+func TestCancelBlocksTheCallInFlight(t *testing.T) {
+	_, root, blocked := fixtureTree(t)
+	release := make(chan struct{})
+	w, opens := blockingWalkerUntil(release, blocked)
+	w.stall = time.Hour // only the cancel may end this walk
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { _, _, err := w.usage(ctx, root); done <- err }()
+	for opens.Load() == 0 {
+		time.Sleep(time.Millisecond)
+	}
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled walk = %v, want context.Canceled", err)
+	}
+
+	rescan := make(chan Usage, 1)
+	go func() { u, _, _ := w.usage(context.Background(), root); rescan <- u }()
+	select {
+	case u := <-rescan:
+		if !u.Partial || opens.Load() != 1 {
+			t.Fatalf("rescan = %+v after %d opens; want Partial without reopening the stuck folder", u, opens.Load())
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("rescan reopened the stuck folder and joined its call")
+	}
+	close(release)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if u, _, _ := w.usage(context.Background(), root); !u.Partial {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("folder stayed blocked after its call answered")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// Markers for tool stores name them the way keys do, with ~.
+func TestToolMarkersUseTheTildeForm(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	hub := filepath.Join(home, ".cache", "huggingface", "hub")
+	manifests := filepath.Join(home, ".ollama", "models", "manifests")
+	for _, d := range []string{hub, manifests} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w, _ := blockingWalker(t, hub, manifests)
+	hf, _ := scanHFHub(context.Background(), w, hub)
+	ol, _ := scanOllamaModels(context.Background(), w, manifests)
+	if len(hf) != 1 || hf[0].Label != "~/.cache/huggingface/hub" {
+		t.Errorf("hf marker = %+v, want label ~/.cache/huggingface/hub", hf)
+	}
+	if len(ol) != 1 || ol[0].Label != "manifests under ~/.ollama/models/manifests" {
+		t.Errorf("ollama marker = %+v, want the ~ form", ol)
 	}
 }

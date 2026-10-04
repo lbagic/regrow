@@ -2,7 +2,6 @@ package scanner
 
 import (
 	"context"
-	"errors"
 	"io/fs"
 	"sync/atomic"
 	"syscall"
@@ -39,7 +38,7 @@ func DirSize(ctx context.Context, path string) (Usage, error) {
 func (w *walker) usage(ctx context.Context, path string) (Usage, bool, error) {
 	info, err := w.lstat(ctx, path)
 	switch {
-	case errors.Is(err, fs.ErrNotExist):
+	case absent(err):
 		return Usage{}, false, nil
 	case ctx.Err() != nil:
 		return Usage{Partial: true}, true, ctx.Err()

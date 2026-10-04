@@ -3,6 +3,7 @@ package scanner
 import (
 	"context"
 	"os/exec"
+	"time"
 
 	"github.com/lbagic/regrow/internal/engine"
 )
@@ -30,6 +31,10 @@ func DefaultQueries() map[string]ToolQuery {
 	return queries
 }
 
+// toolWaitDelay bounds how long a killed tool may keep its output
+// pipes open (a child it spawned can hold them) before Wait gives up.
+const toolWaitDelay = 5 * time.Second
+
 // runTool executes a tool and returns stdout. A tool missing from
 // PATH means the rule does not apply to this machine: (nil, false)
 // with no error, so laptops without docker or Xcode stay quiet.
@@ -37,7 +42,9 @@ func runTool(ctx context.Context, name string, args ...string) ([]byte, bool, er
 	if _, err := exec.LookPath(name); err != nil {
 		return nil, false, nil
 	}
-	out, err := exec.CommandContext(ctx, name, args...).Output()
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.WaitDelay = toolWaitDelay
+	out, err := cmd.Output()
 	if err != nil {
 		return nil, false, err
 	}

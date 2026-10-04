@@ -54,17 +54,17 @@ func hfHubDir(ctx context.Context, w *walker) (string, bool) {
 
 // scanHFHub lists one item per repo. Recency is the repo's newest
 // mtime (Usage.Newest): the download or refresh of any snapshot. A hub
-// directory that refuses or blocks is one unreadable marker item.
+// directory that refuses or blocks adds an unreadable marker item.
 func scanHFHub(ctx context.Context, w *walker, dir string) ([]engine.Item, error) {
-	entries, err := w.readDir(ctx, dir)
+	entries, partial, err := w.list(ctx, dir)
 	if err != nil {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		return []engine.Item{unreadableMarker(dir)}, nil
+		return nil, err
 	}
 	slices.SortFunc(entries, func(a, b fs.DirEntry) int { return strings.Compare(a.Name(), b.Name()) })
 	var items []engine.Item
+	if partial {
+		items = append(items, unreadableMarker(homeTilde(dir)))
+	}
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
