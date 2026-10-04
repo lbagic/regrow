@@ -68,7 +68,8 @@ func TestUsageListsEverySubcommand(t *testing.T) {
 	printUsage(&buf)
 	out := buf.String()
 	for _, want := range []string{
-		"regrow [scan]", "regrow plan", "regrow clean", "regrow doctor", "regrow undo",
+		"regrow [scan]", "regrow plan", "regrow clean", "regrow doctor", "regrow tick",
+		"regrow prune go-build", "-autotrim", "regrow undo",
 		"regrow history", "regrow rules", "regrow version", "regrow help",
 		"-json", "-yes", "-rules-dir", "-beta-rules",
 	} {

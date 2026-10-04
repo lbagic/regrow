@@ -30,6 +30,8 @@ Usage:
   regrow plan [id ...] [--json]   dry run: the exact commands that would run
   regrow clean [id ...] [--yes]   show the plan, confirm, execute
   regrow doctor [--json]          hero-bug scan and phantom-space report
+  regrow tick [--autotrim]        one headroom sample: free space, forecast, alerts
+  regrow prune go-build [--yes]   delete old Go build cache entries; dry run without --yes
   regrow undo [run-id]            restore the newest (or given) run's Trash moves
   regrow history [--json]         past runs from the oplog
   regrow rules [--json]           list the rule catalog
@@ -55,6 +57,7 @@ type options struct {
 	asJSON    bool
 	betaRules bool
 	yes       bool
+	autotrim  bool
 }
 
 func newFlagSet(name string, o *options) *flag.FlagSet {
@@ -63,7 +66,8 @@ func newFlagSet(name string, o *options) *flag.FlagSet {
 	fs.StringVar(&o.rulesDir, "rules-dir", "", "load rules from a directory instead of the embedded catalog")
 	fs.BoolVar(&o.asJSON, "json", false, "machine-readable output")
 	fs.BoolVar(&o.betaRules, "beta-rules", false, "include rules still in staged rollout")
-	fs.BoolVar(&o.yes, "yes", false, "clean: skip the confirmation prompt")
+	fs.BoolVar(&o.yes, "yes", false, "clean: skip the confirmation prompt; prune: execute")
+	fs.BoolVar(&o.autotrim, "autotrim", false, "tick: prune when headroom is low (refused until one manual prune has completed)")
 	return fs
 }
 
@@ -75,13 +79,18 @@ func parseArgs(args []string) (cmd string, opts options, ids []string, help bool
 		cmd, args = args[0], args[1:]
 	}
 	fs := newFlagSet(cmd, &opts)
-	if err := fs.Parse(args); err != nil {
+	err = fs.Parse(args)
+	ids = fs.Args()
+	if err == nil && cmd == "prune" {
+		ids, err = interspersedArgs(fs, ids)
+	}
+	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return cmd, opts, nil, true, nil
 		}
 		return cmd, opts, nil, false, fmt.Errorf("%w (`regrow help` lists commands and flags)", err)
 	}
-	return cmd, opts, fs.Args(), cmd == "help", nil
+	return cmd, opts, ids, cmd == "help", nil
 }
 
 func printUsage(w io.Writer) {
@@ -140,6 +149,10 @@ func run(args []string) error {
 		return runClean(host, catalog, ids, opts.yes)
 	case "doctor":
 		return runDoctor(host, catalog, opts.asJSON)
+	case "tick":
+		return runTick(host, catalog, opts)
+	case "prune":
+		return runPrune(host, catalog, ids, opts)
 	case "undo":
 		return runUndo(ids)
 	case "history":
