@@ -68,7 +68,7 @@ func TotalsLines(p engine.Plan) []string {
 // of the innermost item that holds it.
 func LedgerLines(t engine.Totals) []string {
 	lines := []string{
-		"Each byte counted once, in the innermost row that holds it:",
+		"Each byte counted once within the rows; macOS-managed space can overlap them:",
 		fmt.Sprintf("  Frees now          %10s  steward commands", HumanBytes(t.FreesNow)),
 		fmt.Sprintf("  Frees after Trash  %10s  moved to the Trash; freed once it is emptied", HumanBytes(t.AfterTrash)),
 		fmt.Sprintf("  Shown only         %10s  surface-only; regrow never deletes it", HumanBytes(t.ShownOnly)),
