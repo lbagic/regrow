@@ -20,7 +20,7 @@ causes:
     title: Docker VM memory cap
     story: Docker Desktop's VM may take up to half of the Mac's memory by default, and a limit set that high or higher changes nothing. What the Mac then lacks goes to swap, and swap files sit on the same disk — an 8 GiB Docker VM was the largest process in a memory-pressure (jetsam) event on a 16 GiB machine.
     fix:
-      - "Docker Desktop ▸ Settings ▸ Resources ▸ Advanced: lower Memory limit to what the containers need (for example 4 GB), then Apply & restart"
+      - "Docker Desktop ▸ Settings ▸ Resources ▸ Advanced: lower Memory limit to what the containers need, below half of this Mac's memory, then Apply & restart"
 fixture:
   items:
     - label: Docker.raw — 35.2 GiB real of 64.0 GiB sparse

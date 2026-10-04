@@ -71,7 +71,12 @@ func TestDockerVMMemory(t *testing.T) {
 		{
 			name:  "not JSON",
 			files: map[string]string{store: `{"AutoStart": fal`},
-			want:  engine.VerdictUnknown, detail: []string{"settings-store.json is not a JSON object"},
+			want:  engine.VerdictUnknown, detail: []string{"settings-store.json could not be read as Docker Desktop's settings"},
+		},
+		{
+			name:  "an empty file",
+			files: map[string]string{store: ``},
+			want:  engine.VerdictUnknown, detail: []string{"settings-store.json could not be read as Docker Desktop's settings"},
 		},
 		{
 			name:  "a memory value that is not a number",
@@ -202,7 +207,13 @@ func TestDockerBuildCacheLimit(t *testing.T) {
 			name:   "not JSON",
 			config: `builder: gc`,
 			want:   engine.VerdictUnknown,
-			detail: []string{"~/.docker/daemon.json is not a JSON object"},
+			detail: []string{"~/.docker/daemon.json could not be read as Docker Engine's settings"},
+		},
+		{
+			name:   "an object with a field of the wrong type",
+			config: `{"builder": {"gc": {"enabled": "yes"}}}`,
+			want:   engine.VerdictUnknown,
+			detail: []string{"~/.docker/daemon.json could not be read as Docker Engine's settings"},
 		},
 	}
 	for _, tt := range tests {

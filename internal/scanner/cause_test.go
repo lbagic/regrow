@@ -218,8 +218,8 @@ func TestCauseCheckDeadlineIsUnknown(t *testing.T) {
 	go func() { done <- s.Causes(context.Background(), rules) }()
 	select {
 	case rows := <-done:
-		if len(rows) != 1 || rows[0].Verdict != engine.VerdictUnknown || !strings.Contains(rows[0].Detail, "no answer within 50ms") {
-			t.Fatalf("rows = %+v, want one unknown row naming the deadline", rows)
+		if len(rows) != 1 || rows[0].Verdict != engine.VerdictUnknown || rows[0].Detail != "the check gave no answer within 50ms" {
+			t.Fatalf("rows = %+v, want one unknown row naming the check and the deadline, not a tool", rows)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("Causes did not return past the query deadline")

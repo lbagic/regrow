@@ -35,7 +35,7 @@ func (c *causeChecks) dockerVMMemory(ctx context.Context, _ engine.Rule) (engine
 		}
 		var settings map[string]json.RawMessage
 		if err := json.Unmarshal(data, &settings); err != nil {
-			return engine.VerdictUnknown, shown + " is not a JSON object"
+			return engine.VerdictUnknown, shown + " could not be read as Docker Desktop's settings"
 		}
 		total := c.totalMemory()
 		for key, raw := range settings {
@@ -105,7 +105,7 @@ func (c *causeChecks) dockerBuildCacheLimit(ctx context.Context, _ engine.Rule) 
 		} `json:"builder"`
 	}
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		return engine.VerdictUnknown, shown + " is not a JSON object"
+		return engine.VerdictUnknown, shown + " could not be read as Docker Engine's settings"
 	}
 	gc := cfg.Builder.GC
 	if gc.Enabled != nil && !*gc.Enabled {

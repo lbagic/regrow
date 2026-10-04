@@ -62,7 +62,7 @@ func (s *Scanner) checkCause(ctx context.Context, r engine.Rule, c engine.Cause)
 		verdict engine.Verdict
 		detail  string
 	}
-	a, err := withDeadline(ctx, s.timeout(), func(ctx context.Context) (answer, error) {
+	a, err := withDeadline(ctx, s.timeout(), "the check", func(ctx context.Context) (answer, error) {
 		v, d := query(ctx, r)
 		return answer{v, d}, nil
 	})

@@ -138,7 +138,7 @@ func (s *Scanner) scanRule(ctx context.Context, r engine.Rule) engine.Finding {
 // after its deadline passed reports the deadline, not its own outcome:
 // a killed CLI often reads as "tool not available".
 func (s *Scanner) runQuery(ctx context.Context, query ToolQuery) ([]engine.Item, error) {
-	return withDeadline(ctx, s.timeout(), query)
+	return withDeadline(ctx, s.timeout(), "tool", query)
 }
 
 func (s *Scanner) timeout() time.Duration {
@@ -149,8 +149,9 @@ func (s *Scanner) timeout() time.Duration {
 }
 
 // withDeadline is runQuery's rule for any query: a tool query's items
-// or a cause check's verdict.
-func withDeadline[T any](ctx context.Context, timeout time.Duration, query func(context.Context) (T, error)) (T, error) {
+// or a cause check's verdict. who is the subject of the deadline's
+// error: what gave no answer.
+func withDeadline[T any](ctx context.Context, timeout time.Duration, who string, query func(context.Context) (T, error)) (T, error) {
 	qctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	type result struct {
@@ -169,7 +170,7 @@ func withDeadline[T any](ctx context.Context, timeout time.Duration, query func(
 	case <-qctx.Done():
 	}
 	if ctx.Err() == nil && (errors.Is(qctx.Err(), context.DeadlineExceeded) || errors.Is(r.err, context.DeadlineExceeded)) {
-		return zero, fmt.Errorf("tool gave no answer within %s", timeout)
+		return zero, fmt.Errorf("%s gave no answer within %s", who, timeout)
 	}
 	if r.err == nil && ctx.Err() != nil {
 		return zero, ctx.Err()
