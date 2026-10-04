@@ -35,6 +35,8 @@ Usage:
   regrow undo [run-id]            restore the newest (or given) run's Trash moves
   regrow history [--json]         past runs from the oplog
   regrow rules [--json]           list the rule catalog
+  regrow engine                   JSON-lines protocol on stdin/stdout for a
+                                  shell app (docs/ENGINE.md)
   regrow version                  print the version
   regrow help                     print this help
 
@@ -153,6 +155,8 @@ func run(args []string) error {
 		return runTick(host, catalog, opts)
 	case "prune":
 		return runPrune(host, catalog, ids, opts)
+	case "engine":
+		return runEngine(host, catalog)
 	case "undo":
 		return runUndo(ids)
 	case "history":

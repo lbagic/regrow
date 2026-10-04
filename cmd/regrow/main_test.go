@@ -70,7 +70,7 @@ func TestUsageListsEverySubcommand(t *testing.T) {
 	for _, want := range []string{
 		"regrow [scan]", "regrow plan", "regrow clean", "regrow doctor", "regrow tick",
 		"regrow prune go-build", "-autotrim", "regrow undo",
-		"regrow history", "regrow rules", "regrow version", "regrow help",
+		"regrow history", "regrow rules", "regrow engine", "regrow version", "regrow help",
 		"-json", "-yes", "-rules-dir", "-beta-rules",
 	} {
 		if !strings.Contains(out, want) {

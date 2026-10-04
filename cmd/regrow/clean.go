@@ -84,32 +84,46 @@ func printPlanActions(plan engine.Plan) {
 // executor. Both confirmation paths (clean prompt, TUI plan → x → y)
 // land here.
 func executePlan(host engine.Host, plan engine.Plan) error {
+	exec, release, err := newRunExecutor(host, executor.NewRunID(time.Now()))
+	if err != nil {
+		return err
+	}
+	defer release()
+	res, err := exec.Execute(context.Background(), plan)
+	if err != nil {
+		return err
+	}
+
+	fmt.Println()
+	for _, line := range runSummary(res) {
+		fmt.Println(line)
+	}
+	return nil
+}
+
+// newRunExecutor wires the executor of one run: the journal, and a
+// mover and volume exporter pointed at the run's staging directory.
+// release closes the journal.
+func newRunExecutor(host engine.Host, runID string) (*executor.Executor, func(), error) {
 	logPath, err := oplog.DefaultPath()
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
-	log, err := oplog.Open(logPath)
-	if err != nil {
-		return err
-	}
-	// Journal entries fsync per Append (invariant 6); nothing left to
-	// lose at close.
-	defer func() { _ = log.Close() }()
-
 	// The volume export cap comes from user config; a broken config
 	// must block execution, not silently fall back to defaults.
 	cfg, err := config.Load()
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	capBytes, err := cfg.Docker.ExportCapBytes()
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
-
-	runID := executor.NewRunID(time.Now())
-	stateDir := filepath.Dir(logPath)
-	stagingDir := filepath.Join(stateDir, "staging", runID)
+	log, err := oplog.Open(logPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	stagingDir := filepath.Join(filepath.Dir(logPath), "staging", runID)
 	exec := &executor.Executor{
 		Trash: &trash.Mover{Home: host.Home, StagingDir: stagingDir},
 		Log:   log,
@@ -121,16 +135,9 @@ func executePlan(host engine.Host, plan engine.Plan) error {
 		},
 		RunID: runID,
 	}
-	res, err := exec.Execute(context.Background(), plan)
-	if err != nil {
-		return err
-	}
-
-	fmt.Println()
-	for _, line := range runSummary(res) {
-		fmt.Println(line)
-	}
-	return nil
+	// Journal entries fsync per Append (invariant 6); nothing left to
+	// lose at close.
+	return exec, func() { _ = log.Close() }, nil
 }
 
 // nothingToClean explains an empty plan: refusals and skips are why a
