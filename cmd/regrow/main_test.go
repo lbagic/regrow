@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
@@ -109,5 +110,95 @@ func TestRunSummarySeparatesStagingFromTrash(t *testing.T) {
 		if !found {
 			t.Errorf("summary needs a line with %q and %q, got:\n%s", want[0], want[1], out)
 		}
+	}
+}
+
+// scanFixture nests a steward-command rule inside a surface-only one
+// and adds a folder that could be read in part and one not at all.
+func scanFixture() []engine.Finding {
+	return []engine.Finding{
+		{Rule: engine.Rule{ID: "library-caches", Title: "App caches", Category: "macos", Risk: engine.RiskSurfaceOnly},
+			Items: []engine.Item{{Path: "/u/Library/Caches", Key: "~/Library/Caches", Bytes: 70 << 30, Partial: true}}},
+		{Rule: engine.Rule{ID: "go-build-cache", Title: "Go build cache", Category: "dev-caches", Risk: engine.RiskSafe,
+			NativeCommand: engine.Argv{"go", "clean", "-cache"}},
+			Items: []engine.Item{{Path: "/u/Library/Caches/go-build", Key: "~/Library/Caches/go-build", Bytes: 55 << 30}}},
+		{Rule: engine.Rule{ID: "trash-empty", Title: "Empty Trash", Category: "macos", Risk: engine.RiskCaution,
+			NativeCommand: engine.Argv{"osascript"}},
+			Items: []engine.Item{{Path: "/u/.Trash", Key: "~/.Trash", Partial: true}}},
+		{Rule: engine.Rule{ID: "user-logs", Title: "User logs", Category: "macos", Risk: engine.RiskSafe},
+			Items: []engine.Item{{Path: "/u/Library/Logs", Key: "~/Library/Logs", Bytes: 2 << 30}}},
+		{Rule: engine.Rule{ID: "apfs-purgeable", Title: "Purgeable", Category: engine.CategoryPhantomSpace, Risk: engine.RiskSurfaceOnly},
+			Items: []engine.Item{{Label: "purgeable", Key: "purgeable", Bytes: 40 << 30}}},
+	}
+}
+
+func lineWith(out string, parts ...string) bool {
+	for _, line := range strings.Split(out, "\n") {
+		all := true
+		for _, p := range parts {
+			all = all && strings.Contains(line, p)
+		}
+		if all {
+			return true
+		}
+	}
+	return false
+}
+
+func TestScanTextShowsBucketsAndUnreadable(t *testing.T) {
+	findings := scanFixture()
+	var buf bytes.Buffer
+	writeFindings(&buf, findings, engine.Account(findings))
+	out := buf.String()
+
+	for _, want := range [][]string{
+		// A lower bound reads ≥ and says why; nothing measured reads unreadable.
+		{"App caches", "≥ 70.0 GiB"},
+		{"library-caches/~/Library/Caches", "≥ 70.0 GiB", "15.0 GiB outside other rows", "some folders unreadable", "Full Disk Access may be needed"},
+		{"Empty Trash", "unreadable"},
+		{"trash-empty/~/.Trash", "unreadable: blocked or unreadable (Full Disk Access may be needed)"},
+		// Each byte once: go-build's 55 leave the surface-only 70.
+		{"Frees now", "55.0 GiB"},
+		{"Frees after Trash", "2.0 GiB"},
+		{"Shown only", "15.0 GiB"},
+		{"macOS-managed", "40.0 GiB"},
+		{"2 item(s)", "lower bounds"},
+	} {
+		if !lineWith(out, want...) {
+			t.Errorf("no line with %q in:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "Total found") {
+		t.Errorf("the single double-counted total must be gone:\n%s", out)
+	}
+}
+
+func TestScanJSONCarriesTheLedger(t *testing.T) {
+	findings := scanFixture()
+	raw, err := json.Marshal(scanReport{Findings: findings, Ledger: engine.Account(findings)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Findings []struct {
+			Items []struct {
+				Partial bool `json:"partial"`
+			} `json:"items"`
+		} `json:"findings"`
+		Totals    map[string]int64 `json:"totals"`
+		Exclusive map[string]int64 `json:"exclusive"`
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	wantTotals := map[string]int64{"frees_now": 55 << 30, "after_trash": 2 << 30, "shown_only": 15 << 30, "macos_managed": 40 << 30, "partial": 2}
+	if !reflect.DeepEqual(got.Totals, wantTotals) {
+		t.Errorf("totals = %v, want %v", got.Totals, wantTotals)
+	}
+	if got.Exclusive["library-caches/~/Library/Caches"] != 15<<30 {
+		t.Errorf("exclusive = %v, want the container's 15 GiB share", got.Exclusive)
+	}
+	if len(got.Findings) != 5 || !got.Findings[0].Items[0].Partial || got.Findings[1].Items[0].Partial {
+		t.Errorf("findings lost their partial flags: %s", raw)
 	}
 }

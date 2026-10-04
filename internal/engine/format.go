@@ -17,3 +17,33 @@ func HumanBytes(n int64) string {
 	}
 	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
 }
+
+// UnreadableNote says why a size is a lower bound. Full Disk Access is
+// the likely cause, not a certain one.
+const UnreadableNote = "blocked or unreadable (Full Disk Access may be needed)"
+
+// SizeText renders a measured size: "unreadable" when a lower bound
+// holds nothing, "≥ X" when X is a lower bound.
+func SizeText(bytes int64, partial bool) string {
+	switch {
+	case !partial:
+		return HumanBytes(bytes)
+	case bytes == 0:
+		return "unreadable"
+	default:
+		return "≥ " + HumanBytes(bytes)
+	}
+}
+
+// PartialText qualifies a size SizeText rendered: empty when the size
+// is complete.
+func PartialText(bytes int64, partial bool) string {
+	switch {
+	case !partial:
+		return ""
+	case bytes == 0:
+		return "unreadable: " + UnreadableNote
+	default:
+		return "some folders unreadable: " + UnreadableNote
+	}
+}

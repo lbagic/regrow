@@ -180,11 +180,33 @@ func printRules(catalog []engine.Rule, asJSON bool) error {
 	return nil
 }
 
+// scanReport is `regrow scan --json`: the findings and their ledger.
+type scanReport struct {
+	Findings []engine.Finding `json:"findings"`
+	engine.Ledger
+}
+
 func printFindings(findings []engine.Finding, asJSON bool) error {
+	ledger := engine.Account(findings)
 	if asJSON {
-		return emitJSON(findings)
+		return emitJSON(scanReport{Findings: findings, Ledger: ledger})
 	}
-	// Group by category, largest first inside each (PRODUCT.md §4).
+	writeFindings(os.Stdout, findings, ledger)
+	return nil
+}
+
+// writeFindings prints the scan grouped by category, largest first
+// inside each (PRODUCT.md §4). Rows show each rule's whole size; the
+// totals at the end count every byte once, in the bucket of the
+// innermost row that holds it.
+func writeFindings(w io.Writer, findings []engine.Finding, ledger engine.Ledger) {
+	own := func(f engine.Finding) int64 {
+		var n int64
+		for _, it := range f.Items {
+			n += ledger.Exclusive[engine.ItemID(f.Rule.ID, it.Key)]
+		}
+		return n
+	}
 	byCategory := map[string][]engine.Finding{}
 	for _, f := range findings {
 		byCategory[f.Rule.Category] = append(byCategory[f.Rule.Category], f)
@@ -193,32 +215,56 @@ func printFindings(findings []engine.Finding, asJSON bool) error {
 	for c := range byCategory {
 		categories = append(categories, c)
 	}
+	categoryOwn := func(c string) int64 {
+		var n int64
+		for _, f := range byCategory[c] {
+			n += own(f)
+		}
+		return n
+	}
 	sort.Slice(categories, func(i, j int) bool {
-		return categoryBytes(byCategory[categories[i]]) > categoryBytes(byCategory[categories[j]])
+		if oi, oj := categoryOwn(categories[i]), categoryOwn(categories[j]); oi != oj {
+			return oi > oj
+		}
+		return categories[i] < categories[j]
 	})
 
-	var total int64
 	for _, c := range categories {
 		group := byCategory[c]
-		sort.Slice(group, func(i, j int) bool { return group[i].TotalBytes() > group[j].TotalBytes() })
-		fmt.Printf("%s  %s\n", strings.ToUpper(strings.ReplaceAll(c, "-", " ")), tui.HumanBytes(categoryBytes(group)))
+		sort.SliceStable(group, func(i, j int) bool { return group[i].TotalBytes() > group[j].TotalBytes() })
+		_, _ = fmt.Fprintln(w, strings.ToUpper(strings.ReplaceAll(c, "-", " ")))
 		for _, f := range group {
-			total += f.TotalBytes()
+			size := engine.SizeText(f.TotalBytes(), f.Partial())
 			switch {
 			case f.Err != "":
-				fmt.Printf("  ! %-32s %10s  %s (%s)\n", f.Rule.Title, tui.HumanBytes(f.TotalBytes()), f.Rule.Risk, f.Err)
+				_, _ = fmt.Fprintf(w, "  ! %-32s %12s  %s (%s)\n", f.Rule.Title, size, f.Rule.Risk, f.Err)
 			case len(f.Items) == 0:
-				fmt.Printf("  - %-32s %10s  not found\n", f.Rule.Title, "")
+				_, _ = fmt.Fprintf(w, "  - %-32s %12s  not found\n", f.Rule.Title, "")
 			default:
-				fmt.Printf("  • %-32s %10s  %-12s %s\n", f.Rule.Title, tui.HumanBytes(f.TotalBytes()), f.Rule.Risk, f.Rule.Regen.Story)
+				_, _ = fmt.Fprintf(w, "  • %-32s %12s  %-12s %s\n", f.Rule.Title, size, f.Rule.Risk, f.Rule.Regen.Story)
 				for _, it := range f.Items {
-					fmt.Printf("      %10s  %s\n", tui.HumanBytes(it.Bytes), engine.ItemID(f.Rule.ID, it.Key))
+					id := engine.ItemID(f.Rule.ID, it.Key)
+					line := fmt.Sprintf("      %12s  %s", engine.SizeText(it.Bytes, it.Partial), id)
+					var notes []string
+					if x := ledger.Exclusive[id]; x != it.Bytes {
+						notes = append(notes, engine.HumanBytes(x)+" outside other rows")
+					}
+					if note := engine.PartialText(it.Bytes, it.Partial); note != "" {
+						notes = append(notes, note)
+					}
+					if len(notes) > 0 {
+						line += "  (" + strings.Join(notes, "; ") + ")"
+					}
+					_, _ = fmt.Fprintln(w, line)
 				}
 			}
 		}
 	}
-	fmt.Printf("\nTotal found: %s. Dry-run: `regrow plan` shows the exact commands; nothing was deleted.\n", tui.HumanBytes(total))
-	return nil
+	_, _ = fmt.Fprintln(w)
+	for _, line := range tui.LedgerLines(ledger.Totals) {
+		_, _ = fmt.Fprintln(w, line)
+	}
+	_, _ = fmt.Fprintln(w, "Dry-run: `regrow plan` shows the exact commands; nothing was deleted.")
 }
 
 func printPlan(plan engine.Plan, asJSON bool) error {
@@ -245,14 +291,6 @@ func printPlan(plan engine.Plan, asJSON bool) error {
 	}
 	fmt.Printf("Would reclaim: %s\n", tui.HumanBytes(plan.TotalBytes()))
 	return nil
-}
-
-func categoryBytes(group []engine.Finding) int64 {
-	var n int64
-	for _, f := range group {
-		n += f.TotalBytes()
-	}
-	return n
 }
 
 // isTTY: the interactive UI needs a terminal on both ends.

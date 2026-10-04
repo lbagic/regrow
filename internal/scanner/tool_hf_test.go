@@ -36,7 +36,7 @@ func TestScanHFHub(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	items, err := scanHFHub(context.Background(), hub)
+	items, err := scanHFHub(context.Background(), testWalker(), hub)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +92,7 @@ func TestDecodeHFRepoDir(t *testing.T) {
 func TestHFHubDirEnvOverride(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HF_HUB_CACHE", dir)
-	got, ok := hfHubDir()
+	got, ok := hfHubDir(context.Background(), testWalker())
 	if !ok || got != dir {
 		t.Fatalf("hfHubDir() = (%q, %v), want (%q, true)", got, ok, dir)
 	}
@@ -103,7 +103,7 @@ func TestHFHubDirEnvOverride(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(base, "hub"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	got, ok = hfHubDir()
+	got, ok = hfHubDir(context.Background(), testWalker())
 	if !ok || got != filepath.Join(base, "hub") {
 		t.Fatalf("hfHubDir() with HF_HOME = (%q, %v)", got, ok)
 	}

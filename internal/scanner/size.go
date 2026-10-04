@@ -2,48 +2,96 @@ package scanner
 
 import (
 	"context"
+	"errors"
 	"io/fs"
-	"os"
-	"path/filepath"
+	"sync/atomic"
 	"syscall"
+	"time"
 )
 
-// DirSize measures disk usage of path in bytes, du-style: physical
-// blocks, not logical file length, so sparse files and APFS clones
-// report what deletion actually reclaims (research/02 §15,
-// "dedup-aware sizing"). Symlinks are not followed. Unreadable
-// subtrees are skipped, not fatal: a partial size beats no size.
-// Cancelling ctx stops the walk mid-tree — hung filesystems (network
-// mounts) can't wedge a scan — and returns the partial total with
-// ctx's error, the one walk failure DirSize does report.
-func DirSize(ctx context.Context, path string) (int64, error) {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return 0, err
+// Usage is the one definition of an item's size and recency.
+type Usage struct {
+	// Bytes is disk usage, du-style: physical blocks, not logical
+	// length, so sparse files and APFS clones report what deletion
+	// actually reclaims (research/02 §15). Symlinks are not followed.
+	Bytes int64
+	// Newest is the newest mtime over every file and directory,
+	// directories included: package managers stamp fixed old times on
+	// files (npm writes 1985), so only directory times show an install.
+	Newest time.Time
+	// Partial: something refused or blocked, so Bytes and Newest are
+	// lower bounds.
+	Partial bool
+}
+
+// DirSize measures path. A blocked or unreadable directory anywhere in
+// the tree, root included, makes the result Partial instead of failing
+// it, like `du 2>/dev/null`; a missing path is the zero Usage. The
+// only error is ctx's, with the partial result so far.
+func DirSize(ctx context.Context, path string) (Usage, error) {
+	u, _, err := defaultWalker.usage(ctx, path)
+	return u, err
+}
+
+// usage is DirSize that also reports whether path exists. A root whose
+// Lstat is refused or blocked counts as found and Partial: the rule
+// names it, and the reader needs to see that it could not be measured.
+func (w *walker) usage(ctx context.Context, path string) (Usage, bool, error) {
+	info, err := w.lstat(ctx, path)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return Usage{}, false, nil
+	case ctx.Err() != nil:
+		return Usage{Partial: true}, true, ctx.Err()
+	case err != nil:
+		return Usage{Partial: true}, true, nil
 	}
 	if !info.IsDir() {
-		return physicalSize(info), nil
+		return Usage{Bytes: physicalSize(info), Newest: info.ModTime()}, true, nil
 	}
-	var total int64
-	// Walk errors are never fatal, root included: TCC-protected dirs
-	// (~/.Trash, CoreSpotlight) Lstat fine but refuse ReadDir without
-	// Full Disk Access. The target exists — report it with whatever
-	// size was measurable, exactly like `du 2>/dev/null`.
-	walkErr := filepath.WalkDir(path, func(p string, d fs.DirEntry, err error) error {
-		if cerr := ctx.Err(); cerr != nil {
-			return cerr
+
+	var bytes, newest atomic.Int64
+	var rootListed atomic.Bool
+	newest.Store(info.ModTime().UnixNano())
+	partial, err := w.walk(ctx, path, func(dir string, batch []fs.DirEntry) ([]string, bool) {
+		if dir == path {
+			rootListed.Store(true)
 		}
-		if err != nil {
-			return nil
+		var sum, latest int64
+		var subdirs []string
+		ok := true
+		for _, e := range batch {
+			fi, err := e.Info()
+			if err != nil {
+				ok = ok && !unreadable(err)
+				continue
+			}
+			sum += physicalSize(fi)
+			latest = max(latest, fi.ModTime().UnixNano())
+			if e.IsDir() {
+				subdirs = append(subdirs, childPath(dir, e.Name()))
+			}
 		}
-		fi, err := d.Info()
-		if err != nil {
-			return nil
-		}
-		total += physicalSize(fi)
-		return nil
+		bytes.Add(sum)
+		storeMax(&newest, latest)
+		return subdirs, ok
 	})
-	return total, walkErr
+	// The root's own blocks count only once it could be listed, so a
+	// root that refused or blocked reads as nothing measured. A
+	// complete walk listed it even when it held nothing to visit.
+	if rootListed.Load() || !partial {
+		bytes.Add(physicalSize(info))
+	}
+	return Usage{Bytes: bytes.Load(), Newest: time.Unix(0, newest.Load()), Partial: partial}, true, err
+}
+
+func storeMax(v *atomic.Int64, n int64) {
+	for {
+		cur := v.Load()
+		if n <= cur || v.CompareAndSwap(cur, n) {
+			return
+		}
+	}
 }
 
 // physicalSize prefers allocated blocks (512-byte units, the stat

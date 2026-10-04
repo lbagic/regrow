@@ -22,13 +22,39 @@ func DoctorRules(catalog []Rule) []Rule {
 	return out
 }
 
+// Verdict is a hero check's outcome against its healthy/runaway line.
+type Verdict string
+
+const (
+	// VerdictFlagged: the total, even as a lower bound, is over the
+	// line — the known bug's signature, worth the story and a fix.
+	VerdictFlagged Verdict = "flagged"
+	// VerdictNormal: the total is complete and at or under the line.
+	VerdictNormal Verdict = "normal"
+	// VerdictUnknown: under the line, but some of it could not be
+	// read (or the rule failed), so the real total may be over.
+	VerdictUnknown Verdict = "unknown"
+)
+
 // HeroCheck is one hero-bug verdict: the rule's measured total against
 // its healthy/runaway line.
 type HeroCheck struct {
 	Finding Finding `json:"finding"`
-	// Flagged means the total crossed doctor.flag_above — the known
-	// bug's signature, worth the story and a fix command.
-	Flagged bool `json:"flagged"`
+	Verdict Verdict `json:"verdict"`
+}
+
+// heroVerdict judges a finding against its doctor line. A lower bound
+// over the line is proof enough to flag; under the line it proves
+// nothing.
+func heroVerdict(f Finding) Verdict {
+	switch {
+	case f.TotalBytes() > int64(f.Rule.Doctor.FlagAbove):
+		return VerdictFlagged
+	case f.Err != "" || f.Partial():
+		return VerdictUnknown
+	default:
+		return VerdictNormal
+	}
 }
 
 // DoctorReport is the assembled report: hero verdicts in catalog
@@ -45,10 +71,7 @@ func BuildDoctorReport(findings []Finding) DoctorReport {
 	var rep DoctorReport
 	for _, f := range findings {
 		if f.Rule.Doctor != nil {
-			rep.Hero = append(rep.Hero, HeroCheck{
-				Finding: f,
-				Flagged: f.TotalBytes() > int64(f.Rule.Doctor.FlagAbove),
-			})
+			rep.Hero = append(rep.Hero, HeroCheck{Finding: f, Verdict: heroVerdict(f)})
 		}
 		if f.Rule.Category == CategoryPhantomSpace {
 			rep.Phantom = append(rep.Phantom, f)

@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -40,7 +41,10 @@ func queryDockerVMDisk(ctx context.Context) ([]engine.Item, error) {
 	}
 	for _, name := range []string{"Docker.raw", "Docker.qcow2"} {
 		p := filepath.Join(home, "Library/Containers/com.docker.docker/Data/vms/0/data", name)
-		fi, err := os.Stat(p)
+		fi, err := defaultWalker.stat(ctx, p)
+		if errors.Is(err, errBlocked) {
+			return []engine.Item{{Label: name, Path: p, Partial: true}}, nil
+		}
 		if err != nil {
 			continue
 		}

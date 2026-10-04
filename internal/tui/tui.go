@@ -74,9 +74,8 @@ const (
 type row struct {
 	kind     rowKind
 	category string
-	bytes    int64 // header: category total
-	finding  int   // index into model.findings for rowFinding/rowItem
-	item     int   // index into finding.Items for rowItem
+	finding  int // index into model.findings for rowFinding/rowItem
+	item     int // index into finding.Items for rowItem
 }
 
 type scanDoneMsg struct{ findings []engine.Finding }
@@ -99,8 +98,11 @@ type Model struct {
 	state    state
 	frame    int
 	findings []engine.Finding
-	rows     []row
-	cursor   int // index into rows; always a rowFinding or rowItem
+	// ledger counts every scanned byte once; the footer's buckets and
+	// the category order read it.
+	ledger engine.Ledger
+	rows   []row
+	cursor int // index into rows; always a rowFinding or rowItem
 	// selected holds item atoms only ("ruleID/key") — the rule
 	// checkbox is derived (all/partial/none), so there is a single
 	// source of truth. BuildPlan accepts the atoms as-is.
@@ -172,7 +174,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for i := range m.findings {
 			m.findings[i].FillItemKeys(m.host.Home)
 		}
-		m.rows = buildRows(m.findings, m.expanded)
+		m.ledger = engine.Account(m.findings)
+		m.rows = buildRows(m.findings, m.expanded, m.ledger.Exclusive)
 		m.cursor = firstCursorable(m.rows)
 		def := engine.DefaultSelection(m.findings)
 		for _, f := range m.findings {
@@ -340,7 +343,7 @@ func (m Model) selectionCount(f engine.Finding) (selected, total int) {
 // cursor on the toggled rule's row (collapsing from an item row must
 // not strand the cursor).
 func (m *Model) rebuildRows(ruleID string) {
-	m.rows = buildRows(m.findings, m.expanded)
+	m.rows = buildRows(m.findings, m.expanded, m.ledger.Exclusive)
 	for i, r := range m.rows {
 		if r.kind == rowFinding && m.findings[r.finding].Rule.ID == ruleID {
 			m.cursor = i
@@ -357,9 +360,11 @@ func toggleable(f engine.Finding) bool {
 }
 
 // buildRows filters findings to those with substance (items or a scan
-// error), groups by category, and size-ranks both levels. Expanded
+// error), groups by category, and size-ranks both levels: categories
+// by the bytes only they hold (exclusive, so a container rule does not
+// lift its category twice), findings by their whole size. Expanded
 // findings contribute item rows, size-ranked, key as tiebreak.
-func buildRows(findings []engine.Finding, expanded map[string]bool) []row {
+func buildRows(findings []engine.Finding, expanded map[string]bool, exclusive map[string]int64) []row {
 	byCategory := map[string][]int{}
 	for i, f := range findings {
 		if len(f.Items) == 0 && f.Err == "" {
@@ -371,7 +376,9 @@ func buildRows(findings []engine.Finding, expanded map[string]bool) []row {
 	totals := map[string]int64{}
 	for c, idxs := range byCategory {
 		for _, i := range idxs {
-			totals[c] += findings[i].TotalBytes()
+			for _, it := range findings[i].Items {
+				totals[c] += exclusive[engine.ItemID(findings[i].Rule.ID, it.Key)]
+			}
 		}
 	}
 	categories := make([]string, 0, len(byCategory))
@@ -395,7 +402,7 @@ func buildRows(findings []engine.Finding, expanded map[string]bool) []row {
 			}
 			return findings[idxs[i]].Rule.ID < findings[idxs[j]].Rule.ID
 		})
-		rows = append(rows, row{kind: rowHeader, category: c, bytes: totals[c]})
+		rows = append(rows, row{kind: rowHeader, category: c})
 		for _, i := range idxs {
 			rows = append(rows, row{kind: rowFinding, category: c, finding: i})
 			if !expanded[findings[i].Rule.ID] {
@@ -478,7 +485,7 @@ func (m Model) viewList() string {
 	for i, r := range m.rows {
 		if r.kind == rowHeader {
 			label := strings.ToUpper(strings.ReplaceAll(r.category, "-", " "))
-			lines = append(lines, styleTitle.Render(fmt.Sprintf("  %-42s %10s", label, HumanBytes(r.bytes))))
+			lines = append(lines, styleTitle.Render("  "+label))
 			continue
 		}
 		if i == m.cursor {
@@ -548,7 +555,7 @@ func (m Model) findingLine(f engine.Finding, atCursor bool) string {
 	}
 	return fmt.Sprintf("%s %s %s %-30s %10s  %s  %s",
 		marker, box, chevron, title,
-		HumanBytes(f.TotalBytes()),
+		engine.SizeText(f.TotalBytes(), f.Partial()),
 		riskStyle(f.Rule.Risk).Render(fmt.Sprintf("%-8s", riskLabel(f.Rule.Risk))),
 		styleFaint.Render(truncate(note, m.width-64)),
 	)
@@ -595,7 +602,7 @@ func (m Model) itemLine(f engine.Finding, it engine.Item, atCursor bool) string 
 	}
 	return fmt.Sprintf("%s     %s %-28s %10s  %s  %s",
 		marker, box, label,
-		HumanBytes(it.Bytes),
+		engine.SizeText(it.Bytes, it.Partial),
 		riskStyle(f.Rule.Risk).Render(fmt.Sprintf("%-8s", riskLabel(f.Rule.Risk))),
 		styleFaint.Render(recency),
 	)
@@ -619,6 +626,9 @@ func (m Model) listFooter() string {
 			if f.Rule.Note != "" {
 				note = f.Rule.Note + " · " + note
 			}
+			if partial := engine.PartialText(it.Bytes, it.Partial); partial != "" {
+				note = partial + " · " + note
+			}
 		case f.Err != "":
 			note = "error: " + f.Err
 		case f.Rule.Risk == engine.RiskSurfaceOnly:
@@ -632,23 +642,43 @@ func (m Model) listFooter() string {
 				note = f.Rule.Note + " · " + note
 			}
 		}
-	}
-
-	var selCount int
-	var selBytes int64
-	for _, f := range m.findings {
-		for _, it := range f.Items {
-			if m.selected[engine.ItemID(f.Rule.ID, it.Key)] {
-				selCount++
-				selBytes += it.Bytes
+		if it := m.currentItem(); it == nil && f.Err == "" {
+			if partial := engine.PartialText(f.TotalBytes(), f.Partial()); partial != "" {
+				note = partial + " · " + note
 			}
 		}
 	}
 
+	var selCount int
+	for _, f := range m.findings {
+		for _, it := range f.Items {
+			if m.selected[engine.ItemID(f.Rule.ID, it.Key)] {
+				selCount++
+			}
+		}
+	}
+	// The plan's total is the union of the selection: a selected item
+	// inside another selected item counts once.
+	selBytes := engine.BuildPlan(m.host, m.findings, m.selected).TotalBytes()
+	buckets := ledgerLines(m.ledger.Totals)
+
 	return styleFaint.Render(strings.Repeat("─", min(m.width, 72))) + "\n" +
 		styleFaint.Render(truncate("  "+note, m.width)) + "\n" +
+		styleFaint.Render(truncate("  "+buckets[0], m.width)) + "\n" +
+		styleFaint.Render(truncate("  "+buckets[1], m.width)) + "\n" +
 		fmt.Sprintf("  selected %d · ~%s   ", selCount, HumanBytes(selBytes)) +
 		styleFaint.Render("space toggle · →← expand · enter plan · ↑↓ move · q quit") + "\n"
+}
+
+// ledgerLines are the scan's buckets, every byte once, on two lines
+// that fit an 80-column terminal.
+func ledgerLines(t engine.Totals) [2]string {
+	actionable := fmt.Sprintf("frees now %s · after Trash %s", HumanBytes(t.FreesNow), HumanBytes(t.AfterTrash))
+	rest := fmt.Sprintf("shown only %s · macOS-managed %s", HumanBytes(t.ShownOnly), HumanBytes(t.MacOSManaged))
+	if t.Partial > 0 {
+		rest += fmt.Sprintf(" · %d unreadable in part", t.Partial)
+	}
+	return [2]string{actionable, rest}
 }
 
 // daysUnused: most recent LastUsed across items, in whole days ago.
@@ -715,7 +745,7 @@ func (m Model) viewConfirm() string {
 
 // window scrolls the body so the cursor line stays visible.
 func (m Model) window(lines []string, cursorLine int) []string {
-	const chrome = 6 // header (2) + footer (3) + margin
+	const chrome = 8 // header (2) + footer (5) + margin
 	bodyH := m.height - chrome
 	if bodyH < 1 {
 		bodyH = 1

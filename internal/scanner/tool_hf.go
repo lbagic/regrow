@@ -5,8 +5,8 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
-	"time"
 
 	"github.com/lbagic/regrow/internal/engine"
 )
@@ -23,21 +23,21 @@ import (
 // construction.
 
 func queryHFHub(ctx context.Context) ([]engine.Item, error) {
-	dir, ok := hfHubDir()
+	dir, ok := hfHubDir(ctx, defaultWalker)
 	if !ok {
 		return nil, nil
 	}
-	return scanHFHub(ctx, dir)
+	return scanHFHub(ctx, defaultWalker, dir)
 }
 
 // hfHubDir resolves the hub cache location the way huggingface_hub
 // does: HF_HUB_CACHE > HUGGINGFACE_HUB_CACHE (legacy) > $HF_HOME/hub >
 // ~/.cache/huggingface/hub. A missing dir means the rule does not
 // apply to this machine.
-func hfHubDir() (string, bool) {
+func hfHubDir(ctx context.Context, w *walker) (string, bool) {
 	for _, env := range []string{"HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE"} {
 		if v := os.Getenv(env); v != "" {
-			return v, isDir(v)
+			return v, w.isDir(ctx, v)
 		}
 	}
 	base := os.Getenv("HF_HOME")
@@ -49,19 +49,21 @@ func hfHubDir() (string, bool) {
 		base = filepath.Join(home, ".cache", "huggingface")
 	}
 	p := filepath.Join(base, "hub")
-	return p, isDir(p)
+	return p, w.isDir(ctx, p)
 }
 
-func isDir(p string) bool {
-	fi, err := os.Stat(p)
-	return err == nil && fi.IsDir()
-}
-
-func scanHFHub(ctx context.Context, dir string) ([]engine.Item, error) {
-	entries, err := os.ReadDir(dir) // sorted by name: deterministic
+// scanHFHub lists one item per repo. Recency is the repo's newest
+// mtime (Usage.Newest): the download or refresh of any snapshot. A hub
+// directory that refuses or blocks is one unreadable marker item.
+func scanHFHub(ctx context.Context, w *walker, dir string) ([]engine.Item, error) {
+	entries, err := w.readDir(ctx, dir)
 	if err != nil {
-		return nil, err
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return []engine.Item{unreadableMarker(dir)}, nil
 	}
+	slices.SortFunc(entries, func(a, b fs.DirEntry) int { return strings.Compare(a.Name(), b.Name()) })
 	var items []engine.Item
 	for _, e := range entries {
 		if !e.IsDir() {
@@ -72,7 +74,7 @@ func scanHFHub(ctx context.Context, dir string) ([]engine.Item, error) {
 			continue // version.txt, .locks, unknown layouts
 		}
 		repoPath := filepath.Join(dir, e.Name())
-		bytes, err := DirSize(ctx, repoPath)
+		u, _, err := w.usage(ctx, repoPath)
 		if err != nil {
 			return items, err // only ctx cancellation reaches here
 		}
@@ -84,8 +86,9 @@ func scanHFHub(ctx context.Context, dir string) ([]engine.Item, error) {
 			Path:     repoPath,
 			Label:    label,
 			Arg:      repoType + "/" + repoID,
-			Bytes:    bytes,
-			LastUsed: hfLastUsed(repoPath),
+			Bytes:    u.Bytes,
+			LastUsed: u.Newest,
+			Partial:  u.Partial,
 		})
 	}
 	return items, nil
@@ -104,33 +107,4 @@ func decodeHFRepoDir(name string) (repoType, repoID string, ok bool) {
 		return strings.TrimSuffix(segs[0], "s"), strings.Join(segs[1:], "/"), true
 	}
 	return "", "", false
-}
-
-// hfLastUsed reports when the repo was last read: the max atime/mtime
-// across snapshot files, Stat'd through the symlinks so the underlying
-// blobs answer — the same signal `scan-cache` calls last_accessed.
-// Falls back to the repo dir's mtime when there are no snapshots.
-func hfLastUsed(repoPath string) time.Time {
-	var last time.Time
-	_ = filepath.WalkDir(filepath.Join(repoPath, "snapshots"), func(p string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
-			return nil
-		}
-		fi, err := os.Stat(p) // follows the snapshot→blob symlink
-		if err != nil {
-			return nil
-		}
-		for _, t := range []time.Time{atime(fi), fi.ModTime()} {
-			if t.After(last) {
-				last = t
-			}
-		}
-		return nil
-	})
-	if last.IsZero() {
-		if fi, err := os.Stat(repoPath); err == nil {
-			last = fi.ModTime()
-		}
-	}
-	return last
 }
