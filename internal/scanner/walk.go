@@ -141,6 +141,11 @@ func (b *blockedSet) covers(p string) bool {
 // call blocks path until it answers; a blocked path is not called.
 func bounded[T any](ctx context.Context, w *walker, path string, fn func() (T, error)) (T, error) {
 	var zero T
+	// An ended scan starts no call. Started, the call could lose the
+	// race below to ctx and block its path for a rescan.
+	if err := ctx.Err(); err != nil {
+		return zero, err
+	}
 	if w.blocked.covers(path) {
 		return zero, errBlocked
 	}
