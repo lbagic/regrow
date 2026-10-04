@@ -13,6 +13,7 @@ native_command:
   - osascript
   - -e
   - tell application "Finder" to empty trash
+empties_trash: true
 note: Permanent — this is the point of no return for everything regrow (and you) previously trashed. Terminal may need Full Disk Access.
 regen:
   story: Not regenerable — the Trash is the undo buffer.

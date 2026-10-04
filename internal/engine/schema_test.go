@@ -118,6 +118,28 @@ func TestValidate(t *testing.T) {
 			"per-item native_command",
 		},
 		{
+			"empties_trash without native command",
+			func(r *Rule) { r.Risk = RiskCaution; r.EmptiesTrash = true },
+			"whole-rule native_command",
+		},
+		{
+			"empties_trash on per-item command",
+			func(r *Rule) {
+				r.Risk = RiskCaution
+				r.NativeCommand = Argv{"trash-tool", "purge", "{path}"}
+				r.EmptiesTrash = true
+			},
+			"whole-rule native_command",
+		},
+		{
+			"empties_trash on safe rule",
+			func(r *Rule) {
+				r.NativeCommand = Argv{"osascript", "-e", "empty"}
+				r.EmptiesTrash = true
+			},
+			"must not be safe",
+		},
+		{
 			"doctor without threshold",
 			func(r *Rule) { r.Doctor = &Doctor{Story: "known bug"} },
 			"flag_above",

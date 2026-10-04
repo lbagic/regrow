@@ -266,7 +266,11 @@ type Rule struct {
 	// staging). It is how a native command whose target cannot reach
 	// the Trash still honors trash-not-rm (invariant 2).
 	PreAction string `yaml:"pre_action" json:"pre_action,omitempty"`
-	Regen     Regen  `yaml:"regen" json:"regen"`
+	// EmptiesTrash marks a command that permanently deletes the Trash.
+	// The planner runs it before every other action, so the run's own
+	// moves land in an already-emptied Trash and stay restorable.
+	EmptiesTrash bool  `yaml:"empties_trash" json:"empties_trash,omitempty"`
+	Regen        Regen `yaml:"regen" json:"regen"`
 	// Note is a caveat shown alongside the regen story: footguns,
 	// prerequisites ("switch to a static wallpaper first"), warnings.
 	Note string `yaml:"note" json:"note,omitempty"`
@@ -361,6 +365,14 @@ func (r Rule) Validate() error {
 		}
 		if r.Doctor.Story == "" {
 			errs = append(errs, "doctor.story is required — the flagged report explains the bug with it")
+		}
+	}
+	if r.EmptiesTrash {
+		if len(r.NativeCommand) == 0 || r.NativeCommand.PerItem() {
+			errs = append(errs, "empties_trash requires a whole-rule native_command")
+		}
+		if r.Risk == RiskSafe {
+			errs = append(errs, "empties_trash rules must not be safe — emptying the Trash destroys every undo")
 		}
 	}
 	if r.PreAction != "" {

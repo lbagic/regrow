@@ -114,7 +114,7 @@ func TestGoldenPerRule(t *testing.T) {
 				t.Fatal("rule matched nothing in its own fixture — path rot or a stale fixture")
 			}
 
-			plan := engine.BuildPlan(host, findings, nil)
+			plan := engine.BuildPlan(host, findings, map[string]bool{r.ID: true})
 			got := renderPlanForGolden(plan, host)
 			if got == "" {
 				t.Fatal("rule produced no plan lines")
