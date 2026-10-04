@@ -33,7 +33,7 @@ func TestTickLines(t *testing.T) {
 
 	with := tickLines(headroom.Tick{Sample: sample, DaysToFull: &days,
 		Alerts: []headroom.Alert{{Kind: headroom.AlertFreeBelow, Message: "Free space is below 50.0 GiB: 38.0 GiB left."}},
-		Pruned: &headroom.PruneResult{RuleID: "go-build-cache", Skipped: "a build is running (compile); deferred since 12:15"}})
+		Pruned: &headroom.PruneResult{RuleID: "go-build-cache", Skipped: "a build is running (compile); deferred since 12:15"}}, false, true)
 	for _, want := range [][]string{
 		{"free 38.0 GiB of 460.0 GiB", "purgeable 23.0 GiB", "swap 5.0 GiB"},
 		{"Days to full: 2.4"},
@@ -45,9 +45,27 @@ func TestTickLines(t *testing.T) {
 		}
 	}
 
-	without := tickLines(headroom.Tick{Sample: sample})
+	without := tickLines(headroom.Tick{Sample: sample}, false, false)
 	if len(without) != 2 || !hasLine(without, "Days to full: no forecast") {
 		t.Errorf("a tick with no forecast, alert or prune prints two lines, got:\n%s", strings.Join(without, "\n"))
+	}
+
+	noHistory := tickLines(headroom.Tick{Sample: sample,
+		Pruned: &headroom.PruneResult{RuleID: "go-build-cache", Run: "r1", Files: 3, Bytes: gib}}, true, true)
+	for _, want := range [][]string{
+		{"No forecast or alerts", "history cannot be read"},
+		{"Autotrim judged headroom by the 50.0 GiB line alone"},
+		{"Prune go-build-cache: deleted 1.0 GiB in 3 entries"},
+	} {
+		if !hasLine(noHistory, want...) {
+			t.Errorf("a tick without its history needs a line with %q, got:\n%s", want, strings.Join(noHistory, "\n"))
+		}
+	}
+	if hasLine(noHistory, "Days to full: no forecast (it needs") {
+		t.Errorf("without its history the tick must not blame a short history, got:\n%s", strings.Join(noHistory, "\n"))
+	}
+	if hasLine(tickLines(headroom.Tick{Sample: sample}, true, false), "Autotrim") {
+		t.Error("without --autotrim the tick says nothing about autotrim")
 	}
 }
 
@@ -84,7 +102,7 @@ func TestPreviewLines(t *testing.T) {
 		// pasted: in double quotes the shell turns \\[ back into the \[
 		// that find needs to match the bracket literally.
 		{"[prune]", "41.0 GiB", "no undo",
-			`/usr/bin/find "/home/dev/ca[che]/go-build" -mindepth 2 -maxdepth 2 -type f ` +
+			`/usr/bin/find "/home/dev/ca[che]/go-build" -ignore_readdir_race -mindepth 2 -maxdepth 2 -type f ` +
 				`-path "/home/dev/ca\\[che\\]/go-build/[0123456789abcdef][0123456789abcdef]/*-[ad]" ` +
 				`! -newermt "2026-10-02 09:59:59 UTC" -delete`},
 		{"Would delete about 41.0 GiB in 60000 entries", "leaving about 15.0 GiB"},
