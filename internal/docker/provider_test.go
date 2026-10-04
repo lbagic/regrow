@@ -157,9 +157,11 @@ func TestClassifyTiers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// In-use and recently-used records are excluded from the sum.
-	if len(cache) != 1 || cache[0].Bytes != 139000000 {
-		t.Fatalf("build cache = %+v, want one 139MB aggregate", cache)
+	// Only the stale 25MB record counts. In-use and recently-used
+	// records are excluded, and so is the stale 139MB record shared
+	// with an image layer: pruning it frees nothing.
+	if len(cache) != 1 || cache[0].Bytes != 25000000 {
+		t.Fatalf("build cache = %+v, want one 25MB aggregate", cache)
 	}
 }
 
