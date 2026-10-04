@@ -36,6 +36,13 @@ func DirSize(ctx context.Context, path string) (Usage, error) {
 // Lstat is refused or blocked counts as found and Partial: the rule
 // names it, and the reader needs to see that it could not be measured.
 func (w *walker) usage(ctx context.Context, path string) (Usage, bool, error) {
+	return w.usageSeeing(ctx, path, nil)
+}
+
+// usageSeeing is usage that also hands every entry below path to see.
+// see runs on walk workers, concurrently, and may run after
+// usageSeeing has returned for a directory that answered late.
+func (w *walker) usageSeeing(ctx context.Context, path string, see func(dir string, e fs.DirEntry)) (Usage, bool, error) {
 	info, err := w.lstat(ctx, path)
 	switch {
 	case absent(err):
@@ -60,6 +67,9 @@ func (w *walker) usage(ctx context.Context, path string) (Usage, bool, error) {
 		var subdirs []string
 		ok := true
 		for _, e := range batch {
+			if see != nil {
+				see(dir, e)
+			}
 			fi, err := e.Info()
 			if err != nil {
 				ok = ok && !unreadable(err)

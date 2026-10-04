@@ -183,6 +183,61 @@ func TestExecutePreActionFailureBlocksCommand(t *testing.T) {
 	}
 }
 
+func recheckPlan() engine.Plan {
+	const path = "/private/tmp/claude-1000/-Users-t-proj/11111111-1111-4111-8111-111111111111"
+	return engine.Plan{Actions: []engine.Action{{
+		RuleID: "agent-scratch", ItemKey: path, Kind: engine.ActionTrash, Path: path, Bytes: 500,
+		Command: trash.PreviewCommand(path), PreAction: engine.PreActionAgentScratchRecheck,
+	}}}
+}
+
+func TestExecutePreActionGatesTrashMove(t *testing.T) {
+	for _, refuse := range []bool{false, true} {
+		log := &memLog{}
+		mover := &fakeMover{}
+		var checked []string
+		e := &Executor{Trash: mover, Log: log, Now: fixedNow,
+			PreActions: map[string]PreAction{
+				engine.PreActionAgentScratchRecheck: func(_ context.Context, a engine.Action) (*trash.Receipt, error) {
+					checked = append(checked, a.Path)
+					if refuse {
+						return nil, errors.New("session is running again")
+					}
+					return nil, nil
+				},
+			}}
+		res, err := e.Execute(context.Background(), recheckPlan())
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := recheckPlan().Actions[0].Path
+		if len(checked) != 1 || checked[0] != path {
+			t.Fatalf("refuse=%v: pre-action saw %v, want the item's path once", refuse, checked)
+		}
+		if refuse {
+			if len(mover.moved) != 0 || res.Failed != 1 || log.entries[1].Event != oplog.EventFail {
+				t.Errorf("a refused recheck must fail the action without moving: moved %v, %+v", mover.moved, res)
+			}
+			continue
+		}
+		if len(mover.moved) != 1 || res.Done != 1 || log.entries[1].Receipt == nil || log.entries[1].Receipt.To != "/staging"+path {
+			t.Errorf("a passed recheck must move and journal the move's receipt: moved %v, %+v, %+v", mover.moved, res, log.entries[1])
+		}
+	}
+}
+
+func TestExecuteTrashWithUnregisteredPreActionDoesNotMove(t *testing.T) {
+	mover := &fakeMover{}
+	e := &Executor{Trash: mover, Log: &memLog{}, Now: fixedNow}
+	res, err := e.Execute(context.Background(), recheckPlan())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mover.moved) != 0 || res.Failed != 1 {
+		t.Errorf("a Trash move whose pre-action is not registered must not run: moved %v, %+v", mover.moved, res)
+	}
+}
+
 func TestExecutePreActionReceiptJournaledOnCommandFailure(t *testing.T) {
 	// Export succeeded, rm then failed: the journal must still say
 	// where the backup landed.

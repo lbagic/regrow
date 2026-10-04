@@ -35,6 +35,8 @@ func ActionCommand(a engine.Action) string {
 	case "":
 	case engine.PreActionVolumeExport:
 		s += "  (tarball to staging first)"
+	case engine.PreActionAgentScratchRecheck:
+		s += "  (session checked again first)"
 	default:
 		s += "  (pre: " + a.PreAction + ")"
 	}

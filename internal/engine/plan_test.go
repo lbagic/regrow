@@ -67,6 +67,17 @@ func TestBuildPlanCarriesPreAction(t *testing.T) {
 	}
 }
 
+func TestBuildPlanTrashCarriesPreAction(t *testing.T) {
+	f := Finding{
+		Rule:  Rule{ID: "agent-scratch", Risk: RiskCaution, PreAction: PreActionAgentScratchRecheck},
+		Items: []Item{{Path: "/private/tmp/claude-1000/-Users-t-proj/11111111-1111-4111-8111-111111111111", Bytes: 10}},
+	}
+	plan := BuildPlan(testHost, []Finding{f}, selectRules(f))
+	if len(plan.Actions) != 1 || plan.Actions[0].Kind != ActionTrash || plan.Actions[0].PreAction != PreActionAgentScratchRecheck {
+		t.Fatalf("a Trash move must carry the rule's pre-action, got %+v", plan.Actions)
+	}
+}
+
 func TestBuildPlanTrashFallback(t *testing.T) {
 	f := Finding{
 		Rule: Rule{ID: "xcode-derived-data", Risk: RiskSafe},

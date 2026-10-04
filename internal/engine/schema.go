@@ -297,12 +297,17 @@ func (r Rule) PerItemActionable() bool {
 }
 
 // PreActionVolumeExport tarballs a docker volume into staging before
-// `docker volume rm` runs. The registry of hook names lives here so a
-// typo'd pre_action fails at load, like a typo'd placeholder; the
+// `docker volume rm` runs. PreActionAgentScratchRecheck judges an agent
+// session again right before its scratch goes to the Trash and refuses
+// when the session is kept now. The registry of hook names lives here
+// so a typo'd pre_action fails at load, like a typo'd placeholder; the
 // implementations are registered on the executor.
-const PreActionVolumeExport = "docker-volume-export"
+const (
+	PreActionVolumeExport        = "docker-volume-export"
+	PreActionAgentScratchRecheck = "agent-scratch-recheck"
+)
 
-var knownPreActions = map[string]bool{PreActionVolumeExport: true}
+var knownPreActions = map[string]bool{PreActionVolumeExport: true, PreActionAgentScratchRecheck: true}
 
 var idRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
@@ -382,8 +387,8 @@ func (r Rule) Validate() error {
 		if !knownPreActions[r.PreAction] {
 			errs = append(errs, fmt.Sprintf("unknown pre_action %q", r.PreAction))
 		}
-		if !r.NativeCommand.PerItem() {
-			errs = append(errs, "pre_action requires a per-item native_command — the hook runs once per item")
+		if !r.PerItemActionable() {
+			errs = append(errs, "pre_action requires a per-item action, a Trash move or a per-item native_command — the hook runs once per item")
 		}
 	}
 	if len(errs) > 0 {
