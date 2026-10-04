@@ -19,7 +19,9 @@ const (
 	deferLimit = 2 * time.Hour
 	// deferGap is the longest pause between two deferrals that still
 	// counts as one unbroken run: a laptop asleep for hours was not
-	// building for hours.
+	// building for hours. It needs ticks at least hourly; the menubar
+	// ticks every 15 minutes. With rarer ticks every deferral starts a
+	// new clock and the 2 h override never fires.
 	deferGap = time.Hour
 	// criticalFree is the free space under which a prune stops
 	// waiting for builds once deferLimit has passed.

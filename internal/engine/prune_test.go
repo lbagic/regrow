@@ -41,9 +41,12 @@ var (
 		"ff/e01-a":  time.Hour,
 	}
 	// Every decoy is older than every entry: age alone would take it.
+	// other/ stands for another tool's files when GOCACHE is a shared
+	// dir; AB/ is not a shard, since Go writes lowercase hex.
 	fixtureDecoys = []string{
 		"README", "trim.txt", "testexpire.txt", "stray-a",
 		"00/notes.txt", "00/e-b", "fuzz/pkg/seed-a", "3f/dir-a/inner-a",
+		"other/x-a", "fuzz/x-a", "AB/x-a", "abc/x-d",
 	}
 )
 
@@ -53,7 +56,8 @@ func newCacheFixture(t *testing.T) cacheFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fx := cacheFixture{host: Host{OS: "darwin", Home: filepath.Join(root, "home")}}
+	// Glob characters in the path: the command must match them literally.
+	fx := cacheFixture{host: Host{OS: "darwin", Home: filepath.Join(root, "ho[me] *?")}}
 	fx.cache = filepath.Join(fx.host.Home, "Library", "Caches", "go-build")
 	plant := func(rel string, body []byte, age time.Duration) {
 		p := filepath.Join(fx.cache, rel)
@@ -166,7 +170,8 @@ func TestPrunePlanTakesOldestHoursUpToTheNeed(t *testing.T) {
 			a := plan.Actions[0]
 			cutoff := hourEnd(tt.wantCutoffAge)
 			wantCmd := []string{"/usr/bin/find", fx.cache, "-mindepth", "2", "-maxdepth", "2", "-type", "f",
-				"-name", "*-[ad]", "!", "-newermt", cutoff.UTC().Format("2006-01-02 15:04:05") + " UTC", "-delete"}
+				"-path", globEscape(fx.cache) + "/[0123456789abcdef][0123456789abcdef]/*-[ad]",
+				"!", "-newermt", cutoff.UTC().Format("2006-01-02 15:04:05") + " UTC", "-delete"}
 			if a.Kind != ActionPrune || a.RuleID != RuleGoBuildCache || a.Path != fx.cache || !reflect.DeepEqual(a.Command, wantCmd) {
 				t.Errorf("action = %+v\nwant command %q", a, wantCmd)
 			}
@@ -410,4 +415,20 @@ func TestEmbeddedGoBuildRuleCarriesThePolicy(t *testing.T) {
 		return
 	}
 	t.Fatal("no go-build-cache rule in the embedded catalog")
+}
+
+func TestGlobEscape(t *testing.T) {
+	if got, want := globEscape(`/u/ho[me] *?\x`), `/u/ho\[me\] \*\?\\x`; got != want {
+		t.Errorf("globEscape = %q, want %q", got, want)
+	}
+	for _, name := range []string{"00", "3f", "a7", "ff"} {
+		if !isShard(name) {
+			t.Errorf("isShard(%q) = false", name)
+		}
+	}
+	for _, name := range []string{"AB", "0g", "abc", "a", "fuzz", ""} {
+		if isShard(name) {
+			t.Errorf("isShard(%q) = true", name)
+		}
+	}
 }

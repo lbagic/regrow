@@ -56,6 +56,81 @@ func TestReadCorruptLineFailsLoudly(t *testing.T) {
 	}
 }
 
+func TestAppendAfterACutShortLineKeepsTheJournalReadable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "oplog.jsonl")
+	l, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Append(Entry{Time: t0(0), Run: "r1", Seq: 1, Event: EventStart, RuleID: "go-build-cache", Kind: "prune"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// The done line hit a full disk halfway.
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(`{"time":"2026-07-13T12:00:01Z","run":"r1","seq":1,"event":"do`); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := Read(path); err != nil || len(got) != 1 {
+		t.Fatalf("a cut-short last line must not lock the journal: %d entries, %v", len(got), err)
+	}
+
+	l, err = Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Append(Entry{Time: t0(2), Run: "r2", Seq: 1, Event: EventStart, RuleID: "npm-cache"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Read(path)
+	if err != nil || len(got) != 2 || got[1].Run != "r2" {
+		t.Fatalf("the line appended after a fragment must read back whole: %+v, %v", got, err)
+	}
+}
+
+func TestReadSkipsOnlyCutShortLines(t *testing.T) {
+	good := `{"run":"r1","seq":1,"event":"start"}`
+	tests := []struct {
+		name   string
+		middle string
+		ok     bool
+	}{
+		{"cut inside a string", `{"run":"r1","seq":2,"event":"st`, true},
+		{"cut after a comma", `{"run":"r1",`, true},
+		{"just the brace", `{`, true},
+		{"blank line", ``, true},
+		{"not json", `not json`, false},
+		{"zeros from a crash", "\x00\x00\x00\x00", false},
+		{"two lines glued together", `{"run":"r1","se{"run":"r2"}`, false},
+		{"whole object, wrong type", `{"seq":"one"}`, false},
+		{"array cut short", `[1,2`, false},
+	}
+	for _, tt := range tests {
+		path := filepath.Join(t.TempDir(), "oplog.jsonl")
+		if err := os.WriteFile(path, []byte(good+"\n"+tt.middle+"\n"+good+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		got, err := Read(path)
+		if tt.ok && (err != nil || len(got) != 2) {
+			t.Errorf("%s: want the two whole lines, got %d entries, %v", tt.name, len(got), err)
+		}
+		if !tt.ok && err == nil {
+			t.Errorf("%s: corruption must fail loudly, got %d entries", tt.name, len(got))
+		}
+	}
+}
+
 func TestRunsGroupsAndOrders(t *testing.T) {
 	entries := []Entry{
 		{Time: t0(5), Run: "r2", Seq: 1, Event: EventStart},

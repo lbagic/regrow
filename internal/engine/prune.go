@@ -50,8 +50,9 @@ func (d Duration) MarshalJSON() ([]byte, error) {
 }
 
 // Prune is the policy a cache is trimmed under: delete entries not
-// used for MinAge, oldest first, and stop once the cache is down to
-// KeepUnder. A prune deletes directly, with no Trash and no steward
+// used for MinAge, oldest first, until the cache is down to about
+// KeepUnder. Entries go an hour of mtimes at a time, so the last hour
+// taken can carry the cache below KeepUnder. A prune deletes directly, with no Trash and no steward
 // command, so it exists only for tool-owned caches that regenerate
 // (ARCHITECTURE.md invariants 1, 2 and 4 name the exception).
 type Prune struct {
@@ -129,6 +130,30 @@ const goCacheHeader = "This directory holds cached build artifacts from the Go b
 // the one this command line was written for.
 const findBin = "/usr/bin/find"
 
+// shardGlob matches the 256 shard dirs Go keeps its entries in. The
+// class is spelled out: a range like [0-9a-f] follows the locale's
+// collation in some fnmatch builds.
+const shardGlob = "[0123456789abcdef][0123456789abcdef]"
+
+// entryPattern is the -path pattern for cache entries: files ending in
+// -a or -d inside a shard dir, as Go's own trim selects them. Anything
+// else under GOCACHE (fuzz, another tool's files when GOCACHE is a
+// shared dir) never matches.
+func entryPattern(cache string) string {
+	return globEscape(cache) + "/" + shardGlob + "/*-[ad]"
+}
+
+func globEscape(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if strings.ContainsRune(`*?[]\`, r) {
+			b.WriteByte('\\')
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
 // PrunePlan plans one prune of the rule's cache: a single action whose
 // command deletes the entries last used at or before a cutoff, or a
 // skip saying why not. The cutoff is the end of the earliest hour by
@@ -188,7 +213,7 @@ func PrunePlan(ctx context.Context, host Host, r Rule, req PruneRequest) (Plan, 
 		RuleID: r.ID,
 		Kind:   ActionPrune,
 		Command: []string{findBin, cache, "-mindepth", "2", "-maxdepth", "2", "-type", "f",
-			"-name", "*-[ad]", "!", "-newermt", cutoff.UTC().Format("2006-01-02 15:04:05") + " UTC", "-delete"},
+			"-path", entryPattern(cache), "!", "-newermt", cutoff.UTC().Format("2006-01-02 15:04:05") + " UTC", "-delete"},
 		Path:  cache,
 		Bytes: doomed.Bytes,
 	}}}, survey, nil
@@ -312,8 +337,9 @@ func (h cacheHist) cutoff(want int64, limit time.Time) (time.Time, CacheUsage) {
 }
 
 // surveyCache reads the cache the way the prune command does: regular
-// files two levels down whose name ends in -a or -d. The README,
-// trim.txt, testexpire.txt and anything deeper are not entries.
+// files directly inside a shard dir (two lowercase hex digits) whose
+// name ends in -a or -d. The README, trim.txt, testexpire.txt, other
+// dirs and anything deeper are not entries.
 func surveyCache(ctx context.Context, cache string) (cacheHist, error) {
 	shards, err := os.ReadDir(cache)
 	if err != nil {
@@ -324,7 +350,7 @@ func surveyCache(ctx context.Context, cache string) (cacheHist, error) {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if !shard.IsDir() {
+		if !shard.IsDir() || !isShard(shard.Name()) {
 			continue
 		}
 		entries, err := os.ReadDir(filepath.Join(cache, shard.Name()))
@@ -350,6 +376,18 @@ func surveyCache(ctx context.Context, cache string) (cacheHist, error) {
 		}
 	}
 	return hist, nil
+}
+
+func isShard(name string) bool {
+	if len(name) != 2 {
+		return false
+	}
+	for _, c := range []byte(name) {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func isCacheEntry(name string) bool {

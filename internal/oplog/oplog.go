@@ -6,11 +6,14 @@ package oplog
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/lbagic/regrow/internal/trash"
@@ -86,7 +89,7 @@ func Open(path string) (*Log, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o600)
 	if err != nil {
 		return nil, err
 	}
@@ -98,17 +101,43 @@ func (l *Log) Append(e Entry) error {
 	if err != nil {
 		return err
 	}
+	// A write cut short by a full disk leaves a line with no newline;
+	// starting on a fresh line keeps this one whole.
+	if !endsWithNewline(l.f) {
+		line = append([]byte{'\n'}, line...)
+	}
 	if _, err := l.f.Write(append(line, '\n')); err != nil {
 		return err
 	}
 	return l.f.Sync()
 }
 
+func endsWithNewline(f *os.File) bool {
+	info, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	if info.Size() == 0 {
+		return true
+	}
+	last := make([]byte, 1)
+	if _, err := f.ReadAt(last, info.Size()-1); err != nil {
+		return false
+	}
+	return last[0] == '\n'
+}
+
 func (l *Log) Close() error { return l.f.Close() }
 
 // Read parses the journal. A missing file is an empty history. A
 // corrupt line fails loudly: the journal is the undo contract, and
-// silently skipping lines could undo the wrong thing.
+// silently skipping lines could undo the wrong thing. Two exceptions
+// carry no entry: blank lines, and a line cut short, which is the
+// start of a JSON object and nothing else (a write that hit a full
+// disk). Skipping a cut-short line can only miss a restore, never undo
+// the wrong thing: a start line that failed refused its action, a lost
+// done line drops its receipt, and a lost undo line leaves a receipt
+// whose restore then fails because the item is back.
 func Read(path string) ([]Entry, error) {
 	f, err := os.Open(path)
 	if os.IsNotExist(err) {
@@ -124,13 +153,28 @@ func Read(path string) ([]Entry, error) {
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for n := 1; sc.Scan(); n++ {
+		line := bytes.TrimSpace(sc.Bytes())
+		if len(line) == 0 {
+			continue
+		}
 		var e Entry
-		if err := json.Unmarshal(sc.Bytes(), &e); err != nil {
+		if err := json.Unmarshal(line, &e); err != nil {
+			if cutShort(line, err) {
+				continue
+			}
 			return nil, fmt.Errorf("%s:%d: corrupt oplog line: %w", path, n, err)
 		}
 		out = append(out, e)
 	}
 	return out, sc.Err()
+}
+
+// cutShort reports whether line is an unfinished JSON object: the
+// parser ran out of input with nothing wrong before that.
+func cutShort(line []byte, err error) bool {
+	var se *json.SyntaxError
+	return line[0] == '{' && errors.As(err, &se) && se.Offset == int64(len(line)) &&
+		strings.Contains(se.Error(), "unexpected end of JSON input")
 }
 
 // Run is one execution's journal lines, grouped.

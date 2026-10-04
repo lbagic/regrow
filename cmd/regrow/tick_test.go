@@ -8,6 +8,7 @@ import (
 	"github.com/lbagic/regrow/internal/autopilot"
 	"github.com/lbagic/regrow/internal/engine"
 	"github.com/lbagic/regrow/internal/headroom"
+	"github.com/lbagic/regrow/internal/oplog"
 )
 
 const gib = int64(1) << 30
@@ -78,7 +79,7 @@ func TestPreviewLines(t *testing.T) {
 	for _, want := range [][]string{
 		{"Go build cache", "/home/dev/.cache/go-build"},
 		{"56.0 GiB in 85000 entries"},
-		{"used in the last 48h", "down to 15.0 GiB"},
+		{"used in the last 48h", "an hour of entries at a time, to about 15.0 GiB"},
 		{"DRY RUN", "nothing executed"},
 		// The pattern and the date are quoted, so the line can be pasted.
 		{"[prune]", "41.0 GiB", "no undo", `-name "*-[ad]" ! -newermt "2026-10-02 09:59:59 UTC" -delete`},
@@ -132,5 +133,45 @@ func TestPruneTakesFlagsAfterTheName(t *testing.T) {
 	// turn into a confirmed run.
 	if _, opts, ids, _, err := parseArgs([]string{"clean", "go-build-cache", "--yes"}); err != nil || opts.yes || len(ids) != 2 {
 		t.Errorf("clean must not read flags after ids: yes=%v ids=%q err=%v", opts.yes, ids, err)
+	}
+}
+
+func TestPruneResultLinesWhenNothingRan(t *testing.T) {
+	lines := pruneResultLines(headroom.PruneResult{RuleID: "go-build-cache"})
+	if len(lines) != 1 || lines[0] != "Prune go-build-cache: not run." {
+		t.Errorf("a prune that never ran must not report bytes or free space, got %q", lines)
+	}
+}
+
+func TestStillLockedLines(t *testing.T) {
+	rule := engine.Rule{ID: "go-build-cache"}
+	locked := stillLockedLines(rule, autopilot.Gate(nil, rule))
+	if len(locked) != 1 || !strings.Contains(locked[0], "Autotrim stays locked") || !strings.Contains(locked[0], "regrow prune go-build --yes") {
+		t.Errorf("a skipped manual prune with the gate shut must say so, got %q", locked)
+	}
+	open := []oplog.Entry{
+		{Run: "r1", Seq: 1, Event: oplog.EventStart, RuleID: rule.ID, Kind: "prune"},
+		{Run: "r1", Seq: 1, Event: oplog.EventDone, RuleID: rule.ID},
+	}
+	if got := stillLockedLines(rule, autopilot.Gate(open, rule)); got != nil {
+		t.Errorf("with the gate open there is nothing to say, got %q", got)
+	}
+}
+
+func TestHistoryCountsWhatAPruneMeasured(t *testing.T) {
+	entries := []oplog.Entry{
+		{Event: oplog.EventStart, Kind: "trash", Bytes: 100},
+		{Event: oplog.EventDone},
+		{Event: oplog.EventStart, Kind: "prune", Bytes: 41 << 30},
+		{Event: oplog.EventDone, Pruned: &oplog.Pruned{Files: 3, Bytes: 7 << 30}},
+		{Event: oplog.EventStart, Kind: "prune", Bytes: 5 << 30},
+		{Event: oplog.EventFail, Pruned: &oplog.Pruned{Files: 1, Bytes: 1 << 30}},
+	}
+	var total int64
+	for _, e := range entries {
+		total += entryBytes(e)
+	}
+	if want := int64(100) + 7<<30 + 1<<30; total != want {
+		t.Errorf("history total = %d, want %d: a prune counts what it deleted, not its estimate", total, want)
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -37,6 +38,9 @@ type Autopilot struct {
 	GoEnv     func(context.Context, string) (string, error)
 	RunNative func(context.Context, []string) error
 	Now       func() time.Time
+	// Self is this process's pid: it and its ancestors never count as
+	// a running build.
+	Self int
 }
 
 // New wires the loop to the real machine.
@@ -57,6 +61,7 @@ func New(host engine.Host, catalog []engine.Rule) (*Autopilot, error) {
 		},
 		Processes: headroom.Processes,
 		Now:       time.Now,
+		Self:      os.Getpid(),
 	}, nil
 }
 
@@ -180,6 +185,9 @@ func (a *Autopilot) nameTopProcess(ctx context.Context, alerts []headroom.Alert)
 	return alerts
 }
 
+// autotrim reports a locked gate as an error only when headroom is low
+// enough that a prune would have run; otherwise the tick succeeds and
+// says it is locked. A prune that ran and failed is an error too.
 func (a *Autopilot) autotrim(ctx context.Context, s headroom.Sample, days float64, forecast bool) (*headroom.PruneResult, error) {
 	var rule *engine.Rule
 	for i := range a.Catalog {
@@ -191,19 +199,34 @@ func (a *Autopilot) autotrim(ctx context.Context, s headroom.Sample, days float6
 	if rule == nil {
 		return nil, nil
 	}
-	entries, err := oplog.Read(a.OplogPath)
-	if err != nil {
-		return nil, err
-	}
-	if err := Gate(entries, *rule); err != nil {
-		return nil, err
-	}
+	gate := a.Gate(*rule)
 	target, low := Target(s, days, forecast)
 	if !low {
-		return nil, nil
+		if errors.Is(gate, ErrAutotrimLocked) {
+			return &headroom.PruneResult{RuleID: rule.ID, Skipped: gate.Error()}, nil
+		}
+		return nil, gate
+	}
+	if gate != nil {
+		return nil, gate
 	}
 	res, err := a.prune(ctx, *rule, s.Free, target, true)
+	if err != nil && res.Run == "" {
+		return nil, err
+	}
+	if err == nil && res.Error != "" {
+		err = fmt.Errorf("prune %s failed: %s", rule.ID, res.Error)
+	}
 	return &res, err
+}
+
+// Gate reads the oplog and applies the package-level Gate to it.
+func (a *Autopilot) Gate(r engine.Rule) error {
+	entries, err := oplog.Read(a.OplogPath)
+	if err != nil {
+		return err
+	}
+	return Gate(entries, r)
 }
 
 // Preview is the dry run of a manual prune.
@@ -228,7 +251,7 @@ func (a *Autopilot) Preview(ctx context.Context, r engine.Rule) (Preview, error)
 	p := Preview{Plan: plan, Survey: survey}
 	if r.Prune != nil {
 		if ps, err := a.Processes(ctx); err == nil {
-			p.Running = headroom.Running(ps, r.Prune.UnlessRunning)
+			p.Running = headroom.Running(ps, r.Prune.UnlessRunning, a.Self)
 		}
 	}
 	return p, nil
@@ -250,7 +273,8 @@ func (a *Autopilot) request(free, target int64) engine.PruneRequest {
 
 // prune is one single-flight prune: lock, check for builds, plan,
 // execute through the ordinary executor, report. A skip is a result,
-// not an error.
+// not an error. Run is set only when the executor attempted the
+// action, so an error with no Run means nothing was deleted.
 func (a *Autopilot) prune(ctx context.Context, r engine.Rule, free, target int64, auto bool) (headroom.PruneResult, error) {
 	res := headroom.PruneResult{RuleID: r.ID}
 	skip := func(format string, args ...any) (headroom.PruneResult, error) {
@@ -274,7 +298,7 @@ func (a *Autopilot) prune(ctx context.Context, r engine.Rule, free, target int64
 	if err != nil {
 		return skip("cannot tell whether a build is running: %v", err)
 	}
-	running := headroom.Running(ps, r.Prune.UnlessRunning)
+	running := headroom.Running(ps, r.Prune.UnlessRunning, a.Self)
 	now := a.Now()
 	if auto {
 		next, run := state.deferrals[r.ID].Next(now, len(running) > 0, free)
@@ -307,10 +331,15 @@ func (a *Autopilot) prune(ctx context.Context, r engine.Rule, free, target int64
 	// Every Append syncs; nothing is left to lose at close.
 	defer func() { _ = log.Close() }()
 
-	res.Run = executor.NewRunID(now)
-	res.FreeBefore = free
-	exec := &executor.Executor{Log: log, RunNative: a.RunNative, Now: a.Now, RunID: res.Run}
+	exec := &executor.Executor{Log: log, RunNative: a.RunNative, Now: a.Now, RunID: executor.NewRunID(now)}
 	out, err := exec.Execute(ctx, plan)
+	if out.Done+out.Failed == 0 {
+		if err == nil {
+			err = fmt.Errorf("the prune of %s did not run", r.ID)
+		}
+		return res, err
+	}
+	res.Run, res.FreeBefore = out.RunID, free
 	res.Files, res.Bytes = out.Pruned.Files, out.Pruned.Bytes
 	res.Error = strings.Join(out.Failures, "; ")
 	if after, ferr := a.FreeSpace(); ferr == nil {

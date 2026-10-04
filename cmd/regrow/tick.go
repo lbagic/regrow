@@ -60,6 +60,9 @@ func pruneResultLines(res headroom.PruneResult) []string {
 	if res.Skipped != "" {
 		return []string{fmt.Sprintf("Prune %s: not run: %s.", res.RuleID, strings.TrimSuffix(res.Skipped, "."))}
 	}
+	if res.Run == "" {
+		return []string{fmt.Sprintf("Prune %s: not run.", res.RuleID)}
+	}
 	lines := []string{
 		fmt.Sprintf("Prune %s: deleted %s in %d entries. Run %s.", res.RuleID, tui.HumanBytes(res.Bytes), res.Files, res.Run),
 		fmt.Sprintf("  Free space  %s before, %s after (snapshots can hold freed blocks for a while)",

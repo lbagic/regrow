@@ -59,11 +59,14 @@ func newHarness(t *testing.T) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	home := filepath.Join(root, "home")
+	home := filepath.Join(root, "ho[me] *?")
 	h := &harness{t: t, now: start, free: 40 * gib, cache: filepath.Join(home, "Library", "Caches", "go-build")}
 
 	h.plant("README", "This directory holds cached build artifacts from the Go build system.\n", 200*time.Hour)
 	h.plant("trim.txt", "1790000000\n", 200*time.Hour)
+	for _, rel := range decoys {
+		h.plant(rel, strings.Repeat("x", 4096), 200*time.Hour)
+	}
 	for rel, age := range entryAges {
 		h.plant(rel, strings.Repeat("x", 4096), age)
 	}
@@ -173,6 +176,19 @@ func (h *harness) openGate() {
 }
 
 var allEntries = []string{"00/e100-a", "3f/e72-d", "a7/e47-d", "a7/e50-a", "ff/e01-a"}
+
+// decoys are older than every entry and must outlive every prune:
+// another tool's files under a shared GOCACHE, and Go's fuzz cache.
+var decoys = []string{"other/x-a", "fuzz/x-a"}
+
+func (h *harness) decoysLeft() bool {
+	for _, rel := range decoys {
+		if _, err := os.Lstat(filepath.Join(h.cache, rel)); err != nil {
+			return false
+		}
+	}
+	return true
+}
 
 func TestGate(t *testing.T) {
 	rule := engine.Rule{ID: engine.RuleGoBuildCache}
@@ -346,6 +362,18 @@ func TestTickNamesTheTopProcessOnAcuteAlerts(t *testing.T) {
 	}
 }
 
+func TestLockedAutotrimIsNoErrorWhileHeadroomIsFine(t *testing.T) {
+	h := newHarness(t)
+	h.free = 80 * gib
+	tick, err := h.ap.Tick(context.Background(), true)
+	if err != nil {
+		t.Fatalf("a locked autotrim with headroom to spare must not fail the tick: %v", err)
+	}
+	if tick.Pruned == nil || !strings.Contains(tick.Pruned.Skipped, "autotrim is locked") || len(h.ran) != 0 {
+		t.Errorf("the tick must say autotrim is locked and run nothing: %+v, ran %v", tick.Pruned, h.ran)
+	}
+}
+
 func TestAutotrimIsRefusedUntilOneManualPruneCompleted(t *testing.T) {
 	h := newHarness(t)
 
@@ -368,8 +396,8 @@ func TestAutotrimIsRefusedUntilOneManualPruneCompleted(t *testing.T) {
 	if res.Files != 3 || res.Bytes != 3*h.size || res.Run == "" {
 		t.Errorf("manual prune result = %+v, want 3 files, %d bytes", res, 3*h.size)
 	}
-	if got, want := h.entries(), []string{"a7/e47-d", "ff/e01-a"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("entries left = %v, want %v", got, want)
+	if got, want := h.entries(), []string{"a7/e47-d", "ff/e01-a"}; !reflect.DeepEqual(got, want) || !h.decoysLeft() {
+		t.Fatalf("entries left = %v, want %v and every decoy", got, want)
 	}
 
 	// Three days on, the 47 h entry is past min_age and the gate is open.
@@ -588,5 +616,54 @@ func TestFindRule(t *testing.T) {
 	}
 	if got := Names(catalog); !reflect.DeepEqual(got, []string{"go-build"}) {
 		t.Errorf("Names = %v", got)
+	}
+}
+
+func TestAutotrimFailedPruneFailsTheTick(t *testing.T) {
+	h := newHarness(t)
+	h.openGate()
+	h.ap.RunNative = func(context.Context, []string) error { return errors.New("exit status 1") }
+
+	tick, err := h.ap.Tick(context.Background(), true)
+	if err == nil || !strings.Contains(err.Error(), "prune go-build-cache failed: go-build-cache: exit status 1") {
+		t.Fatalf("a failed find must fail the tick, got %v", err)
+	}
+	if tick.Pruned == nil || tick.Pruned.Run == "" || tick.Pruned.Error == "" {
+		t.Errorf("the failed prune is still reported: %+v", tick.Pruned)
+	}
+}
+
+func TestPruneErrorBeforeExecutingReportsNoRun(t *testing.T) {
+	h := newHarness(t)
+	h.openGate()
+	// The state file cannot be opened, so the prune stops at the lock.
+	if err := os.MkdirAll(filepath.Join(h.ap.StateDir, stateFileName), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	tick, err := h.ap.Tick(context.Background(), true)
+	if err == nil || tick.Pruned != nil {
+		t.Errorf("autotrim: pruned = %+v, err %v; want no result and the error", tick.Pruned, err)
+	}
+	res, err := h.ap.Prune(context.Background(), h.rule())
+	if err == nil || res.Run != "" || res.Files != 0 {
+		t.Errorf("manual: %+v, err %v; want no run and the error", res, err)
+	}
+	if len(h.ran) != 0 {
+		t.Errorf("nothing may run, ran %v", h.ran)
+	}
+}
+
+func TestPruneUnderGoRunIsNotItsOwnBuild(t *testing.T) {
+	h := newHarness(t)
+	h.ap.Self = 300
+	h.procs = []headroom.Process{
+		{PID: 100, PPID: 1, Name: "zsh"},
+		{PID: 200, PPID: 100, Name: "go"},
+		{PID: 300, PPID: 200, Name: "regrow"},
+	}
+	res, err := h.ap.Prune(context.Background(), h.rule())
+	if err != nil || res.Skipped != "" || res.Files != 3 {
+		t.Fatalf("`go run ./cmd/regrow prune go-build --yes` must not defer to its own go: %+v, %v", res, err)
 	}
 }

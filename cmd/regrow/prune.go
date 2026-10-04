@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"strings"
 
 	"github.com/lbagic/regrow/internal/autopilot"
 	"github.com/lbagic/regrow/internal/engine"
+	"github.com/lbagic/regrow/internal/oplog"
 	"github.com/lbagic/regrow/internal/tui"
 )
 
@@ -57,12 +59,20 @@ func runPrune(host engine.Host, catalog []engine.Rule, names []string, opts opti
 	}
 
 	res, err := ap.Prune(context.Background(), rule)
+	if err != nil && res.Run == "" {
+		// Nothing ran: the error is the whole story.
+		return err
+	}
 	if opts.asJSON {
 		if jerr := emitJSON(res); jerr != nil {
 			return jerr
 		}
 	} else {
-		for _, line := range pruneResultLines(res) {
+		lines := pruneResultLines(res)
+		if res.Run == "" {
+			lines = append(lines, stillLockedLines(rule, ap.Gate(rule))...)
+		}
+		for _, line := range lines {
 			fmt.Println(line)
 		}
 	}
@@ -72,6 +82,17 @@ func runPrune(host engine.Host, catalog []engine.Rule, names []string, opts opti
 	return err
 }
 
+// stillLockedLines explains a manual prune that did not run while the
+// autotrim gate is still shut: the owner may take that run for the one
+// that opens it.
+func stillLockedLines(r engine.Rule, gate error) []string {
+	if !errors.Is(gate, autopilot.ErrAutotrimLocked) {
+		return nil
+	}
+	return []string{fmt.Sprintf("Autotrim stays locked: it opens after the first `regrow prune %s --yes` that deletes, and this one did not run.",
+		autopilot.Name(r))}
+}
+
 func previewLines(r engine.Rule, p autopilot.Preview) []string {
 	var lines []string
 	s := p.Survey
@@ -79,7 +100,7 @@ func previewLines(r engine.Rule, p autopilot.Preview) []string {
 		lines = append(lines,
 			fmt.Sprintf("%s  %s", r.Title, s.Cache),
 			fmt.Sprintf("  now     %s in %d entries", tui.HumanBytes(s.CacheBytes), s.CacheFiles),
-			fmt.Sprintf("  policy  keep every entry used in the last %s; trim the rest, oldest first, down to %s",
+			fmt.Sprintf("  policy  keep every entry used in the last %s; trim the rest, oldest first, an hour of entries at a time, to about %s",
 				r.Prune.MinAge, tui.HumanBytes(int64(r.Prune.KeepUnder))),
 		)
 	}
@@ -102,4 +123,17 @@ func previewLines(r engine.Rule, p autopilot.Preview) []string {
 		lines = append(lines, fmt.Sprintf("A build is running (%s): --yes refuses until it has finished.", strings.Join(p.Running, ", ")))
 	}
 	return append(lines, fmt.Sprintf("Run `regrow prune %s --yes` to execute.", autopilot.Name(r)))
+}
+
+// entryBytes is what a journal line adds to a run's total in `regrow
+// history`: a start line's planned bytes, except for a prune, whose
+// done or fail line carries what it measured.
+func entryBytes(e oplog.Entry) int64 {
+	switch {
+	case e.Pruned != nil:
+		return e.Pruned.Bytes
+	case e.Event == oplog.EventStart && e.Kind != string(engine.ActionPrune):
+		return e.Bytes
+	}
+	return 0
 }
