@@ -73,13 +73,13 @@ func (t *tail) Write(p []byte) (int, error) {
 }
 
 // String returns the kept output, starting at a line boundary when
-// the head was dropped.
+// the head was dropped and a later line remains.
 func (t *tail) String() string {
-	s := string(t.buf)
+	s := strings.TrimSpace(string(t.buf))
 	if t.dropped {
 		if _, rest, cut := strings.Cut(s, "\n"); cut {
-			s = rest
+			s = strings.TrimSpace(rest)
 		}
 	}
-	return strings.TrimSpace(s)
+	return s
 }

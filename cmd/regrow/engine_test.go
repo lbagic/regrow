@@ -282,3 +282,45 @@ func TestEngineTickIsTheAutopilotTick(t *testing.T) {
 		t.Fatalf("history = %+v, %v; want the tick's sample recorded", history, err)
 	}
 }
+
+// `regrow clean` and the engine build their executor in one place, and
+// it registers every hook a rule may declare: a hook known to the
+// schema but missing here would fail each of its actions.
+func TestRunExecutorRegistersEveryPreAction(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	host := engine.Host{OS: "darwin", Home: t.TempDir()}
+	for name, stream := range map[string]func(context.Context, []string, io.Writer) error{"clean": nil, "engine": dockerStream} {
+		ex, release, err := newRunExecutor(host, "fixture-run", stream)
+		if err != nil {
+			t.Fatal(err)
+		}
+		release()
+		for _, hook := range engine.KnownPreActions() {
+			if ex.PreActions[hook] == nil {
+				t.Errorf("%s's executor has no %s hook", name, hook)
+			}
+		}
+		if len(ex.PreActions) != len(engine.KnownPreActions()) {
+			t.Errorf("%s's executor registers %d hooks, the schema knows %d", name, len(ex.PreActions), len(engine.KnownPreActions()))
+		}
+	}
+}
+
+// The autopilot's default runner inherits the process's stdio, which
+// in the engine is the protocol. The engine's runner captures output,
+// and only it puts a command's stderr into the error.
+func TestEngineAutopilotRunsStewardCommandsCaptured(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	ap, err := engineAutopilot(engine.Host{OS: "darwin", Home: t.TempDir()}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ap.RunNative == nil {
+		t.Fatal("the engine's autopilot runs steward commands on inherited stdio")
+	}
+	err = ap.RunNative(context.Background(), []string{"/bin/sh", "-c", "echo captured-reason >&2; exit 3"})
+	if err == nil || !strings.Contains(err.Error(), "captured-reason") {
+		t.Fatalf("err = %v, want the command's stderr captured into it", err)
+	}
+}

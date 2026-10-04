@@ -3,6 +3,7 @@ package engine
 import (
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -308,6 +309,17 @@ const (
 )
 
 var knownPreActions = map[string]bool{PreActionVolumeExport: true, PreActionAgentScratchRecheck: true}
+
+// KnownPreActions lists every hook name a rule may declare, sorted. An
+// executor that will run arbitrary catalog plans registers them all.
+func KnownPreActions() []string {
+	names := make([]string, 0, len(knownPreActions))
+	for name := range knownPreActions {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
 
 var idRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 

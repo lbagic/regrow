@@ -64,6 +64,15 @@ func (g *gatedMover) waitEntered(t *testing.T, path string) {
 
 const bothRules = `["fixture-cache","fixture-logs"]`
 
+// neverTick is a tick seam for tests in which every tick must be
+// refused before it runs.
+func neverTick(t *testing.T) func(context.Context, bool) (headroom.Tick, error) {
+	return func(context.Context, bool) (headroom.Tick, error) {
+		t.Error("a tick ran while another operation was in flight")
+		return headroom.Tick{}, nil
+	}
+}
+
 func TestScanPlanExecuteOverPipes(t *testing.T) {
 	m := newMachine(t)
 	srv := m.server()
@@ -400,6 +409,7 @@ func TestCancelThenRescan(t *testing.T) {
 		// A finding that arrives after the cancel must not be sent.
 		emit(1, m.findings()[1], 0)
 	}
+	srv.Tick = neverTick(t)
 	p := start(t, srv)
 	p.expect("hello")
 
@@ -408,6 +418,8 @@ func TestCancelThenRescan(t *testing.T) {
 
 	p.send(`{"type":"scan","id":"s2"}`)
 	p.expectError("s2", CodeBusy)
+	p.send(`{"type":"tick","id":"t"}`)
+	p.expectError("t", CodeBusy)
 	p.send(`{"type":"plan","id":"p1","scan_id":"` + first + `"}`)
 	p.expectError("p1", CodeScanRunning)
 
@@ -437,6 +449,7 @@ func TestBusyWhileExecuting(t *testing.T) {
 	gate := newGatedMover(m.mover())
 	srv := m.server()
 	srv.NewExecutor = m.executors(gate)
+	srv.Tick = neverTick(t)
 	p := start(t, srv)
 	p.expect("hello")
 	scanID := p.scanned("s", 2)
@@ -451,6 +464,8 @@ func TestBusyWhileExecuting(t *testing.T) {
 	p.expectError("s2", CodeBusy)
 	p.send(`{"type":"execute","id":"x2","plan_id":"` + logsPlan.PlanID + `"}`)
 	p.expectError("x2", CodeBusy)
+	p.send(`{"type":"tick","id":"t","autotrim":true}`)
+	p.expectError("t", CodeBusy)
 	// A plan built while the execute runs would replay against
 	// findings it is changing.
 	p.send(`{"type":"plan","id":"p3","scan_id":"` + scanID + `"}`)
@@ -890,4 +905,85 @@ func TestPlanIDSortsByTimeAndCarries128Bits(t *testing.T) {
 	if got := len(a) - len(stamp); got != 32 {
 		t.Fatalf("plan id carries %d hex digits of entropy, want 32 (128 bits)", got)
 	}
+}
+
+// A Trash rule's pre_action hook runs before the move, and a hook that
+// refuses journals a fail and moves nothing. The move's time limit
+// starts after the hook: the hook is not inside it.
+func TestTrashPreActionRunsBeforeTheMoveAndCanRefuse(t *testing.T) {
+	m := newMachine(t)
+	rules := m.catalog()
+	findings := m.findings()
+	for i := range rules {
+		rules[i].PreAction = engine.PreActionAgentScratchRecheck
+		findings[i].Rule = rules[i]
+	}
+	var order []string
+	mover := m.mover()
+	srv := m.server()
+	srv.Catalog = rules
+	srv.Scan = scanOf(findings)
+	// The hook outlasts the move limit: were it inside the limit, the
+	// first action would time out.
+	srv.moveLimit = 50 * time.Millisecond
+	srv.NewExecutor = func(string) (*executor.Executor, func(), error) {
+		log, err := oplog.Open(m.logPath)
+		if err != nil {
+			return nil, nil, err
+		}
+		ex := &executor.Executor{
+			Log: log,
+			Trash: moverFunc(func(ctx context.Context, path string) (trash.Receipt, error) {
+				order = append(order, "move:"+filepath.Base(path))
+				return mover.Move(ctx, path)
+			}),
+			PreActions: map[string]executor.PreAction{
+				engine.PreActionAgentScratchRecheck: func(_ context.Context, a engine.Action) (*trash.Receipt, error) {
+					order = append(order, "hook:"+filepath.Base(a.Path))
+					if a.Path == m.logs {
+						return nil, errors.New("the session is live again")
+					}
+					time.Sleep(120 * time.Millisecond)
+					return nil, nil
+				},
+			},
+			RunNative: func(_ context.Context, argv []string) error {
+				t.Errorf("a trash-only plan ran a steward command: %v", argv)
+				return errors.New("refused by the test")
+			},
+		}
+		return ex, func() { _ = log.Close() }, nil
+	}
+	p := start(t, srv)
+	p.expect("hello")
+	planned := p.planned("p", p.scanned("s", 2), bothRules)
+	for _, a := range planned.Plan.Actions {
+		if a.Kind != engine.ActionTrash || a.PreAction != engine.PreActionAgentScratchRecheck {
+			t.Fatalf("action = %+v, want a Trash move carrying the hook", a)
+		}
+	}
+
+	p.send(`{"type":"execute","id":"x","plan_id":"` + planned.PlanID + `"}`)
+	run := p.expect("journal/x", "journal/x", "journal/x", "journal/x", "done/x")
+	if got := strings.Join(order, ","); got != "hook:cache,move:cache,hook:logs" {
+		t.Fatalf("order = %s, want each hook before its move and no move after a refusal", got)
+	}
+	if e := run[1].Entry; e.Event != oplog.EventDone || e.Receipt == nil || e.Receipt.Original != m.cache {
+		t.Errorf("the accepted move journaled %s", run[1].raw)
+	}
+	if e := run[3].Entry; e.Event != oplog.EventFail || !strings.Contains(e.Error, "the session is live again") || e.Receipt != nil {
+		t.Errorf("the refused move journaled %s, want a fail with the hook's reason", run[3].raw)
+	}
+	if res := run[4].Result; res.Done != 1 || res.Failed != 1 {
+		t.Errorf("result = %s", run[4].raw)
+	}
+	if exists(m.cache) || !exists(m.logs) {
+		t.Error("want the accepted item moved and the refused one left in place")
+	}
+}
+
+type moverFunc func(ctx context.Context, path string) (trash.Receipt, error)
+
+func (f moverFunc) Move(ctx context.Context, path string) (trash.Receipt, error) {
+	return f(ctx, path)
 }

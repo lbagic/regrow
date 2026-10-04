@@ -61,17 +61,25 @@ func newEngineServer(host engine.Host, catalog []engine.Rule, flags []string) *p
 	}
 }
 
-// tickFor runs the autopilot's tick with the engine's steward-command
-// runner: the prune's find must not inherit the protocol's stdio.
 func tickFor(host engine.Host, catalog []engine.Rule) func(context.Context, bool) (headroom.Tick, error) {
 	return func(ctx context.Context, autotrim bool) (headroom.Tick, error) {
-		ap, err := autopilot.New(host, catalog)
+		ap, err := engineAutopilot(host, catalog)
 		if err != nil {
 			return headroom.Tick{}, err
 		}
-		ap.RunNative = protocol.RunNative
 		return ap.Tick(ctx, autotrim)
 	}
+}
+
+// engineAutopilot is the autopilot with the engine's steward-command
+// runner: the prune's find must not inherit the protocol's stdio.
+func engineAutopilot(host engine.Host, catalog []engine.Rule) (*autopilot.Autopilot, error) {
+	ap, err := autopilot.New(host, catalog)
+	if err != nil {
+		return nil, err
+	}
+	ap.RunNative = protocol.RunNative
+	return ap, nil
 }
 
 // cleanFlags are the flags that make `regrow clean` in Terminal load

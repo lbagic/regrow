@@ -57,6 +57,15 @@ func TestRunNativeKeepsOnlyTheTail(t *testing.T) {
 	}
 }
 
+func TestRunNativeKeepsTheTailOfOneLongLine(t *testing.T) {
+	// One line longer than the tail, newline at its end: there is no
+	// later line to start at, so the kept end of this one is the text.
+	err := RunNative(context.Background(), sh(`printf '%05000d-the-reason\n' 0; exit 1`))
+	if err == nil || !strings.HasSuffix(err.Error(), "0000-the-reason") {
+		t.Fatalf("err = %.60q…, want the end of the long line", err)
+	}
+}
+
 func TestRunNativeToSendsStdoutToTheWriter(t *testing.T) {
 	var data strings.Builder
 	err := RunNativeTo(context.Background(), sh(`printf payload; echo why-it-failed >&2; exit 2`), &data)
