@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -14,8 +15,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/lbagic/regrow/internal/autopilot"
 	"github.com/lbagic/regrow/internal/engine"
 	"github.com/lbagic/regrow/internal/executor"
+	"github.com/lbagic/regrow/internal/headroom"
 	"github.com/lbagic/regrow/internal/oplog"
 	"github.com/lbagic/regrow/internal/trash"
 )
@@ -28,7 +31,8 @@ const (
 	defaultMoveLimit = time.Minute
 	// defaultExitGrace bounds what shutdown waits for that cannot lose
 	// data: a canceled scan winding down, and a reader that stopped
-	// draining events. An execute is always waited for in full.
+	// draining events. An execute or a tick is always waited for in
+	// full.
 	defaultExitGrace = 5 * time.Second
 )
 
@@ -48,9 +52,13 @@ type Server struct {
 	// Account computes a finished scan's ledger, in the shape of
 	// engine.Account. Nil omits the summary event.
 	Account func(findings []engine.Finding) engine.Ledger
-	// Headroom samples free space for a scan's first event; the
-	// sample's fields go on the event line. Nil omits the event.
-	Headroom func(ctx context.Context) (any, error)
+	// Headroom samples free space for a scan's first event, in the
+	// shape of headroom.Take. Nil omits the event.
+	Headroom func(ctx context.Context) (headroom.Sample, error)
+	// Tick is one pass of the watch loop, in the shape of
+	// autopilot.Autopilot.Tick, autotrim gate included. Nil refuses
+	// tick requests.
+	Tick func(ctx context.Context, autotrim bool) (headroom.Tick, error)
 	// NewExecutor builds the executor of one run: journal open, mover
 	// and pre-actions pointed at the run's staging directory. release
 	// is called once the run has ended. The server sets the run id,
@@ -70,6 +78,9 @@ type Server struct {
 
 	exitGrace time.Duration
 	moveLimit time.Duration
+	// stopping, when set, runs in shutdown once the operation in
+	// flight has been told to stop.
+	stopping func()
 }
 
 type scanStatus int
@@ -92,13 +103,14 @@ type scanState struct {
 
 type heldPlan struct {
 	plan    engine.Plan
+	scan    *scanState
 	created time.Time
 	// expired marks a plan pruned for age; its body is dropped, its id
 	// kept so an execute of it still hears plan_expired.
 	expired bool
 }
 
-// operation is the one scan or execute in flight.
+// operation is the one scan, execute or tick in flight.
 type operation struct {
 	kind string
 	re   string
@@ -124,7 +136,7 @@ type session struct {
 
 // Serve runs the protocol until in ends or ctx is canceled, then shuts
 // down: a scan in flight is canceled, an execute finishes and journals
-// its current action and stops there. It returns in's read error, nil
+// its current action and stops there, a tick runs to its end. It returns in's read error, nil
 // at EOF.
 func (srv *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 	s := srv.newSession(out)
@@ -177,8 +189,10 @@ loop:
 
 // ScanOnce writes the events of one scan to out, as a scan request
 // would, without hello and without re: `regrow scan --json`. It
-// returns once every event is written, or the writer failed.
-func (srv *Server) ScanOnce(ctx context.Context, out io.Writer) {
+// returns once every event is written, or with the write error that
+// stopped them: a stream cut short has no done line, and its reader
+// must hear so.
+func (srv *Server) ScanOnce(ctx context.Context, out io.Writer) error {
 	s := srv.newSession(out)
 	ctx, cancel := context.WithCancel(ctx)
 	s.mu.Lock()
@@ -186,6 +200,7 @@ func (srv *Server) ScanOnce(ctx context.Context, out io.Writer) {
 	s.mu.Unlock()
 	s.runScan(ctx, cancel, op, sc)
 	s.out.close(0)
+	return s.out.writeErr()
 }
 
 func (srv *Server) newSession(out io.Writer) *session {
@@ -237,12 +252,14 @@ func (s *session) handle(l requestLine) {
 		s.startExecute(req)
 	case reqCancel:
 		s.cancel(req)
+	case reqTick:
+		s.startTick(req)
 	default:
 		s.emit(failure(req.ID, CodeUnknownRequest, fmt.Sprintf("unknown request type %q", req.Type)))
 	}
 }
 
-// busy refuses req while a scan or execute is in flight. The caller
+// busy refuses req while a scan, execute or tick is in flight. The caller
 // holds s.mu.
 func (s *session) busy(req request) bool {
 	cur := s.inflight
@@ -397,6 +414,14 @@ func (s *session) plan(req request) {
 		}
 	}
 	plan := engine.BuildPlanWith(s.srv.Host, sc.findings, selected, engine.PlanOptions{NoSudo: true, CleanFlags: s.srv.CleanFlags})
+	if len(plan.Unmatched) > 0 {
+		// As `regrow clean` does: a typo must never run less, or for a
+		// rule atom more, than the peer meant.
+		ev := failure(req.ID, CodeUnmatched, "selectors matched nothing in this scan: "+strings.Join(plan.Unmatched, ", "))
+		ev.Unmatched = plan.Unmatched
+		s.emit(ev)
+		return
+	}
 	if plan.Actions == nil {
 		plan.Actions = []engine.Action{}
 	}
@@ -408,7 +433,7 @@ func (s *session) plan(req request) {
 		}
 	}
 	id := newPlanID(now)
-	s.plans[id] = heldPlan{plan: plan, created: now}
+	s.plans[id] = heldPlan{plan: plan, scan: sc, created: now}
 	s.emit(planEvent{head{"plan", req.ID}, id, plan, plan.Totals()})
 	s.emit(done(req.ID))
 }
@@ -441,17 +466,12 @@ func (s *session) startExecute(req request) {
 		s.emit(failure(req.ID, CodePlanExpired, fmt.Sprintf("plan %s expired: plan again", req.PlanID)))
 		return
 	}
-	// The run changes what the scan measured. Another plan of it could
-	// replay against that: a second Empty Trash would destroy this
-	// run's Trash moves.
-	clear(s.plans)
-	s.scan.status = scanSpent
 	stopped := new(atomic.Bool)
 	op := s.begin(req, func() { stopped.Store(true) })
-	go s.runExecute(op, req.PlanID, held.plan, stopped)
+	go s.runExecute(op, req.PlanID, held, stopped)
 }
 
-func (s *session) runExecute(op *operation, runID string, plan engine.Plan, stopped *atomic.Bool) {
+func (s *session) runExecute(op *operation, runID string, held heldPlan, stopped *atomic.Bool) {
 	if s.srv.NewExecutor == nil {
 		s.end(op, failure(op.re, CodeExecuteFailed, "this engine cannot execute"), nil)
 		return
@@ -462,6 +482,13 @@ func (s *session) runExecute(op *operation, runID string, plan engine.Plan, stop
 		return
 	}
 	defer release()
+	// From here the run changes what the scan measured, and another
+	// plan of it could replay against that: a second Empty Trash would
+	// destroy this run's Trash moves.
+	s.mu.Lock()
+	clear(s.plans)
+	held.scan.status = scanSpent
+	s.mu.Unlock()
 	ex.RunID = runID
 	ex.Stop = stopped.Load
 	if ex.Trash != nil {
@@ -477,9 +504,11 @@ func (s *session) runExecute(op *operation, runID string, plan engine.Plan, stop
 	}
 	// Never canceled: cancel and shutdown go through Stop, so the
 	// action in flight always finishes and is journaled.
-	res, err := ex.Execute(context.Background(), plan)
+	res, err := ex.Execute(context.Background(), held.plan)
 	if err != nil {
-		s.end(op, failure(op.re, CodeExecuteFailed, err.Error()), nil)
+		ev := failure(op.re, CodeExecuteFailed, err.Error())
+		ev.Result = &res
+		s.end(op, ev, nil)
 		return
 	}
 	s.end(op, executeDoneEvent{head{"done", op.re}, res, res.Stopped}, nil)
@@ -503,6 +532,38 @@ func (s *session) cancel(req request) {
 	op.cancels = append(op.cancels, req.ID)
 }
 
+// startTick runs one pass of the watch loop. A tick is an operation
+// like a scan or an execute, and like an execute it is never cut
+// short: its autotrim prune is one action, journaled to its end.
+func (s *session) startTick(req request) {
+	if s.srv.Tick == nil {
+		s.emit(failure(req.ID, CodeTickFailed, "this engine cannot tick"))
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.busy(req) {
+		return
+	}
+	op := s.begin(req, func() {})
+	go func() {
+		tick, err := s.srv.Tick(context.Background(), req.Autotrim)
+		if !tick.At.IsZero() {
+			// A sampled tick is reported even when it also failed: a
+			// refused autotrim must not hide the alerts.
+			s.emit(inlineEvent{head{"tick", op.re}, tick})
+		}
+		var terminal any = done(op.re)
+		switch {
+		case errors.Is(err, autopilot.ErrAutotrimLocked):
+			terminal = failure(op.re, CodeAutotrimLocked, err.Error())
+		case err != nil:
+			terminal = failure(op.re, CodeTickFailed, err.Error())
+		}
+		s.end(op, terminal, nil)
+	}()
+}
+
 func (s *session) shutdown(grace time.Duration) {
 	s.mu.Lock()
 	op := s.inflight
@@ -510,10 +571,13 @@ func (s *session) shutdown(grace time.Duration) {
 		op.stop()
 	}
 	s.mu.Unlock()
+	if s.srv.stopping != nil {
+		s.srv.stopping()
+	}
 	if op == nil {
 		return
 	}
-	if op.kind == reqExecute {
+	if op.kind != reqScan {
 		<-op.finished
 		return
 	}
@@ -554,7 +618,7 @@ func (b boundedMover) Move(ctx context.Context, path string) (trash.Receipt, err
 	case o := <-result:
 		return o.receipt, o.err
 	default:
-		return trash.Receipt{}, fmt.Errorf("moving %s to the Trash did not finish within %s (a blocked or unreadable folder?): if it reaches the Trash after all, Finder's Put Back restores it", path, b.limit)
+		return trash.Receipt{}, fmt.Errorf("moving %s to the Trash did not finish within %s (a blocked or unreadable folder?); if the abandoned move completes, the item is in the Trash, where Finder's Put Back restores it, or in regrow staging if Finder failed first, and `regrow undo` has no receipt for either", path, b.limit)
 	}
 }
 

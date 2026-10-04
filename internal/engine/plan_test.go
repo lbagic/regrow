@@ -306,6 +306,9 @@ func TestDefaultSelection(t *testing.T) {
 		{Rule: Rule{ID: "safe-unreadable", Risk: RiskSafe}, Items: []Item{unreadable("e")}},
 		{Rule: Rule{ID: "safe-mixed-trash", Risk: RiskSafe}, Items: []Item{read("f"), unreadable("g"), marker}},
 		{Rule: Rule{ID: "safe-mixed-whole", Risk: RiskSafe, NativeCommand: wipe}, Items: []Item{read("h"), unreadable("i")}},
+		// Keyless, as a caller that skipped FillItemKeys hands it over:
+		// no "rule/" atom may form.
+		{Rule: Rule{ID: "safe-mixed-keyless", Risk: RiskSafe}, Items: []Item{{Path: "/Users/t/j", Bytes: 1}, {Path: "/Users/t/k", Partial: true}}},
 	}
 	got := DefaultSelection(findings)
 	want := map[string]bool{"safe-found": true, "safe-lower-bound": true, "safe-mixed-trash/f": true}

@@ -16,8 +16,10 @@ type outbox struct {
 	mu     sync.Mutex
 	queue  [][]byte
 	closed bool
-	wake   chan struct{}
-	done   chan struct{}
+	// err is the write error that stopped the writer.
+	err  error
+	wake chan struct{}
+	done chan struct{}
 }
 
 func newOutbox(w io.Writer) *outbox {
@@ -68,12 +70,19 @@ func (o *outbox) run(w io.Writer) {
 			if _, err := w.Write(line); err != nil {
 				// The reader is gone: stop queueing for it.
 				o.mu.Lock()
-				o.closed, o.queue = true, nil
+				o.closed, o.queue, o.err = true, nil, err
 				o.mu.Unlock()
 				return
 			}
 		}
 	}
+}
+
+// writeErr is the write error that stopped the writer, if one did.
+func (o *outbox) writeErr() error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.err
 }
 
 // close stops accepting events and waits up to grace for the queued

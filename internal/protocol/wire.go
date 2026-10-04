@@ -20,6 +20,7 @@ const (
 	reqPlan    = "plan"
 	reqExecute = "execute"
 	reqCancel  = "cancel"
+	reqTick    = "tick"
 )
 
 // Error codes, the `code` of an error event.
@@ -33,6 +34,9 @@ const (
 	CodeScanCanceled   = "scan_canceled"
 	CodeScanSuperseded = "scan_superseded"
 	CodeScanSpent      = "scan_spent"
+	CodeUnmatched      = "unmatched"
+	CodeTickFailed     = "tick_failed"
+	CodeAutotrimLocked = "autotrim_locked"
 	CodeUnknownPlan    = "unknown_plan"
 	CodePlanExpired    = "plan_expired"
 	CodeExecuteFailed  = "execute_failed"
@@ -44,9 +48,10 @@ type request struct {
 	ScanID string `json:"scan_id"`
 	// Select nil (absent or null) plans the default selection; an
 	// empty list plans nothing.
-	Select *[]string `json:"select"`
-	PlanID string    `json:"plan_id"`
-	Target string    `json:"target"`
+	Select   *[]string `json:"select"`
+	PlanID   string    `json:"plan_id"`
+	Target   string    `json:"target"`
+	Autotrim bool      `json:"autotrim"`
 }
 
 // head opens every event: its name and the id of the request it
@@ -141,10 +146,14 @@ type errorEvent struct {
 	head
 	Code    string `json:"code"`
 	Message string `json:"message"`
+	// Unmatched lists the selectors of an unmatched plan request.
+	Unmatched []string `json:"unmatched,omitempty"`
+	// Result is what a failed execute did before it failed.
+	Result *executor.Result `json:"result,omitempty"`
 }
 
 func done(re string) doneEvent { return doneEvent{head{"done", re}} }
 
 func failure(re, code, message string) errorEvent {
-	return errorEvent{head{"error", re}, code, message}
+	return errorEvent{head: head{"error", re}, Code: code, Message: message}
 }

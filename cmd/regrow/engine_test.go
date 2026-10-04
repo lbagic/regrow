@@ -12,8 +12,10 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/lbagic/regrow/internal/engine"
+	"github.com/lbagic/regrow/internal/headroom"
 )
 
 // The engine wiring, scan and plan only: a real execute would hand the
@@ -39,15 +41,17 @@ func TestEngineScansAndPlansThroughTheRealScanner(t *testing.T) {
 	outR, outW := io.Pipe()
 	served := make(chan error, 1)
 	go func() {
-		served <- serveEngine(context.Background(), host, catalog, nil, inR, outW)
+		srv := newEngineServer(host, catalog, nil)
+		srv.Headroom = fixtureSample
+		served <- srv.Serve(context.Background(), inR, outW)
 		_ = outW.Close()
 	}()
 	lines := bufio.NewScanner(outR)
 	type event struct {
-		Event   string          `json:"event"`
-		Re      string          `json:"re"`
-		Version string          `json:"version"`
-		ScanID  string          `json:"scan_id"`
+		Event     string           `json:"event"`
+		Re        string           `json:"re"`
+		Version   string           `json:"version"`
+		ScanID    string           `json:"scan_id"`
 		Finding   *engine.Finding  `json:"finding"`
 		Plan      *engine.Plan     `json:"plan"`
 		Exclusive map[string]int64 `json:"exclusive"`
@@ -74,6 +78,7 @@ func TestEngineScansAndPlansThroughTheRealScanner(t *testing.T) {
 		t.Fatalf("hello announced version %q, want %q", hello.Version, version)
 	}
 	send(`{"type":"scan","id":"s"}`)
+	next("headroom")
 	scanID := next("start").ScanID
 	found := next("finding").Finding
 	if found.Rule.ID != "fixture-cache" || len(found.Items) != 1 {
@@ -194,16 +199,20 @@ func TestScanJSONIsTheEngineScanWithoutHello(t *testing.T) {
 	host := engine.Host{OS: "darwin", Version: "15.5", Home: home}
 
 	var out strings.Builder
-	newEngineServer(host, catalog, nil).ScanOnce(context.Background(), &out)
+	srv := newEngineServer(host, catalog, nil)
+	srv.Headroom = fixtureSample
+	if err := srv.ScanOnce(context.Background(), &out); err != nil {
+		t.Fatal(err)
+	}
 
 	type item struct {
 		Bytes   int64 `json:"bytes"`
 		Partial bool  `json:"partial"`
 	}
 	type line struct {
-		Event   string          `json:"event"`
-		Re      *string         `json:"re"`
-		TookMS  *int64          `json:"took_ms"`
+		Event   string  `json:"event"`
+		Re      *string `json:"re"`
+		TookMS  *int64  `json:"took_ms"`
 		Finding *struct {
 			Rule  struct{ ID string } `json:"rule"`
 			Items []item              `json:"items"`
@@ -232,7 +241,7 @@ func TestScanJSONIsTheEngineScanWithoutHello(t *testing.T) {
 			totals = l.Totals
 		}
 	}
-	if got := strings.Join(events, ","); got != "start,finding,finding,finding,summary,done" {
+	if got := strings.Join(events, ","); got != "headroom,start,finding,finding,finding,summary,done" {
 		t.Fatalf("events = %s", got)
 	}
 	if it := items["fixture-read"]; it.Partial || it.Bytes < 8192 {
@@ -246,5 +255,30 @@ func TestScanJSONIsTheEngineScanWithoutHello(t *testing.T) {
 	}
 	if totals == nil || totals.Partial != 2 || totals.AfterTrash < 2*8192 {
 		t.Errorf("summary totals = %+v", totals)
+	}
+}
+
+func fixtureSample(context.Context) (headroom.Sample, error) {
+	return headroom.Sample{At: time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC), Total: 100 << 30, Free: 40 << 30}, nil
+}
+
+// The engine's tick is the autopilot's, recording into the state dir.
+// The catalog has no prune rule, so autotrim has nothing it could
+// delete; the sample is a real, read-only statfs.
+func TestEngineTickIsTheAutopilotTick(t *testing.T) {
+	state := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", state)
+	catalog := []engine.Rule{{ID: "fixture-cache", Title: "Fixture cache", Category: "fixture", Risk: engine.RiskSafe,
+		Paths: map[string][]engine.PathEntry{"darwin": {{Path: "~/proj/cache"}}}}}
+	tick, err := newEngineServer(engine.Host{OS: "darwin", Home: t.TempDir()}, catalog, nil).Tick(context.Background(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tick.At.IsZero() || tick.Total <= 0 || tick.Pruned != nil {
+		t.Fatalf("tick = %+v, want a sample and no prune", tick)
+	}
+	history, err := headroom.Tail(filepath.Join(state, "regrow", headroom.FileName), time.Time{})
+	if err != nil || len(history) != 1 || !history[0].At.Equal(tick.At) {
+		t.Fatalf("history = %+v, %v; want the tick's sample recorded", history, err)
 	}
 }

@@ -9,8 +9,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/lbagic/regrow/internal/autopilot"
 	"github.com/lbagic/regrow/internal/engine"
 	"github.com/lbagic/regrow/internal/executor"
+	"github.com/lbagic/regrow/internal/headroom"
 	"github.com/lbagic/regrow/internal/protocol"
 	"github.com/lbagic/regrow/internal/scanner"
 )
@@ -30,7 +32,7 @@ func runEngine(host engine.Host, catalog []engine.Rule, opts options) error {
 	if err != nil {
 		return err
 	}
-	return serveEngine(ctx, host, catalog, flags, os.Stdin, os.Stdout)
+	return newEngineServer(host, catalog, flags).Serve(ctx, os.Stdin, os.Stdout)
 }
 
 // keepRunningOnEPIPE makes a write to a closed stdout fail with EPIPE
@@ -39,10 +41,6 @@ func runEngine(host engine.Host, catalog []engine.Rule, opts options) error {
 // processes the default disposition.
 func keepRunningOnEPIPE() {
 	signal.Notify(make(chan os.Signal, 1), syscall.SIGPIPE)
-}
-
-func serveEngine(ctx context.Context, host engine.Host, catalog []engine.Rule, flags []string, in io.Reader, out io.Writer) error {
-	return newEngineServer(host, catalog, flags).Serve(ctx, in, out)
 }
 
 // newEngineServer is what `regrow engine` and `regrow scan --json`
@@ -55,9 +53,24 @@ func newEngineServer(host engine.Host, catalog []engine.Rule, flags []string) *p
 		CleanFlags: flags,
 		Scan:       scanStream(host),
 		Account:    engine.Account,
+		Headroom:   headroom.Take,
+		Tick:       tickFor(host, catalog),
 		NewExecutor: func(runID string) (*executor.Executor, func(), error) {
 			return newRunExecutor(host, runID, dockerStream)
 		},
+	}
+}
+
+// tickFor runs the autopilot's tick with the engine's steward-command
+// runner: the prune's find must not inherit the protocol's stdio.
+func tickFor(host engine.Host, catalog []engine.Rule) func(context.Context, bool) (headroom.Tick, error) {
+	return func(ctx context.Context, autotrim bool) (headroom.Tick, error) {
+		ap, err := autopilot.New(host, catalog)
+		if err != nil {
+			return headroom.Tick{}, err
+		}
+		ap.RunNative = protocol.RunNative
+		return ap.Tick(ctx, autotrim)
 	}
 }
 

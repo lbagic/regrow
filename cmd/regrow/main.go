@@ -131,8 +131,7 @@ func run(args []string) error {
 		return printRules(catalog, opts.asJSON)
 	case "scan":
 		if opts.asJSON {
-			newEngineServer(host, catalog, nil).ScanOnce(context.Background(), os.Stdout)
-			return nil
+			return newEngineServer(host, catalog, nil).ScanOnce(context.Background(), os.Stdout)
 		}
 		if isTTY() {
 			plan, confirmed, err := tui.Run(host, version, func(ctx context.Context) []engine.Finding {

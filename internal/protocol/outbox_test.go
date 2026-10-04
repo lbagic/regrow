@@ -2,11 +2,14 @@ package protocol
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"math"
 	"strconv"
+	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -119,5 +122,40 @@ func TestInlineEventPutsTheBodyBesideTheHead(t *testing.T) {
 	}
 	if _, err := json.Marshal(inlineEvent{head{"headroom", "s"}, 7}); err == nil {
 		t.Error("a body that is not an object was put on the line")
+	}
+}
+
+// failAfter takes n writes, then fails every one, like stdout on a
+// disk that just filled up.
+type failAfter struct {
+	n     int
+	lines []string
+}
+
+func (f *failAfter) Write(p []byte) (int, error) {
+	if len(f.lines) >= f.n {
+		return 0, syscall.ENOSPC
+	}
+	f.lines = append(f.lines, string(p))
+	return len(p), nil
+}
+
+func TestScanOnceReportsAStreamCutShort(t *testing.T) {
+	m := newMachine(t)
+	srv := m.server()
+	out := &failAfter{n: 2}
+	if err := srv.ScanOnce(context.Background(), out); !errors.Is(err, syscall.ENOSPC) {
+		t.Fatalf("ScanOnce = %v, want the write error", err)
+	}
+	if len(out.lines) != 2 || strings.Contains(strings.Join(out.lines, ""), `"done"`) {
+		t.Fatalf("written = %q, want the two lines before the failure", out.lines)
+	}
+
+	var whole strings.Builder
+	if err := srv.ScanOnce(context.Background(), &whole); err != nil {
+		t.Fatalf("a stream written in full returned %v", err)
+	}
+	if !strings.HasSuffix(whole.String(), "\"canceled\":false}\n") || strings.Contains(whole.String(), `"re"`) {
+		t.Fatalf("stream = %s, want it to end with done and carry no re", whole.String())
 	}
 }

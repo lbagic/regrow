@@ -8,11 +8,13 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/lbagic/regrow/internal/engine"
 	"github.com/lbagic/regrow/internal/executor"
+	"github.com/lbagic/regrow/internal/headroom"
 	"github.com/lbagic/regrow/internal/oplog"
 	"github.com/lbagic/regrow/internal/trash"
 )
@@ -66,11 +68,8 @@ func TestScanPlanExecuteOverPipes(t *testing.T) {
 	m := newMachine(t)
 	srv := m.server()
 	srv.Version = "1.2.3"
-	srv.Headroom = func(context.Context) (any, error) {
-		return struct {
-			Free     int64 `json:"free"`
-			SwapUsed int64 `json:"swap_used"`
-		}{7, 3}, nil
+	srv.Headroom = func(context.Context) (headroom.Sample, error) {
+		return headroom.Sample{At: time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC), Total: 100, Free: 7, Purgeable: 2, SwapUsed: 3}, nil
 	}
 	exclusive := map[string]int64{"fixture-cache/~/proj/cache": 100, "fixture-logs/~/proj/logs": 40}
 	srv.Account = func(findings []engine.Finding) engine.Ledger {
@@ -88,7 +87,7 @@ func TestScanPlanExecuteOverPipes(t *testing.T) {
 
 	p.send(`{"type":"scan","id":"s"}`)
 	scan := p.expect("headroom/s", "start/s", "finding/s", "finding/s", "summary/s", "done/s")
-	if scan[0].raw != `{"event":"headroom","re":"s","free":7,"swap_used":3}` {
+	if scan[0].raw != `{"event":"headroom","re":"s","at":"2026-10-04T12:00:00Z","total":100,"free":7,"purgeable":2,"swap_used":3}` {
 		t.Errorf("headroom = %s, want the sample's fields on the event line", scan[0].raw)
 	}
 	scanID := scan[1].ScanID
@@ -200,8 +199,13 @@ func TestPlanSelection(t *testing.T) {
 		{"empty select plans nothing", "[]", "", "", "", engine.Totals{}},
 		{"a named caution rule", `["fixture-logs"]`, "fixture-logs", "", "", engine.Totals{AfterTrash: 40}},
 		{"a named sudo rule is a skip", `["fixture-sudo"]`, "", sudoReason, "", engine.Totals{}},
-		{"an unknown selector is reported", `["fixture-cache","nope"]`, "fixture-cache", "", "nope", engine.Totals{AfterTrash: 100}},
 	}
+	// As `regrow clean` refuses: a typo gets no plan id at all.
+	p.send(`{"type":"plan","id":"typo","scan_id":"` + scanID + `","select":["fixture-cache","nope","fixture-cash"]}`)
+	if e := p.expectError("typo", CodeUnmatched); !strings.Contains(e.raw, `"unmatched":["fixture-cash","nope"]`) {
+		t.Fatalf("unmatched plan = %s, want the selectors listed", e.raw)
+	}
+
 	// One engine serves every row, so the rows run in order on this
 	// test's goroutine rather than as subtests.
 	ids := map[string]bool{}
@@ -535,6 +539,8 @@ func TestEOFMidExecuteFinishesAndJournalsTheCurrentAction(t *testing.T) {
 	gate := newGatedMover(m.mover())
 	srv := m.server()
 	srv.NewExecutor = m.executors(gate)
+	stopping := make(chan struct{})
+	srv.stopping = func() { close(stopping) }
 	p := start(t, srv)
 	p.expect("hello")
 	planned := p.planned("p", p.scanned("s", 2), bothRules)
@@ -544,10 +550,11 @@ func TestEOFMidExecuteFinishesAndJournalsTheCurrentAction(t *testing.T) {
 	gate.waitEntered(t, m.cache)
 
 	_ = p.stdin.Close()
+	waitFor(t, stopping, "shutdown to tell the execute to stop")
 	select {
 	case <-p.exited:
 		t.Fatal("the engine exited with an action in flight")
-	case <-time.After(150 * time.Millisecond):
+	default:
 	}
 	close(gate.release)
 
@@ -602,6 +609,8 @@ func TestServeStopsWhenItsContextEnds(t *testing.T) {
 	gate := newGatedMover(m.mover())
 	srv := m.server()
 	srv.NewExecutor = m.executors(gate)
+	stopping := make(chan struct{})
+	srv.stopping = func() { close(stopping) }
 	ctx, cancel := context.WithCancel(context.Background())
 	p := startWith(t, ctx, srv, true)
 	p.expect("hello")
@@ -610,8 +619,10 @@ func TestServeStopsWhenItsContextEnds(t *testing.T) {
 	p.expect("journal/x")
 	gate.waitEntered(t, m.cache)
 
-	// A termination signal ends ctx with stdin still open.
+	// A termination signal ends ctx with stdin still open. The move is
+	// released only once the execute has been told to stop.
 	cancel()
+	waitFor(t, stopping, "shutdown to tell the execute to stop")
 	close(gate.release)
 	waitFor(t, p.exited, "Serve to return once its context ended")
 	if entries := m.journal(); len(entries) != 2 || entries[1].Event != oplog.EventDone {
@@ -782,42 +793,88 @@ func TestABlockedTrashMoveFailsAfterItsLimit(t *testing.T) {
 	}
 }
 
-type failingJournal struct{}
+// failingJournal persists its first succeed entries, then fails.
+type failingJournal struct {
+	succeed int
+	entries []oplog.Entry
+}
 
-func (failingJournal) Append(oplog.Entry) error { return errors.New("disk full") }
+func (j *failingJournal) Append(e oplog.Entry) error {
+	if len(j.entries) >= j.succeed {
+		return errors.New("disk full")
+	}
+	j.entries = append(j.entries, e)
+	return nil
+}
 
 func TestJournalEventOnlyAfterTheEntryIsPersisted(t *testing.T) {
 	m := newMachine(t)
+	journal := &failingJournal{succeed: 2}
 	srv := m.server()
 	srv.NewExecutor = func(string) (*executor.Executor, func(), error) {
-		return &executor.Executor{Trash: m.mover(), Log: failingJournal{}}, func() {}, nil
+		return &executor.Executor{Trash: m.mover(), Log: journal,
+			RunNative: func(_ context.Context, argv []string) error {
+				t.Errorf("a trash-only plan ran a steward command: %v", argv)
+				return errors.New("refused by the test")
+			}}, func() {}, nil
 	}
 	p := start(t, srv)
 	p.expect("hello")
-	planned := p.planned("p", p.scanned("s", 2), "")
+	planned := p.planned("p", p.scanned("s", 2), bothRules)
 	p.send(`{"type":"execute","id":"x","plan_id":"` + planned.PlanID + `"}`)
-	// No journal event for an entry the journal never took.
-	if e := p.expectError("x", CodeExecuteFailed); !strings.Contains(e.Message, "disk full") {
+
+	// The first action's two lines were persisted and announced; the
+	// second action's start was not persisted, so it is neither
+	// announced nor run.
+	p.expect("journal/x", "journal/x")
+	e := p.expectError("x", CodeExecuteFailed)
+	if !strings.Contains(e.Message, "disk full") {
 		t.Fatalf("error = %s, want the journal's failure", e.raw)
 	}
-	if !exists(m.cache) {
-		t.Fatal("an action ran without its journal entry")
+	if !exists(m.logs) || len(journal.entries) != 2 {
+		t.Fatalf("an action ran without its journal entry (journal %+v)", journal.entries)
+	}
+	// What ran before the failure travels with it.
+	var failed struct {
+		Result *executor.Result `json:"result"`
+	}
+	if err := json.Unmarshal([]byte(e.raw), &failed); err != nil || failed.Result == nil {
+		t.Fatalf("error = %s, want the partial result", e.raw)
+	}
+	if r := failed.Result; r.RunID != planned.PlanID || r.Done != 1 || r.Bytes != 100 || r.TrashBytes != 100 {
+		t.Fatalf("partial result = %+v, want the first move", r)
 	}
 }
 
 func TestExecuteReportsAnExecutorThatCannotBeBuilt(t *testing.T) {
 	m := newMachine(t)
 	srv := m.server()
-	srv.NewExecutor = func(string) (*executor.Executor, func(), error) {
-		return nil, nil, os.ErrPermission
+	var broken atomic.Bool
+	broken.Store(true)
+	working := srv.NewExecutor
+	srv.NewExecutor = func(runID string) (*executor.Executor, func(), error) {
+		if broken.Load() {
+			return nil, nil, os.ErrPermission
+		}
+		return working(runID)
 	}
 	p := start(t, srv)
 	p.expect("hello")
-	planned := p.planned("p", p.scanned("s", 2), "")
-	p.send(`{"type":"execute","id":"x","plan_id":"` + planned.PlanID + `"}`)
-	p.expectError("x", CodeExecuteFailed)
-	// The failed execute released the slot.
-	p.scanned("s2", 2)
+	scanID := p.scanned("s", 2)
+	first := p.planned("p1", scanID, `["fixture-cache"]`)
+	second := p.planned("p2", scanID, `["fixture-cache"]`)
+	p.send(`{"type":"execute","id":"x1","plan_id":"` + first.PlanID + `"}`)
+	if e := p.expectError("x1", CodeExecuteFailed); strings.Contains(e.raw, `"result"`) {
+		t.Fatalf("nothing ran, so no result: %s", e.raw)
+	}
+
+	// Nothing ran, so nothing was spent but the plan id: the scan's
+	// other plan still executes.
+	broken.Store(false)
+	p.send(`{"type":"execute","id":"x2","plan_id":"` + second.PlanID + `"}`)
+	if done := p.expect("journal/x2", "journal/x2", "done/x2")[2]; done.Result.Done != 1 || exists(m.cache) {
+		t.Fatalf("the scan's other plan did not run: %s", done.raw)
+	}
 }
 
 func TestPlanIDSortsByTimeAndCarries128Bits(t *testing.T) {

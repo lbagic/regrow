@@ -100,7 +100,9 @@ func (p Plan) Totals() Totals {
 // measured). A rule read in full is a rule atom. With some items
 // unreadable, a rule that acts per item contributes item atoms for the
 // rest, and a whole-rule command, which cannot leave an item alone, is
-// left out. Items carry their keys, as the scanner leaves them.
+// left out. So is a rule whose read items lack keys: a key derived
+// here, without the host's home, would not be the one BuildPlan
+// derives for a path under home.
 func DefaultSelection(findings []Finding) map[string]bool {
 	sel := map[string]bool{}
 	for _, f := range findings {
@@ -108,15 +110,17 @@ func DefaultSelection(findings []Finding) map[string]bool {
 			continue
 		}
 		var read []string
+		keyed := true
 		for _, it := range f.Items {
 			if !it.Unreadable() {
 				read = append(read, ItemID(f.Rule.ID, it.Key))
+				keyed = keyed && it.Key != ""
 			}
 		}
 		switch {
 		case len(read) == len(f.Items):
 			sel[f.Rule.ID] = true
-		case f.Rule.PerItemActionable():
+		case f.Rule.PerItemActionable() && keyed:
 			for _, id := range read {
 				sel[id] = true
 			}
