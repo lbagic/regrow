@@ -1,6 +1,6 @@
 # Direction after the blind reviews
 
-**Status:** D1, D2, D5, D6 decided (2026-10-04); D3 decided with the go-build policy below pending a go-ahead; D4 proposed. Prototype on branch `proto/web-serve`.
+**Status:** D1–D3, D5, D6 decided (2026-10-04; go-build policy: 48 h floor, confirmed by the owner); D4 proposed and refined in the [attack plan](2026-10-04-attack-plan.md). Prototype on branch `proto/web-serve`.
 
 Four blind agents looked at this machine and at regrow without reading the repo's code, docs or rule catalog: a disk-usage inspector, a residue/growth inspector, a product reviewer using the binary (dry-run only), and a first-principles product designer. Their raw reports name private projects and paths, so they live outside the repo (`~/.claude/handoffs/regrow-blind-review-2026-10-04/`). This doc keeps the generic findings and the decisions.
 
@@ -9,7 +9,7 @@ Four blind agents looked at this machine and at regrow without reading the repo'
 The owner "runs out of memory every now and then". On this machine that is disk, and the two are coupled:
 
 - Free space on the 460 GiB Data volume: 112.8 GB (09-28, from DiagnosticReports) → 31 GiB (10-04 10:08) → 11 GiB (10-04 11:05).
-- The last drop was swap: a runaway 28 GB process pushed swap from 4 to 23 GiB in under an hour, and swap files live on the same disk. When the disk is near full, swap cannot grow and macOS reports "out of application memory". Low disk and memory pressure feed each other, so free-space *headroom* is the thing to protect.
+- The last drop was swap: a runaway 28 GB process — an orphaned analysis script left by this review's own agents, not the owner's workload — pushed swap from 4 to 23 GiB in under an hour, and swap files live on the same disk. The owner's own acute event on record today is a jetsam report whose largest process was the Docker VM (8 GiB resident on a 16 GiB host). When the disk is near full, swap cannot grow and macOS reports "out of application memory". Low disk and memory pressure feed each other, so free-space *headroom* is the thing to protect.
 
 Where the space goes, ranked by how much it explains the recurring crunch:
 
@@ -48,17 +48,17 @@ The scan is bound by kernel file-metadata work, not the language: C `du` 9.6 s v
 **D2 — Straight to a menubar app; no browser-tab stage.** (decided by the owner)
 A SwiftUI `MenuBarExtra` shell owns the long-running loop (headroom watch, alerts, autopilot) and holds Full Disk Access as a stable .app identity; the Go binary ships inside the bundle as the engine and streams JSON lines over stdio (the prototype's SSE events map 1:1). Rich views can reuse the prototype page in a `WKWebView`. Buildable with the Command Line Tools alone (Swift 6.1, SwiftUI/AppKit/WebKit/ServiceManagement in the SDK) — no Xcode, which would cost ~40 GiB to install on a disk-starved machine. Signing: a self-signed code-signing certificate, so the TCC grant survives rebuilds (none exists yet). Electron ruled out on footprint; the localhost server stays a debugging aid at most.
 
-**D3 — The product loop shifts from "cleaner you run" to "never run out".** (decided in principle; go-build policy below awaits a go-ahead)
+**D3 — The product loop shifts from "cleaner you run" to "never run out".** (decided; owner confirmed the 48 h floor)
 Watch headroom (free space and swap) and forecast days-to-full; alert before the crunch. Autopilot only the self-regenerating classes under explicit per-rule policy (e.g. go-build entries untouched > 48 h, scratch dirs of dead agent sessions), opt-in after the owner has run the rule by hand once. Everything else lands in a short review queue where every byte has an owner (app, repo/worktree, toolchain, container engine, OS, user) and residue is "owner gone or done".
 
-Go build cache policy (reasoned 2026-10-04): Go itself deletes entries unused for 5 days (`trimLimit`, checked daily; use refreshes mtime at most hourly), so any age threshold ≥ 5 days — "a week" included — reclaims nothing. Measured age split of the 55 GiB: < 24 h 0.1, 24–48 h 13.4, 48–72 h 13.4, 3–5 d 28.1. Policy: never touch entries used in the last 48 h (active worktrees refresh theirs on every build, so only idle ones pay a one-off main-module recompile); trigger only on low headroom (free < 50 GiB or days-to-full < 3), deleting oldest-first until free space recovers or the cache is ≤ 15 GiB; skip while a `go` build is running. Go has no "trim older than" command, so this mirrors Go's own trim (direct delete, no Trash) — an explicit exception to trash-not-rm for tool-owned, purely regenerable caches, oplog-recorded with bytes. `-trimpath` attacks the cause: worktrees at the same code share entries (two-worktree test: +13 cache files without it, +4 with it).
+Go build cache policy (reasoned 2026-10-04): Go itself deletes entries unused for 5 days (`trimLimit`, checked daily; use refreshes mtime at most hourly), so any age threshold ≥ 5 days — "a week" included — reclaims nothing. Measured age split of the 55 GiB: < 24 h 0.1, 24–48 h 13.4, 48–72 h 13.4, 3–5 d 28.1. Policy: never touch entries used in the last 48 h (active worktrees refresh theirs on every build, so only idle ones pay a one-off main-module recompile); trigger only on low headroom (free < 50 GiB or days-to-full < 3), deleting oldest-first until free space recovers or the cache is ≤ 15 GiB; skip while a `go` build is running. Go has no "trim older than" command, so this mirrors Go's own trim (direct delete, no Trash) — an explicit exception, for tool-owned purely regenerable caches only, to invariants 1 (no per-run opt-in once autopilot is on), 2 (no Trash) and 4 (no steward command); oplog-recorded with bytes. `-trimpath` attacks the cause: worktrees at the same code share entries (two-worktree test: +13 cache files without it, +4 with it).
 
 **D4 — Coverage priority follows the table above, not the old catalog order.** (proposed)
 New coverage, highest value first: worktrees (merged by ancestry or PR + clean + idle; delete only ignored build dirs when unmerged), agent scratch dirs with no live session, project build output in stale projects (`.next`, `dist`, `.turbo`, `.venv`, `target`), unused Docker images, toolchains nothing references (Node versions — guard versions hard-coded in LaunchAgents — Android NDKs, simulator runtimes without Xcode), app leftovers by bundle id (archive, don't delete), installers in Downloads, npx cache, stale macOS installer data. Plus a "fix the cause" channel: `-trimpath` for worktree-heavy Go repos, aerial shuffle off, Docker build-cache limit.
 
 **D5 — Personal tool first.** (decided by the owner) Optimize for this machine's crunch; launch work (PLAN.md Prompt I, M2 publish, notarization, brew) is parked.
 
-**D6 — Grant Full Disk Access** (decided by the owner): to the terminal now, to the menubar app once it exists.
+**D6 — Full Disk Access goes to the menubar app only** (decided by the owner): not to the terminal. macOS attributes a process's file access to the app that launched it, so the engine inside the app's bundle is covered by the app's grant; terminal scans meanwhile report protected folders as unreadable.
 
 ## Plan
 
@@ -78,6 +78,6 @@ Question: does a localhost web UI feel better than the TUI and is it fast enough
 ## Owner answers (2026-10-04)
 
 1. Straight to menubar → D2.
-2. Autopilot go-build trim: yes in principle, "reason about it first; is a week better?" → policy under D3 (a week is a no-op); awaiting go-ahead.
+2. Autopilot go-build trim: "is a week better?" → no, a week is a no-op (D3); owner chose the 48 h floor.
 3. Personal first → D5.
-4. Full Disk Access: yes → D6.
+4. Full Disk Access: yes, but to the app, not iTerm → D6.
