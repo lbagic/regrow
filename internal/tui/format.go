@@ -38,7 +38,7 @@ func ActionCommand(a engine.Action) string {
 	case engine.PreActionAgentScratchRecheck:
 		s += "  (session checked again first)"
 	case engine.PreActionWorktreeRecheck:
-		s += "  (git status rechecked first)"
+		s += "  (worktree rechecked first)"
 	default:
 		s += "  (pre: " + a.PreAction + ")"
 	}

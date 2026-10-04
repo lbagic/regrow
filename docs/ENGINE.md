@@ -90,7 +90,7 @@ Totals, in `summary` and `plan`, split bytes by when they become free space:
 | `plan` | `plan_id`; `plan`: `{actions, skipped}`; `totals` (`frees_now` and `after_trash` are filled) |
 | `done` | — |
 
-An action is `{rule_id, item_key, kind, command, pre_action, path, bytes, empties_trash, sudo}`: `kind` is `native` (a steward command, no undo) or `trash` (a Finder move that `regrow undo` restores), `command` is the exact argv, and action bytes never overlap, so they sum to the plan's total. A skip is `{rule_id, item_key, reason}`. An action that would need administrator rights is never planned here: it is a skip whose reason names the Terminal command, for example ``needs administrator rights — run `regrow clean spotlight-index` in Terminal``.
+An action is `{rule_id, item_key, kind, command, pre_action, path, bytes, empties_trash, sudo, includes}`: `kind` is `native` (a steward command, no undo) or `trash` (a Finder move that `regrow undo` restores), `command` is the exact argv, and action bytes never overlap, so they sum to the plan's total. `includes` is `[{id, bytes}]`, absent when empty: the scanned items inside the action's target that no action of this plan deletes on its own, such as an unselected `node_modules` inside a worktree being removed. They are deleted with the target, each `id` is an item id as `select` takes them, and the action's `bytes` already counts theirs, so a peer shows them and never adds them. A skip is `{rule_id, item_key, reason}`. An action that would need administrator rights is never planned here: it is a skip whose reason names the Terminal command, for example ``needs administrator rights — run `regrow clean spotlight-index` in Terminal``.
 
 A plan id:
 
@@ -119,7 +119,7 @@ The engine executes on request: the peer's confirmation is the per-run opt-in. A
 
 A steward command runs with stdin from `/dev/null` and its stdout and stderr captured. When it fails, the last 4 KiB of that output ends the `fail` line's `error`. The docker export that precedes a volume removal is captured the same way, except that its stdout is the tarball.
 
-An action whose rule declares a `pre_action` runs that hook first: the docker volume export before a volume removal, the agent-session recheck before a session's scratch goes to the Trash. A hook that fails or refuses fails the action: its `fail` line carries the reason, and nothing is moved or removed.
+An action whose rule declares a `pre_action` runs that hook first: the docker volume export before a volume removal, the agent-session recheck before a session's scratch goes to the Trash, the worktree recheck before `git worktree remove`. A hook that fails or refuses fails the action: its `fail` line carries the reason, and nothing is moved or removed.
 
 A Trash move that has not finished after 60 s fails with a reason, and the run goes on. The limit covers the move alone, not a hook before it. A folder macOS blocks without Full Disk Access can hold a move forever, and no cancel reaches it. If the abandoned move completes later, the item is in the Trash, where Finder's Put Back restores it, or in regrow staging if Finder failed and the fallback ran; `regrow undo` has no receipt for either.
 
