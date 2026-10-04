@@ -199,3 +199,60 @@ func TestBuildPlanRefusedAncestorDoesNotSubsume(t *testing.T) {
 		t.Fatalf("only a planned ancestor subsumes: actions = %v, skips %+v", actionIDs(plan), plan.Skipped)
 	}
 }
+
+func TestBuildPlanNamesUnselectedItemsThatGoWithAnAction(t *testing.T) {
+	worktrees := Finding{
+		Rule: Rule{ID: "worktrees", Risk: RiskCaution, NativeCommand: Argv{"git", "-C", "{path}", "worktree", "remove", "{path}"}},
+		Items: []Item{
+			{Path: "/Users/t/w/a", Bytes: 100},
+			{Path: "/Users/t/w/b", Bytes: 50},
+		},
+	}
+	modules := Finding{Rule: Rule{ID: "modules", Risk: RiskCaution}, Items: []Item{
+		{Path: "/Users/t/w/a/web/node_modules", Bytes: 40},
+		{Path: "/Users/t/w/a/api/node_modules", Bytes: 30},
+	}}
+	targets := Finding{Rule: Rule{ID: "targets", Risk: RiskSafe}, Items: []Item{
+		{Path: "/Users/t/w/a/target", Bytes: 20},
+		{Path: "/Users/t/w/a/target/nested", Bytes: 5},
+	}}
+	// Same path as a worktree, from a later rule: the forest's child.
+	twin := Finding{Rule: Rule{ID: "twin", Risk: RiskCaution}, Items: []Item{{Path: "/Users/t/w/b", Bytes: 50}}}
+	findings := []Finding{worktrees, modules, targets, twin}
+
+	sel := map[string]bool{"worktrees/~/w/a": true, "worktrees/~/w/b": true, "targets/~/w/a/target": true}
+	plan := BuildPlan(testHost, findings, sel)
+	if want := []string{"worktrees/~/w/a", "worktrees/~/w/b"}; !reflect.DeepEqual(actionIDs(plan), want) {
+		t.Fatalf("actions = %v, want %v (skips %+v)", actionIDs(plan), want, plan.Skipped)
+	}
+	got := map[string][]Included{}
+	for _, a := range plan.Actions {
+		got[a.ItemKey] = a.Includes
+	}
+	want := map[string][]Included{
+		// The selected target has a skip line of its own; the item under
+		// it that nobody selected goes with the worktree too.
+		"~/w/a": {
+			{ID: "modules/~/w/a/api/node_modules", Bytes: 30},
+			{ID: "targets/~/w/a/target/nested", Bytes: 5},
+			{ID: "modules/~/w/a/web/node_modules", Bytes: 40},
+		},
+		"~/w/b": {{ID: "twin/~/w/b", Bytes: 50}},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("includes = %+v, want %+v", got, want)
+	}
+	if r := skipReasons(plan)["targets/~/w/a/target"]; r != "inside worktrees/~/w/a, also selected" {
+		t.Fatalf("selected target skip reason = %q", r)
+	}
+
+	// Selecting the nested items as well leaves nothing unnamed.
+	for _, id := range []string{"modules", "targets", "twin"} {
+		sel[id] = true
+	}
+	for _, a := range BuildPlan(testHost, findings, sel).Actions {
+		if len(a.Includes) != 0 {
+			t.Fatalf("%s: every nested item is selected and skipped with a reason, includes = %+v", a.ItemKey, a.Includes)
+		}
+	}
+}

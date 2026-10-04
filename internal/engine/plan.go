@@ -47,6 +47,17 @@ type Action struct {
 	// Sudo: Command starts with sudo and prompts for a password, so it
 	// needs a terminal.
 	Sudo bool `json:"sudo,omitempty"`
+	// Includes lists the items inside this action's targets that no
+	// action of the plan deletes on its own: they go with it, and Bytes
+	// already counts them.
+	Includes []Included `json:"includes,omitempty"`
+}
+
+// Included is an item an action deletes along with its own target,
+// such as a node_modules inside a removed worktree.
+type Included struct {
+	ID    string `json:"id"`
+	Bytes int64  `json:"bytes"`
 }
 
 // Skip records why a selected finding produced no action.
@@ -448,11 +459,13 @@ func resolveNesting(findings []Finding, tree forest, drafts []draft) ([]Action, 
 	}
 	bytes := make([]int64, len(drafts))
 	kept := make([]bool, len(drafts))
+	includes := make([][]Included, len(drafts))
 	for di, d := range drafts {
 		for _, ref := range d.items {
 			if !hasPlannedAncestor(tree, owner, ref) {
 				kept[di] = true
 				bytes[di] += itemAt(findings, ref).Bytes
+				includes[di] = append(includes[di], unplannedInside(findings, tree, owner, ref)...)
 			}
 		}
 	}
@@ -467,6 +480,7 @@ func resolveNesting(findings []Finding, tree forest, drafts []draft) ([]Action, 
 		}
 		a := d.action
 		a.Bytes = bytes[di]
+		a.Includes = includes[di]
 		if a.EmptiesTrash {
 			first = append(first, a)
 		} else {
@@ -474,6 +488,34 @@ func resolveNesting(findings []Finding, tree forest, drafts []draft) ([]Action, 
 		}
 	}
 	return append(first, rest...), skips
+}
+
+// unplannedInside lists what deleting ref takes with it that no draft
+// plans: unplanned items of earlier rules at ref's own path, and the
+// topmost unplanned items below it. Below a planned item the search
+// goes on, since that item's action is dropped in favour of ref's.
+func unplannedInside(findings []Finding, tree forest, owner map[itemRef]int, ref itemRef) []Included {
+	var out []Included
+	add := func(r itemRef) {
+		out = append(out, Included{ID: refID(findings, r), Bytes: itemAt(findings, r).Bytes})
+	}
+	for _, a := range tree.sharesPath(ref) {
+		if _, planned := owner[a]; !planned {
+			add(a)
+		}
+	}
+	var below func(r itemRef)
+	below = func(r itemRef) {
+		for _, c := range tree.children[r] {
+			if _, planned := owner[c]; planned {
+				below(c)
+			} else {
+				add(c)
+			}
+		}
+	}
+	below(ref)
+	return out
 }
 
 func hasPlannedAncestor(tree forest, owner map[itemRef]int, ref itemRef) bool {
