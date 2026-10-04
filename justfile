@@ -17,7 +17,7 @@ golden:
 run:
     go run ./cmd/regrow scan
 
-# hero-bug scan + phantom-space report (read-only, never plans)
+# hero bugs, fix-the-cause rows, phantom space (read-only, never plans)
 doctor:
     go run ./cmd/regrow doctor
 

@@ -199,7 +199,7 @@ func TestToolQueryDeadline(t *testing.T) {
 			go func() { done <- s.Scan(context.Background(), []engine.Rule{rule})[0] }()
 			select {
 			case f := <-done:
-				if !strings.Contains(f.Err, "no answer within 50ms") || len(f.Items) != 0 {
+				if !strings.Contains(f.Err, "tool gave no answer within 50ms") || len(f.Items) != 0 {
 					t.Fatalf("finding = %+v, want the deadline in Err and no items", f)
 				}
 			case <-time.After(5 * time.Second):

@@ -1,9 +1,9 @@
 package engine
 
 // Doctor mode (Prompt H, plans/2026-07-13-doctor-phantom.md): scan
-// only the hero-bug rules and the phantom-space category, then split
-// the findings into a two-section report. Selection and assembly are
-// pure functions here; cmd owns printing.
+// only the hero-bug rules and the phantom-space category, run the
+// fix-the-cause checks, and assemble the three-section report.
+// Selection and assembly are pure functions here; cmd owns printing.
 
 // CategoryPhantomSpace is the category whose rules explain space
 // Finder counts but du cannot find (TM snapshots, sparse VM disks,
@@ -22,17 +22,22 @@ func DoctorRules(catalog []Rule) []Rule {
 	return out
 }
 
-// Verdict is a hero check's outcome against its healthy/runaway line.
+// Verdict is a doctor check's outcome: a hero check against its
+// healthy/runaway line, or a cause check against the machine.
 type Verdict string
 
 const (
 	// VerdictFlagged: the total, even as a lower bound, is over the
-	// line — the known bug's signature, worth the story and a fix.
+	// line — the known bug's signature, worth the story and a fix. For
+	// a cause: it is in effect here.
 	VerdictFlagged Verdict = "flagged"
 	// VerdictNormal: the total is complete and at or under the line.
+	// For a cause: not in effect, or what it reads is not on this
+	// machine.
 	VerdictNormal Verdict = "normal"
 	// VerdictUnknown: under the line, but some of it could not be
-	// read (or the rule failed), so the real total may be over.
+	// read (or the rule failed), so the real total may be over. For a
+	// cause: what it reads could not be read.
 	VerdictUnknown Verdict = "unknown"
 )
 
@@ -57,18 +62,33 @@ func heroVerdict(f Finding) Verdict {
 	}
 }
 
-// DoctorReport is the assembled report: hero verdicts in catalog
-// order, then the phantom-space findings with their explainer copy.
-type DoctorReport struct {
-	Hero    []HeroCheck `json:"hero"`
-	Phantom []Finding   `json:"phantom"`
+// CauseCheck is one fix-the-cause row: whether the cause is in effect
+// on this machine.
+type CauseCheck struct {
+	RuleID  string  `json:"rule_id"`
+	Cause   Cause   `json:"cause"`
+	Verdict Verdict `json:"verdict"`
+	// Detail is what the check saw, in one line: the evidence when
+	// flagged, the value or the absence when normal, what could not be
+	// read when unknown.
+	Detail string `json:"detail,omitempty"`
 }
 
-// BuildDoctorReport splits doctor-scan findings into the report. A
-// rule can appear in both sections only by carrying a doctor block
-// inside phantom-space; today the sections are disjoint.
-func BuildDoctorReport(findings []Finding) DoctorReport {
-	var rep DoctorReport
+// DoctorReport is the assembled report: hero verdicts in catalog
+// order, the fix-the-cause rows, then the phantom-space findings with
+// their explainer copy.
+type DoctorReport struct {
+	Hero    []HeroCheck  `json:"hero"`
+	Causes  []CauseCheck `json:"causes"`
+	Phantom []Finding    `json:"phantom"`
+}
+
+// BuildDoctorReport splits doctor-scan findings into the report and
+// carries the cause rows as checked. A rule can appear in both finding
+// sections only by carrying a doctor block inside phantom-space; today
+// the sections are disjoint.
+func BuildDoctorReport(findings []Finding, causes []CauseCheck) DoctorReport {
+	rep := DoctorReport{Causes: causes}
 	for _, f := range findings {
 		if f.Rule.Doctor != nil {
 			rep.Hero = append(rep.Hero, HeroCheck{Finding: f, Verdict: heroVerdict(f)})

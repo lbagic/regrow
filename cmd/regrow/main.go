@@ -30,7 +30,7 @@ Usage:
                                   the engine's scan events (docs/ENGINE.md)
   regrow plan [id ...] [--json]   dry run: the exact commands that would run
   regrow clean [id ...] [--yes]   show the plan, confirm, execute
-  regrow doctor [--json]          hero-bug scan and phantom-space report
+  regrow doctor [--json]          runaway bugs, causes to fix, phantom space; read-only
   regrow tick [--autotrim]        one headroom sample: free space, forecast, alerts
   regrow prune go-build [--yes]   delete old Go build cache entries; dry run without --yes
   regrow undo [run-id]            restore the newest (or given) run's Trash moves
@@ -155,7 +155,7 @@ func run(args []string) error {
 	case "clean":
 		return runClean(host, catalog, ids, opts.yes)
 	case "doctor":
-		return runDoctor(host, catalog, opts.asJSON)
+		return runDoctor(os.Stdout, host, catalog, opts.asJSON)
 	case "tick":
 		return runTick(host, catalog, opts)
 	case "prune":
@@ -304,8 +304,10 @@ func isTTY() bool {
 	return true
 }
 
-func emitJSON(v any) error {
-	enc := json.NewEncoder(os.Stdout)
+func emitJSON(v any) error { return writeJSON(os.Stdout, v) }
+
+func writeJSON(w io.Writer, v any) error {
+	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(v)
 }

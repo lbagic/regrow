@@ -17,7 +17,7 @@ Nothing in PRs 1–3 frees a byte, and the disk loses ~14 GB/day in bursts. Befo
 
 1. `go clean -cache` (55 GiB; regrows).
 2. Decide `-trimpath`: globally (`go env -w GOFLAGS=-trimpath`) or only in the agent harness env. Trade-off: debugger/stack-trace paths become module-relative. Worktrees at the same code then share cache entries; 149 cache files over 100 MB are ~24 copies each of six packages.
-3. Switch the wallpaper/screensaver off aerial shuffle.
+3. Stop the aerial video downloads. They are not a shuffle setting: on macOS 15.7, opening System Settings → Wallpaper makes `idleassetsd` batch-download the aerial catalogue (about 137 videos at roughly 0.5 GB each) even with a still wallpaper, and quitting System Settings does not stop a batch that is already running (`/Library/Application Support/com.apple.idleassetsd/Customer` went from 5 MB to 27 GB in about 90 minutes). `sudo launchctl disable system/com.apple.idleassetsd` and `sudo killall idleassetsd`, then remove the videos; whether SIP lets the disable through is untested. Until then they come back whenever the Wallpaper pane is opened.
 4. Cap Docker Desktop's VM memory (today's jetsam event's largest process was the Docker VM at 8 GiB resident on a 16 GiB host).
 5. Reboot when convenient (clears ~15 GiB of agent scratch in `/private/tmp`).
 
@@ -167,7 +167,7 @@ Catalog test first: no two rules share a literal path or a discover `name` (one 
 5. **Toolchains:** Node versions nothing references (guard versions named in LaunchAgent plists, `.nvmrc`, `.node-version`); Android NDKs/SDK with no Studio; simulator runtime with no Xcode (root-owned → surface-only with instructions).
 6. **App leftovers** (needs the app's Full Disk Access to be meaningful): `~/Library/{Application Support,Containers,Group Containers,Caches,…}/<id>` with no installed owner — enumeration covers `/Applications`, `~/Applications`, `/System/Applications`, `PlugIns/*.appex` ids and installed apps' `application-groups` entitlements; idle ≥ 90 days → caution, to Trash. Fuzzy matches are a separate surface-only rule (risk is per rule).
 7. **Small fry:** installers in `~/Downloads` for apps already installed, npx cache, stale macOS installer data (surface + how), browser on-device models (surface).
-8. **Fix-the-cause rows** (doctor): aerial shuffle on, many Go worktrees without `-trimpath`, Docker VM memory cap and build-cache limit unset.
+8. **Fix-the-cause rows** (doctor): aerial videos present or still downloading in `idleassetsd`'s folder (the Wallpaper pane triggers the download, not a shuffle setting; see Phase 0 line 3), many Go worktrees without `-trimpath`, Docker VM memory cap and build-cache limit unset. Each row names the cause and the owner's fix; `regrow doctor` changes nothing.
 9. **regrow-trash expiry** (later, owner checkpoint): permanently delete items regrow itself trashed more than N days ago, from oplog receipts — frees space without ever emptying the owner's own Trash.
 
 ## Owner checkpoints

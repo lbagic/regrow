@@ -56,6 +56,54 @@ func TestPathEntryVersionMatch(t *testing.T) {
 	}
 }
 
+func TestCauseYAMLAndHostVersion(t *testing.T) {
+	src := `
+id: example-rule
+title: Example
+category: macos
+risk: safe
+paths:
+  darwin:
+    - ~/Library/Caches/example
+causes:
+  - check: seen-everywhere
+    title: Everywhere
+    story: why it refills
+    fix:
+      - "first step"
+      - "second step"
+  - check: seen-on-15
+    os_max: "25"
+    title: Sequoia
+    story: why it refills there
+    fix: ["only step"]
+`
+	var r Rule
+	if err := unmarshalStrict([]byte(src), &r); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Causes) != 2 || !reflect.DeepEqual(r.Causes[0].Fix, []string{"first step", "second step"}) || r.Causes[1].OSMax != "25" {
+		t.Fatalf("causes parsed wrong: %+v", r.Causes)
+	}
+
+	checks := func(version string) []string {
+		var out []string
+		for _, c := range (Host{OS: "darwin", Version: version}).Causes(r) {
+			out = append(out, c.Check)
+		}
+		return out
+	}
+	if got := checks("15.7.7"); !reflect.DeepEqual(got, []string{"seen-everywhere", "seen-on-15"}) {
+		t.Errorf("macOS 15.7.7 gets %v, want both causes", got)
+	}
+	if got := checks("26.0"); !reflect.DeepEqual(got, []string{"seen-everywhere"}) {
+		t.Errorf("macOS 26.0 gets %v, want only the unbounded cause", got)
+	}
+}
+
 func validRule() Rule {
 	return Rule{
 		ID:       "example-rule",
@@ -153,6 +201,28 @@ func TestValidate(t *testing.T) {
 			"doctor without story",
 			func(r *Rule) { r.Doctor = &Doctor{FlagAbove: 1 << 30} },
 			"doctor.story",
+		},
+		{
+			"cause without a check name",
+			func(r *Rule) { r.Causes = []Cause{{Title: "t", Story: "s", Fix: []string{"f"}}} },
+			"kebab-case",
+		},
+		{
+			"cause without story",
+			func(r *Rule) { r.Causes = []Cause{{Check: "some-check", Title: "t", Fix: []string{"f"}}} },
+			"some-check needs a title and a story",
+		},
+		{
+			"cause without fix",
+			func(r *Rule) { r.Causes = []Cause{{Check: "some-check", Title: "t", Story: "s"}} },
+			"some-check needs fix lines",
+		},
+		{
+			"cause with an empty fix line",
+			func(r *Rule) {
+				r.Causes = []Cause{{Check: "some-check", Title: "t", Story: "s", Fix: []string{"f", ""}}}
+			},
+			"some-check needs fix lines",
 		},
 	}
 	for _, tt := range tests {

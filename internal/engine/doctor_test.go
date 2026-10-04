@@ -1,6 +1,9 @@
 package engine
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
 
 func doctorRule(id string, flagAbove ByteSize) Rule {
 	r := validRule()
@@ -33,9 +36,25 @@ func TestBuildDoctorReport(t *testing.T) {
 		{Rule: hero, Items: []Item{{Bytes: 2 << 30}}},
 		{Rule: phantom, Items: []Item{{Bytes: 5}}},
 	}
-	rep := BuildDoctorReport(findings)
+	causes := []CauseCheck{{RuleID: "hero", Cause: Cause{Check: "some-check"}, Verdict: VerdictFlagged, Detail: "seen"}}
+	rep := BuildDoctorReport(findings, causes)
 	if len(rep.Hero) != 1 || len(rep.Phantom) != 1 {
 		t.Fatalf("report sections: hero=%d phantom=%d, want 1/1", len(rep.Hero), len(rep.Phantom))
+	}
+	if !reflect.DeepEqual(rep.Causes, causes) {
+		t.Fatalf("report causes = %+v, want the rows as checked", rep.Causes)
+	}
+}
+
+// A rule that carries only causes is not scanned by doctor: its check
+// reads settings, and sizing the rule's target would cost a walk (the
+// Go build cache) or a daemon call (the docker build cache).
+func TestDoctorRulesLeaveCauseOnlyRulesUnscanned(t *testing.T) {
+	owner := validRule()
+	owner.ID = "owner"
+	owner.Causes = []Cause{{Check: "some-check", Title: "t", Story: "s", Fix: []string{"f"}}}
+	if got := DoctorRules([]Rule{owner, doctorRule("hero", 1<<30)}); len(got) != 1 || got[0].ID != "hero" {
+		t.Fatalf("DoctorRules selected %+v, want [hero]", got)
 	}
 }
 
@@ -59,7 +78,7 @@ func TestHeroVerdict(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			rep := BuildDoctorReport([]Finding{{Rule: hero, Items: tt.items, Err: tt.err}})
+			rep := BuildDoctorReport([]Finding{{Rule: hero, Items: tt.items, Err: tt.err}}, nil)
 			if got := rep.Hero[0].Verdict; got != tt.want {
 				t.Fatalf("verdict = %q, want %q", got, tt.want)
 			}

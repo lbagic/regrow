@@ -24,6 +24,8 @@ type Scanner struct {
 	fs *walker
 	// queryTimeout bounds each tool query; 0 means toolQueryTimeout.
 	queryTimeout time.Duration
+	// CauseQueries are the fix-the-cause checks, by name.
+	CauseQueries map[string]CauseQuery
 }
 
 // toolQueryTimeout bounds one tool query. A wedged Docker VM or
@@ -33,7 +35,7 @@ const toolQueryTimeout = 2 * time.Minute
 
 // New builds a scanner for the host with the built-in tool queries.
 func New(host engine.Host) *Scanner {
-	return &Scanner{Host: host, Queries: DefaultQueries()}
+	return &Scanner{Host: host, Queries: DefaultQueries(), CauseQueries: DefaultCauseQueries(host)}
 }
 
 func (s *Scanner) walker() *walker {
@@ -136,33 +138,44 @@ func (s *Scanner) scanRule(ctx context.Context, r engine.Rule) engine.Finding {
 // after its deadline passed reports the deadline, not its own outcome:
 // a killed CLI often reads as "tool not available".
 func (s *Scanner) runQuery(ctx context.Context, query ToolQuery) ([]engine.Item, error) {
-	timeout := s.queryTimeout
-	if timeout <= 0 {
-		timeout = toolQueryTimeout
+	return withDeadline(ctx, s.timeout(), "tool", query)
+}
+
+func (s *Scanner) timeout() time.Duration {
+	if s.queryTimeout > 0 {
+		return s.queryTimeout
 	}
+	return toolQueryTimeout
+}
+
+// withDeadline is runQuery's rule for any query: a tool query's items
+// or a cause check's verdict. who is the subject of the deadline's
+// error: what gave no answer.
+func withDeadline[T any](ctx context.Context, timeout time.Duration, who string, query func(context.Context) (T, error)) (T, error) {
 	qctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	type result struct {
-		items []engine.Item
-		err   error
+		v   T
+		err error
 	}
 	ch := make(chan result, 1)
 	go func() {
-		items, err := query(qctx)
-		ch <- result{items, err}
+		v, err := query(qctx)
+		ch <- result{v, err}
 	}()
 	var r result
+	var zero T
 	select {
 	case r = <-ch:
 	case <-qctx.Done():
 	}
 	if ctx.Err() == nil && (errors.Is(qctx.Err(), context.DeadlineExceeded) || errors.Is(r.err, context.DeadlineExceeded)) {
-		return nil, fmt.Errorf("tool gave no answer within %s", timeout)
+		return zero, fmt.Errorf("%s gave no answer within %s", who, timeout)
 	}
 	if r.err == nil && ctx.Err() != nil {
-		return nil, ctx.Err()
+		return zero, ctx.Err()
 	}
-	return r.items, r.err
+	return r.v, r.err
 }
 
 // measure sizes one path. Absent paths are not an item: most rules

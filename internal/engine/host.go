@@ -61,3 +61,15 @@ func (h Host) ResolvePaths(r Rule) []string {
 	}
 	return out
 }
+
+// Causes returns the rule's fix-the-cause rows that apply to this
+// host's version.
+func (h Host) Causes(r Rule) []Cause {
+	var out []Cause
+	for _, c := range r.Causes {
+		if (PathEntry{OSMin: c.OSMin, OSMax: c.OSMax}).matches(h.Version) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
