@@ -95,13 +95,31 @@ func (p Plan) Totals() Totals {
 }
 
 // DefaultSelection is the selection every face starts from (the TUI's
-// pre-ticks, `plan` and `clean` without ids): whole safe rules that
-// found items and reported no error, as rule atoms.
+// pre-ticks, `plan` and `clean` without ids): safe rules that found
+// items and reported no error, leaving out unreadable items (nothing
+// measured). A rule read in full is a rule atom. With some items
+// unreadable, a rule that acts per item contributes item atoms for the
+// rest, and a whole-rule command, which cannot leave an item alone, is
+// left out. Items carry their keys, as the scanner leaves them.
 func DefaultSelection(findings []Finding) map[string]bool {
 	sel := map[string]bool{}
 	for _, f := range findings {
-		if f.Rule.Risk == RiskSafe && len(f.Items) > 0 && f.Err == "" {
+		if f.Rule.Risk != RiskSafe || len(f.Items) == 0 || f.Err != "" {
+			continue
+		}
+		var read []string
+		for _, it := range f.Items {
+			if !it.Unreadable() {
+				read = append(read, ItemID(f.Rule.ID, it.Key))
+			}
+		}
+		switch {
+		case len(read) == len(f.Items):
 			sel[f.Rule.ID] = true
+		case f.Rule.PerItemActionable():
+			for _, id := range read {
+				sel[id] = true
+			}
 		}
 	}
 	return sel

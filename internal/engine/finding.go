@@ -29,6 +29,10 @@ type Item struct {
 	Partial bool `json:"partial,omitempty"`
 }
 
+// Unreadable: nothing of the item could be measured, so its size and
+// recency are unknown, not zero.
+func (it Item) Unreadable() bool { return it.Partial && it.Bytes == 0 }
+
 // Finding is one rule with everything the scan measured for it.
 type Finding struct {
 	Rule  Rule   `json:"rule"`

@@ -289,17 +289,39 @@ func TestBuildPlanEmptySelectionPlansNothing(t *testing.T) {
 }
 
 func TestDefaultSelection(t *testing.T) {
+	read := func(key string) Item { return Item{Path: "/Users/t/" + key, Key: key, Bytes: 1} }
+	unreadable := func(key string) Item { return Item{Path: "/Users/t/" + key, Key: key, Partial: true} }
+	lowerBound := Item{Path: "/Users/t/lb", Key: "lb", Bytes: 7, Partial: true}
+	marker := Item{Label: "folders under ~/src", Key: "folders under ~/src", Partial: true}
+	wipe := Argv{"wipe-cache"}
 	findings := []Finding{
-		{Rule: Rule{ID: "safe-found", Risk: RiskSafe}, Items: []Item{{Path: "/Users/t/a", Bytes: 1}}},
+		{Rule: Rule{ID: "safe-found", Risk: RiskSafe}, Items: []Item{read("a")}},
 		{Rule: Rule{ID: "safe-empty", Risk: RiskSafe}},
-		{Rule: Rule{ID: "safe-errored", Risk: RiskSafe}, Items: []Item{{Path: "/Users/t/b", Bytes: 1}}, Err: "partly unreadable"},
-		{Rule: Rule{ID: "caution-found", Risk: RiskCaution}, Items: []Item{{Path: "/Users/t/c", Bytes: 1}}},
-		{Rule: Rule{ID: "surface-found", Risk: RiskSurfaceOnly}, Items: []Item{{Path: "/Users/t/d", Bytes: 1}}},
+		{Rule: Rule{ID: "safe-errored", Risk: RiskSafe}, Items: []Item{read("b")}, Err: "tool gave no answer"},
+		{Rule: Rule{ID: "caution-found", Risk: RiskCaution}, Items: []Item{read("c")}},
+		{Rule: Rule{ID: "surface-found", Risk: RiskSurfaceOnly}, Items: []Item{read("d")}},
+		// Partly unreadable: a lower bound was measured, so it stays.
+		{Rule: Rule{ID: "safe-lower-bound", Risk: RiskSafe}, Items: []Item{lowerBound}},
+		// Nothing measured: never pre-selected.
+		{Rule: Rule{ID: "safe-unreadable", Risk: RiskSafe}, Items: []Item{unreadable("e")}},
+		{Rule: Rule{ID: "safe-mixed-trash", Risk: RiskSafe}, Items: []Item{read("f"), unreadable("g"), marker}},
+		{Rule: Rule{ID: "safe-mixed-whole", Risk: RiskSafe, NativeCommand: wipe}, Items: []Item{read("h"), unreadable("i")}},
 	}
 	got := DefaultSelection(findings)
-	want := map[string]bool{"safe-found": true}
+	want := map[string]bool{"safe-found": true, "safe-lower-bound": true, "safe-mixed-trash/f": true}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("DefaultSelection = %v, want %v", got, want)
+	}
+
+	// The plan of the default selection holds no unreadable target and
+	// no skip for the marker that cannot be planned.
+	plan := BuildPlan(testHost, findings, got)
+	var targets []string
+	for _, a := range plan.Actions {
+		targets = append(targets, a.Path)
+	}
+	if want := []string{"/Users/t/a", "/Users/t/lb", "/Users/t/f"}; !reflect.DeepEqual(targets, want) || len(plan.Skipped) != 0 {
+		t.Fatalf("default plan targets %v with skips %+v, want %v and none", targets, plan.Skipped, want)
 	}
 }
 
