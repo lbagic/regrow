@@ -282,6 +282,18 @@ func TestPlanScreen(t *testing.T) {
 	if !strings.Contains(view, "Would reclaim: 20.0 GiB") {
 		t.Fatalf("plan total wrong, got:\n%s", view)
 	}
+	for _, want := range [][2]string{
+		{"[native] go-build-cache", "no undo"},
+		{"Frees now", "20.0 GiB"},
+		{"Frees after Trash", " 0 B"},
+	} {
+		if !lineHas(view, want[0], want[1]) {
+			t.Fatalf("plan screen needs a line with %q and %q, got:\n%s", want[0], want[1], view)
+		}
+	}
+	if strings.Contains(view, "Trash first") {
+		t.Fatalf("a native-only plan must not claim Trash-first undo, got:\n%s", view)
+	}
 
 	// esc returns to the checklist.
 	m = press(t, m, "esc")
@@ -400,4 +412,14 @@ func TestScanningState(t *testing.T) {
 	if view := next.(Model).View(); !strings.Contains(view, "Nothing found") {
 		t.Fatalf("empty scan should say nothing found, got:\n%s", view)
 	}
+}
+
+// lineHas reports whether one line of view contains both fragments.
+func lineHas(view, a, b string) bool {
+	for _, line := range strings.Split(view, "\n") {
+		if strings.Contains(line, a) && strings.Contains(line, b) {
+			return true
+		}
+	}
+	return false
 }

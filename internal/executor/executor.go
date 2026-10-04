@@ -57,11 +57,14 @@ type Executor struct {
 
 // Result summarises one executed run.
 type Result struct {
-	RunID    string
-	Done     int
-	Failed   int
-	Bytes    int64 // reclaimed by successful actions
-	Failures []string
+	RunID  string
+	Done   int
+	Failed int
+	Bytes  int64 // reclaimed by successful actions
+	// TrashBytes is the part of Bytes moved to the Trash: it frees
+	// nothing until the Trash is emptied.
+	TrashBytes int64
+	Failures   []string
 }
 
 // NewRunID mints a journal run id: sortable timestamp + entropy so
@@ -134,6 +137,9 @@ func (e *Executor) Execute(ctx context.Context, plan engine.Plan) (Result, error
 		} else {
 			res.Done++
 			res.Bytes += a.Bytes
+			if a.Kind == engine.ActionTrash {
+				res.TrashBytes += a.Bytes
+			}
 		}
 		if err := e.Log.Append(after); err != nil {
 			return res, fmt.Errorf("oplog append failed after acting — journal is incomplete: %w", err)

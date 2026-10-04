@@ -39,3 +39,27 @@ func ActionCommand(a engine.Action) string {
 	}
 	return s
 }
+
+// Reversibility says what `regrow undo` can do for an action once it
+// has run: only Trash moves come back.
+func Reversibility(a engine.Action) string {
+	if a.Kind == engine.ActionTrash {
+		return "undo restores"
+	}
+	return "no undo"
+}
+
+// ActionLine renders one plan action identically on every plan surface.
+func ActionLine(a engine.Action) string {
+	return fmt.Sprintf("%-8s %-24s %10s  %-13s  %s",
+		"["+string(a.Kind)+"]", a.RuleID, HumanBytes(a.Bytes), Reversibility(a), ActionCommand(a))
+}
+
+// TotalsLines splits a plan's total by when the space comes back.
+func TotalsLines(p engine.Plan) []string {
+	t := p.Totals()
+	return []string{
+		fmt.Sprintf("Frees now          %10s  steward commands, no undo", HumanBytes(t.FreesNow)),
+		fmt.Sprintf("Frees after Trash  %10s  moved to the Trash; `regrow undo` restores until it is emptied", HumanBytes(t.AfterTrash)),
+	}
+}

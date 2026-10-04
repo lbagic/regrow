@@ -20,16 +20,13 @@ import (
 )
 
 // runClean is the execution opt-in (invariant 1: dry-run is the
-// default; this command IS the opt-in). Without ids only safe rules
-// run — the same set the TUI pre-selects; caution rules must be named
-// explicitly. The plan is shown and confirmed before anything moves.
+// default; this command IS the opt-in). Without ids the default
+// selection runs, the set the TUI pre-ticks; caution rules must be
+// named explicitly. The plan is shown and confirmed before anything
+// moves.
 func runClean(host engine.Host, catalog []engine.Rule, ids []string, yes bool) error {
 	findings := scanner.New(host).Scan(context.Background(), catalog)
-	sel := selection(ids)
-	if sel == nil {
-		sel = safeSelection(findings)
-	}
-	plan := engine.BuildPlan(host, findings, sel)
+	plan := engine.BuildPlan(host, findings, selectionFor(ids, findings))
 	if len(plan.Unmatched) > 0 {
 		// A typo'd selector must never quietly execute less (or, for a
 		// rule atom, more) than the user meant.
@@ -70,12 +67,15 @@ func runClean(host engine.Host, catalog []engine.Rule, ids []string, yes bool) e
 func printPlanActions(plan engine.Plan) {
 	fmt.Println("About to execute:")
 	for _, a := range plan.Actions {
-		fmt.Printf("  [%s] %-24s %10s  %s\n", a.Kind, a.RuleID, tui.HumanBytes(a.Bytes), tui.ActionCommand(a))
+		fmt.Println("  " + tui.ActionLine(a))
 	}
 	for _, s := range plan.Skipped {
 		fmt.Printf("  [skip] %-22s %s\n", s.RuleID, s.Reason)
 	}
-	fmt.Printf("Total: %s → Trash (undo: `regrow undo`)\n", tui.HumanBytes(plan.TotalBytes()))
+	for _, line := range tui.TotalsLines(plan) {
+		fmt.Println(line)
+	}
+	fmt.Printf("Total: %s\n", tui.HumanBytes(plan.TotalBytes()))
 }
 
 // executePlan runs an already-confirmed plan: oplog first, then the
@@ -121,23 +121,12 @@ func executePlan(host engine.Host, plan engine.Plan) error {
 		return err
 	}
 
-	fmt.Printf("\nDone: %d ok, %d failed, %s reclaimed. Run %s — `regrow undo` restores trash moves.\n",
-		res.Done, res.Failed, tui.HumanBytes(res.Bytes), res.RunID)
+	fmt.Printf("\nDone: %d ok, %d failed. Freed now: %s. In the Trash: %s, freed once it is emptied. Run %s — `regrow undo` restores Trash moves.\n",
+		res.Done, res.Failed, tui.HumanBytes(res.Bytes-res.TrashBytes), tui.HumanBytes(res.TrashBytes), res.RunID)
 	for _, f := range res.Failures {
 		fmt.Println("  failed:", f)
 	}
 	return nil
-}
-
-// safeSelection mirrors the TUI's pre-selection: safe rules with items.
-func safeSelection(findings []engine.Finding) map[string]bool {
-	sel := map[string]bool{}
-	for _, f := range findings {
-		if f.Rule.Risk == engine.RiskSafe && len(f.Items) > 0 {
-			sel[f.Rule.ID] = true
-		}
-	}
-	return sel
 }
 
 // runUndo restores the newest run that still has something to restore,

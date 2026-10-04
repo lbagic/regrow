@@ -60,7 +60,7 @@ func TestExecuteJournalsBeforeActing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Done != 2 || res.Failed != 0 || res.Bytes != 300 {
+	if res.Done != 2 || res.Failed != 0 || res.Bytes != 300 || res.TrashBytes != 100 {
 		t.Fatalf("result wrong: %+v", res)
 	}
 	// start(1), done(1), start(2), done(2) — start always precedes its action's outcome line.
@@ -102,7 +102,7 @@ func TestExecuteContinuesPastFailures(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Done != 1 || res.Failed != 1 || res.Bytes != 200 {
+	if res.Done != 1 || res.Failed != 1 || res.Bytes != 200 || res.TrashBytes != 0 {
 		t.Fatalf("one failure must not abort the run: %+v", res)
 	}
 	if log.entries[1].Event != oplog.EventFail || !strings.Contains(log.entries[1].Error, "vanished") {

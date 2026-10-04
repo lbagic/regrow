@@ -174,10 +174,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.rows = buildRows(m.findings, m.expanded)
 		m.cursor = firstCursorable(m.rows)
-		// Safe findings start selected (PRODUCT.md pillar 2: auto-clean
-		// class); caution needs a human tick; surface-only never.
+		def := engine.DefaultSelection(m.findings)
 		for _, f := range m.findings {
-			if f.Rule.Risk == engine.RiskSafe && len(f.Items) > 0 && f.Err == "" {
+			if def[f.Rule.ID] {
 				m.selectAllItems(f)
 			}
 		}
@@ -677,15 +676,18 @@ func (m Model) viewPlan() string {
 		b.WriteString("  Nothing selected found anything to reclaim.\n")
 	}
 	for _, a := range m.plan.Actions {
-		fmt.Fprintf(&b, "  [%s] %-24s %10s  %s\n",
-			a.Kind, a.RuleID, HumanBytes(a.Bytes), ActionCommand(a))
+		b.WriteString("  " + ActionLine(a) + "\n")
 	}
 	for _, s := range m.plan.Skipped {
 		b.WriteString(styleFaint.Render(fmt.Sprintf("  [skip]   %-22s %s", s.RuleID, s.Reason)) + "\n")
 	}
 
-	fmt.Fprintf(&b, "\n  Would reclaim: %s\n", styleTitle.Render(HumanBytes(m.plan.TotalBytes())))
-	b.WriteString(styleFaint.Render("  Trash first, `regrow undo` restores. Also scriptable: `regrow clean [id ...]`.") + "\n\n")
+	b.WriteString("\n")
+	for _, line := range TotalsLines(m.plan) {
+		b.WriteString("  " + line + "\n")
+	}
+	fmt.Fprintf(&b, "  Would reclaim: %s\n", styleTitle.Render(HumanBytes(m.plan.TotalBytes())))
+	b.WriteString(styleFaint.Render("  Also scriptable: `regrow clean [id ...]`.") + "\n\n")
 	b.WriteString(styleFaint.Render("  x execute (asks again) · esc back · q quit") + "\n")
 	return b.String()
 }
@@ -699,12 +701,14 @@ func (m Model) viewConfirm() string {
 	b.WriteString(styleCaution.Render("  CONFIRM — about to execute") + "\n\n")
 
 	for _, a := range m.plan.Actions {
-		fmt.Fprintf(&b, "  [%s] %-24s %10s  %s\n",
-			a.Kind, a.RuleID, HumanBytes(a.Bytes), ActionCommand(a))
+		b.WriteString("  " + ActionLine(a) + "\n")
 	}
 
-	fmt.Fprintf(&b, "\n  Reclaims %s. Trash moves are restorable with `regrow undo`; native\n", styleTitle.Render(HumanBytes(m.plan.TotalBytes())))
-	b.WriteString("  commands are not undoable — their data comes back via the regen story.\n\n")
+	b.WriteString("\n")
+	for _, line := range TotalsLines(m.plan) {
+		b.WriteString("  " + line + "\n")
+	}
+	b.WriteString("  Steward commands are not undoable — their data comes back via the regen story.\n\n")
 	b.WriteString(styleCaution.Render("  y execute") + styleFaint.Render(" · esc back · q quit without executing") + "\n")
 	return b.String()
 }
