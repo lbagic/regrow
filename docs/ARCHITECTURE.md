@@ -33,7 +33,7 @@ tick → sample (statfs free, purgeable, swap) → `headroom.jsonl` → forecast
 ## Invariants (the fence)
 
 1. Dry-run is the default; execution is opt-in per run. One exception: autotrim (`regrow tick --autotrim`, the engine's `tick{autotrim}`) runs a rule's `prune:` policy with no per-run opt-in, only while headroom is low, and only once the oplog holds a completed manual `regrow prune <name> --yes` of that rule.
-2. Nothing is ever `rm`'d directly: trash first, staging dir fallback, `--rm` explicit opt-out. One exception: a `prune` action deletes Go build cache entries unused for the rule's `min_age` directly, with no Trash and no undo; it is journaled with the files and bytes it deleted.
+2. Nothing is ever `rm`'d directly: trash first, staging dir fallback. One exception: a `prune` action deletes Go build cache entries unused for the rule's `min_age` directly, with no Trash and no undo; it is journaled with the files and bytes it deleted.
 3. Every destructive path passes the guard: never empty, `/`, `$HOME`, or mount roots.
 4. Native steward commands over raw deletion (`go clean -cache`, `ollama rm`, `docker builder prune`, `simctl runtime delete`). One exception: the go-build prune is a raw `/usr/bin/find <GOCACHE> -ignore_readdir_race … -delete`, because Go has no "trim entries older than" command. It deletes only the kind of file Go's own trim deletes (an `-a` or `-d` entry inside a two-hex-digit shard dir), and refuses unless `go env GOCACHE` names the directory, its README carries Go's cache header, and it sits on the volume whose free space was measured.
 5. Risk classes are architectural, not cosmetic: `safe` (auto-clean), `caution` (review), `surface-only` (never deletable through us).
