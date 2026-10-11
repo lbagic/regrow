@@ -219,3 +219,34 @@ func TestUndoableReverseOrderAndExcludesUndone(t *testing.T) {
 		t.Fatalf("failed undo must keep the action undoable, got %+v", got)
 	}
 }
+
+// Finder and staging reuse a name once nothing is there, so a later
+// move to the same path means the earlier copy was already gone: the
+// earlier receipt is never restored, and counts as gone even though
+// something sits at its path.
+func TestRunsMarkACopyPathALaterMoveReused(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"a", "b"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(name), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rc := func(name string) *trash.Receipt {
+		return &trash.Receipt{Original: "/home/" + name, To: filepath.Join(dir, name), Method: trash.MethodFinder}
+	}
+	runs := Runs([]Entry{
+		{Run: "r1", Seq: 1, Event: EventDone, Receipt: rc("a")},
+		{Run: "r1", Seq: 2, Event: EventDone, Receipt: rc("b")},
+		{Run: "r2", Seq: 1, Event: EventDone, Receipt: rc("a")},
+	})
+	if got := runs[0].Undoable(); len(got) != 1 || got[0].Seq != 2 {
+		t.Errorf("r1 Undoable = %+v, want only seq 2", got)
+	}
+	present, gone := runs[0].OnDisk()
+	if len(present) != 1 || present[0].Seq != 2 || len(gone) != 1 || gone[0].Seq != 1 {
+		t.Errorf("r1 OnDisk = %+v, %+v; want seq 2 present, seq 1 gone", present, gone)
+	}
+	if present, gone := runs[1].OnDisk(); len(present) != 1 || len(gone) != 0 {
+		t.Errorf("r2 OnDisk = %+v, %+v; want its move present", present, gone)
+	}
+}

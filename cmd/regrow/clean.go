@@ -253,7 +253,7 @@ func runUndo(args []string) error {
 			}
 		}
 		if target == nil {
-			fmt.Println("Nothing to undo: no run has restorable trash moves.")
+			fmt.Println("Nothing to undo: no run has a Trash or staging move still on disk; `regrow history` says which are gone.")
 			return nil
 		}
 	}

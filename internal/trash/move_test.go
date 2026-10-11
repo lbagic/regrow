@@ -209,4 +209,19 @@ func TestReceiptGone(t *testing.T) {
 			t.Errorf("Gone(%s) = %v, want %v", to, got, want)
 		}
 	}
+	// A refused stat says nothing about the copy, so it is not gone.
+	if os.Geteuid() == 0 {
+		t.Skip("root reads through a folder's permissions")
+	}
+	locked := filepath.Join(dir, "locked")
+	if err := os.MkdirAll(filepath.Join(locked, "copy"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+	if (Receipt{To: filepath.Join(locked, "copy"), Method: MethodStaging}).Gone() {
+		t.Error("a copy behind a folder that refuses a stat must not read as gone")
+	}
 }

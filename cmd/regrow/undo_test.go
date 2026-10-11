@@ -37,6 +37,8 @@ func TestHistoryLinesCountOnlyCopiesOnDisk(t *testing.T) {
 		moved(t, dir, "r1", 1, at, "emptied", trash.MethodFinder, true),
 		moved(t, dir, "r2", 1, at.Add(time.Hour), "kept", trash.MethodFinder, false),
 		moved(t, dir, "r2", 2, at.Add(time.Hour), "lost", trash.MethodStaging, true),
+		moved(t, dir, "r3", 1, at.Add(2*time.Hour), "emptied-too", trash.MethodFinder, true),
+		moved(t, dir, "r3", 2, at.Add(2*time.Hour), "lost-too", trash.MethodStaging, true),
 	})
 	lines := historyLines(runs)
 	if !strings.HasSuffix(lines[0], "(nothing restorable: 1 gone from the Trash)") {
@@ -44,6 +46,58 @@ func TestHistoryLinesCountOnlyCopiesOnDisk(t *testing.T) {
 	}
 	if !strings.HasSuffix(lines[1], "(1 restorable, 1 gone from regrow staging)") {
 		t.Errorf("a run with one copy left of two must count one, got %q", lines[1])
+	}
+	if !strings.HasSuffix(lines[2], "(nothing restorable: 1 gone from the Trash, 1 gone from regrow staging)") {
+		t.Errorf("a run must name both places its copies are gone from, got %q", lines[2])
+	}
+}
+
+// Once the Trash is emptied, Finder gives the next item of the same
+// name the same Trash path. The older run's copy is gone, whatever now
+// sits there, and undoing that run must not move the newer run's item.
+func TestUndoNeverRestoresAReusedCopy(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	logPath, err := oplog.DefaultPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	to := filepath.Join(dir, "Trash", "node_modules")
+	if err := os.MkdirAll(to, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Now()
+	done := func(run string, at time.Time, project string) oplog.Entry {
+		return oplog.Entry{Time: at, Run: run, Seq: 1, Event: oplog.EventDone, RuleID: "fixture",
+			Receipt: &trash.Receipt{Original: filepath.Join(dir, project, "node_modules"), To: to, Method: trash.MethodFinder}}
+	}
+	entries := []oplog.Entry{done("r1", at, "a"), done("r2", at.Add(time.Hour), "b")}
+	log, err := oplog.Open(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if err := log.Append(e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := log.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	lines := historyLines(oplog.Runs(entries))
+	if !strings.HasSuffix(lines[0], "(nothing restorable: 1 gone from the Trash)") || !strings.HasSuffix(lines[1], "(1 restorable)") {
+		t.Errorf("want the older run gone and the newer restorable, got %q", lines[:2])
+	}
+	err = runUndo([]string{"r1"})
+	if err == nil || !strings.Contains(err.Error(), "nothing left to restore in run r1") {
+		t.Errorf("undo of the older run = %v, want it refused", err)
+	}
+	if _, err := os.Stat(to); err != nil {
+		t.Errorf("the newer run's item left the Trash: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "a", "node_modules")); err == nil {
+		t.Error("the newer run's item was restored to the older run's place")
 	}
 }
 

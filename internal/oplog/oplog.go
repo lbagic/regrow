@@ -182,22 +182,38 @@ type Run struct {
 	ID      string
 	Start   time.Time
 	Entries []Entry
+	// reused holds the seqs of done moves whose copy path a later done
+	// move in the journal took again: Finder and staging reuse a name
+	// once nothing is there, so what sits at that path is the later
+	// move's item.
+	reused map[int]bool
 }
 
 // Runs groups entries by run id, oldest first. Undo entries group
 // under the run they undo (they share its id).
 func Runs(entries []Entry) []Run {
+	taken := map[string]bool{}
+	reused := make([]bool, len(entries))
+	for i := len(entries) - 1; i >= 0; i-- {
+		if e := entries[i]; e.Event == EventDone && e.Receipt != nil && e.Receipt.Restorable() {
+			reused[i] = taken[e.Receipt.To]
+			taken[e.Receipt.To] = true
+		}
+	}
 	byID := map[string]*Run{}
 	var order []string
-	for _, e := range entries {
+	for i, e := range entries {
 		r, ok := byID[e.Run]
 		if !ok {
-			r = &Run{ID: e.Run, Start: e.Time}
+			r = &Run{ID: e.Run, Start: e.Time, reused: map[int]bool{}}
 			byID[e.Run] = r
 			order = append(order, e.Run)
 		}
 		if e.Time.Before(r.Start) {
 			r.Start = e.Time
+		}
+		if reused[i] {
+			r.reused[e.Seq] = true
 		}
 		r.Entries = append(r.Entries, e)
 	}
@@ -210,11 +226,39 @@ func Runs(entries []Entry) []Run {
 }
 
 // Undoable returns the run's trash receipts that can still be
-// restored — done actions minus those already undone — in reverse
-// execution order (last moved, first restored). Non-restorable
-// receipts (volume export tarballs) are excluded: they are recovery
-// pointers, not rename-back moves.
+// restored — done actions minus those already undone, and minus those
+// whose copy path a later move reused — in reverse execution order
+// (last moved, first restored). Non-restorable receipts (volume export
+// tarballs) are excluded: they are recovery pointers, not rename-back
+// moves.
 func (r Run) Undoable() []Entry {
+	var out []Entry
+	for _, e := range r.pending() {
+		if !r.reused[e.Seq] {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// OnDisk splits the run's not-undone moves by whether each one's Trash
+// or staging copy is still there: present can be restored; gone cannot,
+// its copy removed or its path reused by a later move. It reads the
+// disk and writes nothing to the journal.
+func (r Run) OnDisk() (present, gone []Entry) {
+	for _, e := range r.pending() {
+		if r.reused[e.Seq] || e.Receipt.Gone() {
+			gone = append(gone, e)
+		} else {
+			present = append(present, e)
+		}
+	}
+	return present, gone
+}
+
+// pending is the run's restorable done receipts not yet undone, last
+// moved first.
+func (r Run) pending() []Entry {
 	undone := map[int]bool{}
 	for _, e := range r.Entries {
 		if e.Event == EventUndo && e.Error == "" {
@@ -229,18 +273,4 @@ func (r Run) Undoable() []Entry {
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Seq > out[j].Seq })
 	return out
-}
-
-// OnDisk splits Undoable by whether each receipt's Trash or staging
-// copy is still there: present can be restored, gone cannot. It reads
-// the disk and writes nothing to the journal.
-func (r Run) OnDisk() (present, gone []Entry) {
-	for _, e := range r.Undoable() {
-		if e.Receipt.Gone() {
-			gone = append(gone, e)
-		} else {
-			present = append(present, e)
-		}
-	}
-	return present, gone
 }
