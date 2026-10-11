@@ -114,11 +114,17 @@ func TestCommandQuotesAsAShellReads(t *testing.T) {
 	}
 }
 
-func TestMacOSMaxNamesARealRelease(t *testing.T) {
-	cases := map[string]string{"25": "15", "25.9": "15", "16": "15", "15": "15", "14.4": "14.4", "26": "26", "26.1": "26.1"}
-	for in, want := range cases {
+func TestVersionBoundsNameWhatTheyAdmit(t *testing.T) {
+	max := map[string]string{"25": "15", "25.9": "15", "16": "15", "15": "15.0", "14.4": "14.4.0", "26": "26.0"}
+	for in, want := range max {
 		if got := macOSMax(in); got != want {
 			t.Errorf("macOSMax(%q) = %q, want %q", in, got, want)
+		}
+	}
+	min := map[string]string{"16": "26", "25": "26", "26": "26", "14.4": "14.4"}
+	for in, want := range min {
+		if got := macOSMin(in); got != want {
+			t.Errorf("macOSMin(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

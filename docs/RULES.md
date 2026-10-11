@@ -288,7 +288,7 @@ Package caches, build caches and build output of developer tools, and what codin
 
 **npx package folders** · safe · beta · [`rules/npx-cache.yaml`](../rules/npx-cache.yaml)
 
-- **Looks at:** the folders in `~/.npm/_npx`, one per package npx ran, each with the newest modification time of anything in it and the package names in its `package.json`, and the working folders and command lines of your processes (`lsof`, `ps`).
+- **Looks at:** the folders in `~/.npm/_npx`, one per package spec npx ran, each with the newest modification time of anything in it and the package names in its `package.json`, and the working folders and command lines of your processes (`lsof`, `ps`).
 - **Removed by:** a move to the Trash, one per item; `regrow undo` puts it back. Right before each removal, regrow judges the folder again, as the scan did, and leaves it in place if any reason to keep it holds now or your processes cannot be listed.
 - **Keeps:**
   - A folder a running process works in or names on its command line.
@@ -461,11 +461,11 @@ Docker objects, listed through the `docker` command; regrow never touches Docker
 
 **Docker dangling images** · safe · [`rules/docker-images-dangling.yaml`](../rules/docker-images-dangling.yaml)
 
-- **Looks at:** `docker system df -v`, `docker image inspect` and `docker container inspect`, through the daemon your current docker context points at; an image with no tag that no container uses is listed whatever its age.
+- **Looks at:** `docker system df -v`, `docker image inspect` and `docker container inspect`, through the daemon your current docker context points at; an image with no tag and no digest reference that no container uses is listed whatever its age.
 - **Removed by:** `docker image rm {arg}`, once per item; `{arg}` is the item as the tool names it. It deletes for good: `regrow undo` cannot bring it back.
 - **Keeps:**
   - An image any container uses, stopped containers included; when Docker cannot say, every image counts as used.
-  - An image with a tag: those belong to `docker-images-unused`. On Docker's classic image store an image pulled by digest alone has no tag, so it is listed here although `docker images` shows its repository.
+  - An image with a tag, which belongs to `docker-images-unused`, and, on Docker's containerd image store, one pulled by digest alone, which is in neither rule. On the classic image store such an image has no digest reference in Docker's record, so it is listed here.
 - **Comes back:** Dangling layers are superseded build leftovers; the next build or pull recreates what is still needed. Cost: next build slower; network for re-pulled layers.
 
 ### docker-images-unused
@@ -553,14 +553,15 @@ System caches, logs, downloads and the Trash.
 
 **Installers of installed apps** · caution · beta · [`rules/downloaded-installers.yaml`](../rules/downloaded-installers.yaml)
 
-- **Looks at:** the `.dmg`, `.pkg` and `.zip` files at the top of `~/Downloads`, with their modification, change, creation and date-added times; a `.zip`'s list of contents and its app's `Info.plist`, read without extracting it; and the apps in `/Applications` and `~/Applications` and one folder down, with each app's date added and `Info.plist` (a binary one converted to text by `/usr/bin/plutil`).
+- **Looks at:** the `.dmg`, `.pkg` and `.zip` files at the top of `~/Downloads`, with their modification, change, creation and date-added times; a `.zip`'s list of contents and its app's `Info.plist`, read without extracting it; and the apps in `/Applications` and `~/Applications` and one folder down, with each app's date added, and its `Info.plist` where a judgement needs it (a binary one converted to text by `/usr/bin/plutil`).
 - **Removed by:** a move to the Trash, one per item; `regrow undo` puts it back. Right before each removal, regrow judges the download against the installed apps again, as the scan did, and leaves it in place if any reason to keep it holds now.
 - **Keeps:**
   - A download modified, changed, created or added to the folder in the last 14 days.
   - A `.zip` that holds no app, more than one app, or anything beside the app (macOS's `__MACOSX` folder aside), and one whose app's `Info.plist` cannot be read.
-  - A download no installed app matches: a `.zip` whose app's bundle identifier no installed app carries; a `.dmg` or `.pkg` whose file name, less versions, architectures, a copy number such as `(1)` and words such as `mac` or `installer`, spells no installed app's name (case, spaces and punctuation aside).
+  - A download no installed app matches: a `.zip` whose app's bundle identifier no installed app carries; a `.dmg` or `.pkg` whose file name matches no installed app's name, both read without versions, architectures, a copy number such as `(1)`, words such as `mac`, `intel` or `install` and an `installer` or `setup` ending, and with case, spaces and punctuation aside; so `Sequoia.dmg` matches `Install macOS Sequoia.app`.
   - A download newer than an installed copy of its app: a `.zip` whose app has a higher version, or the same version and a higher build, a `.dmg` or `.pkg` whose name spells a higher version, and a `.dmg` or `.pkg` that arrived or changed after the app was installed.
-  - A download whose version cannot be compared with an installed copy's, or where that copy's `Info.plist` or date added cannot be read.
+  - A `.zip` whose app's version cannot be compared with an installed copy's, and one whose app shares its name with an installed app whose `Info.plist` cannot be read.
+  - A `.dmg` or `.pkg` when an installed copy's date added cannot be read, or, if its name spells a version, when that copy's `Info.plist` cannot be read or its version compared.
   - Every download, when an app folder cannot be read in full, since it could hide an installed copy; and a download that cannot be read.
 - **Comes back:** The app stays installed; its maker offers the installer again if you ever reinstall. Cost: one download per app you reinstall.
 - **Note:** A .dmg or .pkg is matched by its file name alone, and a disk image can hold more than the app (an uninstaller, a driver) - check the list before moving one.

@@ -75,8 +75,8 @@ reclaim                     scan → inventory, grouped, size-ranked
 
 - Go + Bubble Tea + Lip Gloss; GoReleaser; single static binary.
 - `rules/*.yaml` embedded at build; `--rules-dir` override for development and community testing.
-- Engine walks: known paths (per-OS resolution incl. version-dependent paths from research §14) + marker-file discovery (CACHEDIR.TAG, node_modules, models/checkpoints) + tool queries (the docker CLI, simctl, tmutil, git, ps and lsof; the HF cache and Ollama's manifests are read directly, with no CLI). [SCAN.md](SCAN.md) lists what a scan reads and runs.
-- Every destructive action: path guard (never empty, relative, `/`, a top-level folder, $HOME or a `/Volumes` mount root), trash via Finder (`osascript`) with a fallback staging dir, or the tool's steward command (no undo), journaled before it runs to `~/.local/state/regrow/oplog.jsonl` (`$XDG_STATE_HOME/regrow` when set).
+- Engine walks: known paths (per-OS resolution incl. version-dependent paths from research §14) + discovery by folder name and marker (node_modules by name, Rust target by CACHEDIR.TAG, models by checkpoints) + tool queries (the docker CLI, simctl, tmutil, git, ps, lsof, osascript and plutil; the HF cache and Ollama's manifests are read directly, with no CLI). [SCAN.md](SCAN.md) lists what a scan reads and runs.
+- Every destructive action is a Trash move via Finder (`osascript`) with a fallback staging dir, the tool's steward command (no undo), or the Go build cache prune's direct delete of old entries (no undo); a Trash move and a command run on one item's path pass the path guard first (never empty, relative, `/`, a top-level folder, $HOME or a `/Volumes` mount root); every action is journaled before it runs to `~/.local/state/regrow/oplog.jsonl` (`$XDG_STATE_HOME/regrow` when set).
 - Tests: fixture $HOME builder + golden dry-run snapshots per rule; CI tests on macOS (Linux joins in v0.3).
 - Telemetry: none. `regrow history` lists past runs and what each cleaned; a local-only lifetime total of GB reclaimed (nice for screenshots) is not built.
 

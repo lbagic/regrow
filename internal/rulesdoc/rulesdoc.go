@@ -327,24 +327,34 @@ func shellWord(w string) string {
 func versionText(min, max string) string {
 	switch {
 	case min != "" && max != "":
-		return " (macOS " + min + " to " + macOSMax(max) + ")"
+		return " (macOS " + macOSMin(min) + " to " + macOSMax(max) + ")"
 	case min != "":
-		return " (macOS " + min + " and later)"
+		return " (macOS " + macOSMin(min) + " and later)"
 	case max != "":
 		return " (macOS " + macOSMax(max) + " and earlier)"
 	}
 	return ""
 }
 
-// macOSMax names the last release an os_max admits. macOS went from 15
-// to 26, so a bound between them, such as "25" for "before 26", admits
-// 15.
+// macOSMax names the last release an os_max admits. A missing part
+// compares as 0, so "15" admits 15.0 but not 15.2; and macOS went from
+// 15 to 26, so a bound between them, such as "25", admits all of 15.
 func macOSMax(max string) string {
 	major, _, _ := strings.Cut(max, ".")
 	if n, err := strconv.Atoi(major); err == nil && n > 15 && n < 26 {
 		return "15"
 	}
-	return max
+	return max + ".0"
+}
+
+// macOSMin names the first release an os_min admits: a bound between 15
+// and 26 admits 26 onwards.
+func macOSMin(min string) string {
+	major, _, _ := strings.Cut(min, ".")
+	if n, err := strconv.Atoi(major); err == nil && n > 15 && n < 26 {
+		return "26"
+	}
+	return min
 }
 
 func codeList(names []string) string {

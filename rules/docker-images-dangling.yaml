@@ -11,10 +11,10 @@ category: docker
 risk: safe
 tool_query: docker-images-dangling
 native_command: docker image rm {arg}
-scans: "`docker system df -v`, `docker image inspect` and `docker container inspect`, through the daemon your current docker context points at; an image with no tag that no container uses is listed whatever its age"
+scans: "`docker system df -v`, `docker image inspect` and `docker container inspect`, through the daemon your current docker context points at; an image with no tag and no digest reference that no container uses is listed whatever its age"
 keeps:
   - "an image any container uses, stopped containers included; when Docker cannot say, every image counts as used"
-  - "an image with a tag: those belong to `docker-images-unused`. On Docker's classic image store an image pulled by digest alone has no tag, so it is listed here although `docker images` shows its repository"
+  - "an image with a tag, which belongs to `docker-images-unused`, and, on Docker's containerd image store, one pulled by digest alone, which is in neither rule. On the classic image store such an image has no digest reference in Docker's record, so it is listed here"
 regen:
   story: Dangling layers are superseded build leftovers; the next build or pull recreates what is still needed.
   cost: next build slower; network for re-pulled layers
