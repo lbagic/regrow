@@ -8,13 +8,13 @@ Beta rules join a scan only with `--beta-rules`. Several of them read more than 
 
 - **Each rule's paths**, listed under "Looks at" in [RULES.md](RULES.md). Most are in your home folder: `~/Library/Caches`, `~/Library/Developer`, `~/.cache`, `~/.npm`, `~/go/pkg/mod`, `~/.claude` and the like. Three are system folders: `/Library/Updates`, `/Applications/Install macOS*.app`, and the aerial wallpaper folder `/Library/Application Support/com.apple.idleassetsd/Customer` on macOS 25 and earlier.
 - **Your project folders**: `~/workspace`, `~/dev`, `~/projects`, `~/src` and `~/code`, those that exist, walked for `node_modules` folders (10 levels down) and Rust `target` folders that hold `CACHEDIR.TAG` (6 levels down). With `--beta-rules`, the same folders are also walked for build output (`.next`, `dist`, `.turbo`, `.venv`) and git repositories, and `/private/tmp/claude-<uid>` for git repositories too.
-- **With `--beta-rules`**: your home folder, 5 levels down, for Stable Diffusion `models` folders that hold `checkpoints`; Claude Code's scratch folder `/private/tmp/claude-<uid>` and its config folders (`$CLAUDE_CONFIG_DIR`, `~/.claude`, and every `~/.claude*` that holds `projects/`); the Hugging Face hub cache; Ollama's model manifests.
+- **With `--beta-rules`**: your home folder, 5 levels down, for Stable Diffusion `models` folders that hold `checkpoints`; Claude Code's scratch folder `/private/tmp/claude-<uid>` and its config folders (`$CLAUDE_CONFIG_DIR`, `~/.claude`, and every `~/.claude*` that holds `projects/`); the Hugging Face hub cache; Ollama's model manifests; npx's folders in `~/.npm/_npx`; the `.dmg`, `.pkg` and `.zip` files at the top of `~/Downloads`, and the apps in `/Applications` and `~/Applications` and one folder down; Chrome's on-device AI model; and one more system folder, `/System/Library/AssetsV2/com_apple_MobileAsset_MacSoftwareUpdate`, for a macOS update Software Update downloaded.
 - **Docker Desktop's disk image**, `~/Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw` (or `Docker.qcow2`): its size only.
 
 How it reads them:
 
-- It reads names, sizes and change times. Sizes are the blocks files take on disk, so a sparse file counts what it really holds.
-- It reads a file's contents only where a rule needs them: Ollama's manifests, Claude Code's session registry files (`<config>/sessions/<pid>.json`), git's `.git` link files, `commondir` and config files, your `~/.config/regrow/config.yaml`, and regrow's own state. Of Claude Code's transcripts and git's `HEAD` it reads only the change times. git, where it runs, reads what it needs from the repository.
+- It reads names, sizes and change times, and with `--beta-rules` a download's creation time and a download's or an app's date added. Sizes are the blocks files take on disk, so a sparse file counts what it really holds.
+- It reads a file's contents only where a rule needs them: Ollama's manifests, Claude Code's session registry files (`<config>/sessions/<pid>.json`), git's `.git` link files, `commondir` and config files, the `package.json` in each npx folder, an installed app's `Info.plist`, a `.zip` download's list of contents and its app's `Info.plist` (read from the archive without extracting it), your `~/.config/regrow/config.yaml`, and regrow's own state. Of Claude Code's transcripts and git's `HEAD` it reads only the change times. git, where it runs, reads what it needs from the repository.
 - It follows no symbolic link below the folder it starts from. A project folder that is itself a link is walked through it, except by the build-output rule, which leaves such a folder out.
 - A search for folders (in your project folders, or your home folder) does not enter `.git`, `.Trash`, `Library` or `node_modules` (unless that name is what the rule looks for), nor a folder it has already matched. A folder it measures, it measures whole.
 - Every filesystem call is watched. One that makes no progress for 5 seconds while nothing else in the scan answers is written off: its folder is shown as unreadable, or its size as a lower bound ("≥ 2.1 GiB"), and the scan moves on. A folder macOS keeps from programs without Full Disk Access shows the same way.
@@ -36,10 +36,11 @@ With `--beta-rules`, also:
 | Program | Why |
 |---|---|
 | `ps -x -U <your uid>`, and `ps -E -p <pids>` for running `claude` processes | which agent sessions are still running; from a `claude` process's environment regrow uses only `CLAUDE_CONFIG_DIR` and `HOME` |
-| `lsof -a -d cwd -u <your uid>`, `ps -x -U <your uid> -o args=` | which projects a running process works in |
+| `lsof -a -d cwd -u <your uid>`, `ps -x -U <your uid> -o args=` | which projects and npx folders a running process works in or names |
 | `git` (`worktree list`, `for-each-ref`, `rev-list`, `status --ignored`, `ls-files`, `rev-parse`, `check-ignore`, `config --get`) | whether a worktree is finished and whether a build folder is ignored; every call runs with `--no-optional-locks`, so git does not even refresh its index, and each has 30 seconds |
+| `/usr/bin/plutil -convert xml1 -o - -` | turns an app's binary `Info.plist`, handed to it on its input, into text, for the app's identifier and version |
 
-When they need `ps` or `lsof` and cannot run it, the agent-session and build-output rules show an error and offer nothing.
+When they need `ps` or `lsof` and cannot run it, the agent-session, build-output and npx rules show an error and offer nothing.
 
 `regrow scan --json` also takes one free-space sample before the scan. `regrow doctor` scans only the rules that watch for a runaway bug and the phantom-space rules, so of the programs above it starts `sw_vers`, `tmutil` and `osascript`, and it adds `go env GOFLAGS` (with `GOTOOLCHAIN=local`, so Go downloads nothing). Its other checks read Docker Desktop's settings file, `~/.docker/daemon.json` and git's worktree records.
 
@@ -59,7 +60,7 @@ A run starts only from a plan you confirmed. On top of the scan it:
 - tells Finder through `osascript` to move each Trash item to the Trash, or, when Finder cannot be reached, renames the item into `~/.local/state/regrow/staging/<run-id>/`;
 - runs each rule's own command as the plan shows it, `sudo` included where the rule asks for it, in your terminal so `sudo` can ask for your password (the app leaves such a command for you to run in Terminal);
 - for a Docker volume, first writes `~/.local/state/regrow/staging/<run-id>/docker-volume-<name>.tar` by running `docker run --rm -v <name>:/volume:ro busybox tar …`;
-- right before removing an agent session's scratch, a worktree or a build folder, runs that rule's checks again.
+- right before removing an agent session's scratch, a worktree, a build folder, an npx folder or a download, runs that rule's checks again.
 
 `regrow undo` renames items back from the Trash or staging, without Finder, and appends to the oplog. `regrow tick` appends a free-space sample to `~/.local/state/regrow/headroom.jsonl`. `regrow prune go-build --yes` runs `go env GOCACHE`, `ps -axo pid=,ppid=,rss=,comm=` and `/usr/bin/find <GOCACHE> … -delete`, journals to the oplog, and locks `~/.local/state/regrow/prune.state`. The menubar app's own files are in [APP.md](APP.md).
 

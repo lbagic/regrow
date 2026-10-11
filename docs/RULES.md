@@ -2,7 +2,7 @@
 
 # What regrow scans
 
-regrow's catalog holds 54 rules: 27 safe, 19 caution and 8 surface-only. 17 of them are beta, and a scan includes them only with `--beta-rules`. Every entry below is written from the rule's file in [`rules/`](../rules), the catalog `regrow rules` lists. Paths are the macOS ones; the rules also carry Linux paths, for a Linux build that has not shipped. [SCAN.md](SCAN.md) says what a scan reads, which programs it runs, and what regrow writes.
+regrow's catalog holds 58 rules: 28 safe, 20 caution and 10 surface-only. 21 of them are beta, and a scan includes them only with `--beta-rules`. Every entry below is written from the rule's file in [`rules/`](../rules), the catalog `regrow rules` lists. Paths are the macOS ones; the rules also carry Linux paths, for a Linux build that has not shipped. [SCAN.md](SCAN.md) says what a scan reads, which programs it runs, and what regrow writes.
 
 How to read an entry:
 
@@ -21,6 +21,7 @@ Model caches and libraries of AI tools.
 
 | Rule | Risk | Removed by |
 |---|---|---|
+| [Chrome on-device AI model](#chrome-ai-model) | surface-only, beta | never |
 | [Stable Diffusion model libraries (ComfyUI/SD-WebUI)](#comfyui-sd-models) | surface-only, beta | never |
 | [GPT4All models](#gpt4all-models) | caution, beta | Trash |
 | [HuggingFace datasets cache](#hf-datasets) | caution, beta | Trash |
@@ -33,6 +34,15 @@ Model caches and libraries of AI tools.
 | [PyTorch hub cache](#torch-hub-cache) | safe, beta | Trash |
 | [Weights & Biases cache](#wandb-cache) | safe, beta | Trash |
 | [Whisper model cache](#whisper-cache) | safe, beta | Trash |
+
+### chrome-ai-model
+
+**Chrome on-device AI model** · surface-only · beta · [`rules/chrome-ai-model.yaml`](../rules/chrome-ai-model.yaml)
+
+- **Looks at:** `~/Library/Application Support/Google/Chrome/OptGuideOnDeviceModel`.
+- **Removed by:** never: surface-only.
+- **Comes back:** Chrome downloads the model again while On-device AI is on and the Mac has room for it. Cost: n/a — regrow never deletes here.
+- **Note:** Chrome ▸ Settings ▸ AI Innovations ▸ turn off On-device AI: Chrome deletes the model and does not download it again while the setting is off. Deleting the folder by hand does not stop the next download. On a managed Mac, the GenAILocalFoundationalModelSettings policy set to 1 does the same.
 
 ### comfyui-sd-models
 
@@ -155,6 +165,7 @@ Package caches, build caches and build output of developer tools, and what codin
 | [Go module cache](#go-mod-cache) | caution | `go clean -modcache` |
 | [node_modules in project trees](#node-modules-dirs) | caution | Trash |
 | [npm cache](#npm-cache) | safe | `npm cache clean --force` |
+| [npx package folders](#npx-cache) | safe, beta | Trash |
 | [pip cache](#pip-cache) | safe | `pip3 cache purge` |
 | [Playwright browser cache](#playwright-cache) | safe | Trash |
 | [pnpm store (unreferenced packages)](#pnpm-store) | safe | `pnpm store prune` |
@@ -269,9 +280,22 @@ Package caches, build caches and build output of developer tools, and what codin
 
 **npm cache** · safe · [`rules/npm-cache.yaml`](../rules/npm-cache.yaml)
 
-- **Looks at:** `~/.npm`.
+- **Looks at:** `~/.npm/_cacache`.
 - **Removed by:** `npm cache clean --force`, once for the whole rule: all of it or nothing. It deletes for good: `regrow undo` cannot bring it back.
 - **Comes back:** npm re-fetches packages into the cache as installs need them. Cost: next installs re-download; network.
+
+### npx-cache
+
+**npx package folders** · safe · beta · [`rules/npx-cache.yaml`](../rules/npx-cache.yaml)
+
+- **Looks at:** the folders in `~/.npm/_npx`, one per package npx ran, each with the newest modification time of anything in it and the package names in its `package.json`, and the working folders and command lines of your processes (`lsof`, `ps`).
+- **Removed by:** a move to the Trash, one per item; `regrow undo` puts it back. Right before each removal, regrow judges the folder again, as the scan did, and leaves it in place if any reason to keep it holds now or your processes cannot be listed.
+- **Keeps:**
+  - A folder a running process works in or names on its command line.
+  - A folder with anything in it modified in the last 7 days: npx changes its folder each time it runs the package.
+  - A folder that cannot all be read, and one whose path `lsof` and `ps` would not print as it is.
+  - Everything, when `lsof` or `ps` fails: the rule then shows an error and offers nothing.
+- **Comes back:** npx installs a package again the next time it runs it. Cost: next npx run re-downloads; network.
 
 ### pip-cache
 
@@ -504,10 +528,12 @@ System caches, logs, downloads and the Trash.
 | Rule | Risk | Removed by |
 |---|---|---|
 | [Aerial wallpaper videos](#aerial-wallpapers) | safe | `sudo find {path} -type f -name '*.mov' -delete` |
+| [Installers of installed apps](#downloaded-installers) | caution, beta | Trash |
 | [Local iOS device backups](#ios-backups) | surface-only | never |
 | [App caches (~/Library/Caches)](#library-caches) | surface-only | never |
 | [Stuck update payloads (/Library/Updates)](#library-updates) | surface-only | never |
 | [Stale macOS installers](#macos-installers) | safe | Trash |
+| [Downloaded macOS update](#macos-update-download) | surface-only, beta | never |
 | [mediaanalysisd cache](#media-analysis-cache) | safe | Trash |
 | [Rebuild Spotlight index](#spotlight-index) | caution | `sudo mdutil -E /` |
 | [Empty Trash](#trash-empty) | caution | `osascript -e 'tell application "Finder" to empty trash'` |
@@ -522,6 +548,22 @@ System caches, logs, downloads and the Trash.
 - **Comes back:** macOS downloads the aerial catalogue again when System Settings ▸ Wallpaper is opened, and any aerial selected as wallpaper or screensaver. Cost: roughly 0.5 GB of download per video.
 - **Fix the cause:** Aerial video downloads (macOS 25 and earlier). `regrow doctor` says whether it is in effect here and prints the fix; regrow changes nothing.
 - **Note:** The videos come back whenever System Settings ▸ Wallpaper is opened, even with a still wallpaper; `regrow doctor` prints how to stop the downloads.
+
+### downloaded-installers
+
+**Installers of installed apps** · caution · beta · [`rules/downloaded-installers.yaml`](../rules/downloaded-installers.yaml)
+
+- **Looks at:** the `.dmg`, `.pkg` and `.zip` files at the top of `~/Downloads`, with their modification, change, creation and date-added times; a `.zip`'s list of contents and its app's `Info.plist`, read without extracting it; and the apps in `/Applications` and `~/Applications` and one folder down, with each app's date added and `Info.plist` (a binary one converted to text by `/usr/bin/plutil`).
+- **Removed by:** a move to the Trash, one per item; `regrow undo` puts it back. Right before each removal, regrow judges the download against the installed apps again, as the scan did, and leaves it in place if any reason to keep it holds now.
+- **Keeps:**
+  - A download modified, changed, created or added to the folder in the last 14 days.
+  - A `.zip` that holds no app, more than one app, or anything beside the app (macOS's `__MACOSX` folder aside), and one whose app's `Info.plist` cannot be read.
+  - A download no installed app matches: a `.zip` whose app's bundle identifier no installed app carries; a `.dmg` or `.pkg` whose file name, less versions, architectures, a copy number such as `(1)` and words such as `mac` or `installer`, spells no installed app's name (case, spaces and punctuation aside).
+  - A download newer than an installed copy of its app: a `.zip` whose app has a higher version, or the same version and a higher build, a `.dmg` or `.pkg` whose name spells a higher version, and a `.dmg` or `.pkg` that arrived or changed after the app was installed.
+  - A download whose version cannot be compared with an installed copy's, or where that copy's `Info.plist` or date added cannot be read.
+  - Every download, when an app folder cannot be read in full, since it could hide an installed copy; and a download that cannot be read.
+- **Comes back:** The app stays installed; its maker offers the installer again if you ever reinstall. Cost: one download per app you reinstall.
+- **Note:** A .dmg or .pkg is matched by its file name alone, and a disk image can hold more than the app (an uninstaller, a driver) - check the list before moving one.
 
 ### ios-backups
 
@@ -554,6 +596,15 @@ System caches, logs, downloads and the Trash.
 - **Looks at:** `/Applications/Install macOS*.app`.
 - **Removed by:** a move to the Trash, one per item; `regrow undo` puts it back.
 - **Comes back:** Any macOS installer re-downloads from Software Update or the App Store. Cost: 12GB+ download if you ever need it again.
+
+### macos-update-download
+
+**Downloaded macOS update** · surface-only · beta · [`rules/macos-update-download.yaml`](../rules/macos-update-download.yaml)
+
+- **Looks at:** `/System/Library/AssetsV2/com_apple_MobileAsset_MacSoftwareUpdate/*.asset`.
+- **Removed by:** never: surface-only.
+- **Comes back:** Software Update downloads updates by itself while Download new updates when available is on. Cost: n/a — regrow never deletes here, and System Integrity Protection refuses even sudo.
+- **Note:** Installing the update uses the download up: System Settings ▸ General ▸ Software Update, or `softwareupdate --list` to see it first. To stop macOS downloading the next one, turn off Download new updates when available (Software Update ▸ Automatic updates ⓘ), or run `sudo defaults write /Library/Preferences/com.apple.SoftwareUpdate AutomaticDownload -bool false`.
 
 ### media-analysis-cache
 

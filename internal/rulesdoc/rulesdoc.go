@@ -45,10 +45,12 @@ func GroupName(category string) (string, bool) {
 // preActions says what each executor hook does, as a sentence that
 // follows "Right before each removal, ".
 var preActions = map[string]string{
-	engine.PreActionVolumeExport:        "regrow exports the volume to a tarball in regrow staging, and leaves the volume in place if the export fails. That tarball is the only way back. A volume bigger than the export cap is never offered.",
-	engine.PreActionAgentScratchRecheck: "regrow judges the session again, and leaves the folder in place if the session is kept now or regrow cannot tell.",
-	engine.PreActionWorktreeRecheck:     "regrow checks the worktree again, and leaves it in place if it is no longer clean or its HEAD is detached at a commit no branch holds. git itself refuses a worktree with modified or untracked files.",
-	engine.PreActionBuildOutputRecheck:  "regrow judges the folder again, as the scan did, and leaves it in place if any reason to keep it holds now.",
+	engine.PreActionVolumeExport:               "regrow exports the volume to a tarball in regrow staging, and leaves the volume in place if the export fails. That tarball is the only way back. A volume bigger than the export cap is never offered.",
+	engine.PreActionAgentScratchRecheck:        "regrow judges the session again, and leaves the folder in place if the session is kept now or regrow cannot tell.",
+	engine.PreActionWorktreeRecheck:            "regrow checks the worktree again, and leaves it in place if it is no longer clean or its HEAD is detached at a commit no branch holds. git itself refuses a worktree with modified or untracked files.",
+	engine.PreActionBuildOutputRecheck:         "regrow judges the folder again, as the scan did, and leaves it in place if any reason to keep it holds now.",
+	engine.PreActionNpxRecheck:                 "regrow judges the folder again, as the scan did, and leaves it in place if any reason to keep it holds now or your processes cannot be listed.",
+	engine.PreActionDownloadedInstallerRecheck: "regrow judges the download against the installed apps again, as the scan did, and leaves it in place if any reason to keep it holds now.",
 }
 
 // PreActionText is the sentence for a hook, and false when the page has
