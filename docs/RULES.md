@@ -2,17 +2,17 @@
 
 # What regrow scans
 
-regrow's catalog holds 58 rules: 28 safe, 20 caution and 10 surface-only. 21 of them are beta, and a scan includes them only with `--beta-rules`. Every entry below is written from the rule's file in [`rules/`](../rules), the catalog `regrow rules` lists. Paths are the macOS ones; the rules also carry Linux paths, for a Linux build that has not shipped. [SCAN.md](SCAN.md) says what a scan reads, which programs it runs, and what regrow writes.
+regrow's catalog holds 58 rules: 28 safe, 20 caution and 10 surface-only. 21 of them are beta, and a scan includes them only with `--beta-rules`. Every entry below is written from the rule's file in [`rules/`](../rules), the catalog `regrow rules --beta-rules` lists. Paths are the macOS ones; the rules also carry Linux paths, for a Linux build that has not shipped. [SCAN.md](SCAN.md) says what a scan reads, which programs it runs, and what regrow writes.
 
 How to read an entry:
 
-- **safe**: ticked from the start. `regrow clean` with no ids, the checklist and the app begin with every safe rule that found something without an error, leaving out items that could not be read at all.
+- **safe**: ticked from the start. `regrow clean` with no ids, the checklist and the app begin with every safe rule that found something without an error. When some of a rule's items could not be read at all, only the rest are ticked, and a rule whose command acts on all its items at once is not ticked.
 - **caution**: acted on only when you name it or tick it.
 - **surface-only**: shown with its size, never deleted. regrow refuses it even when you name it, and refuses anything that holds it.
 - **beta**: in a scan only with `--beta-rules`.
 - **Looks at**: the folders the rule measures, or what its scan walks and runs.
-- **Removed by**: a move to the Trash, which `regrow undo` puts back (into regrow staging when Finder cannot be reached); or the tool's own cleanup command, which deletes for good; or never. Nothing is removed until you confirm a plan, except by autotrim of the Go build cache, which stays off until you turn it on.
-- **Keeps**: what the rule leaves alone, where that is not plain from what it looks at.
+- **Removed by**: a move to the Trash, which `regrow undo` puts back (into regrow staging when Finder fails); or the command the entry names, mostly the tool's own cleanup command, which deletes for good; or never. Nothing is removed until you confirm a plan (`--yes` confirms it in advance), except by autotrim of the Go build cache, which stays off until you turn it on.
+- **Keeps**: what the rule leaves alone, where that is not plain from what it looks at. The list names the main reasons; the code has narrower ones, mostly an item it cannot read or judge, and each of them keeps more, never less.
 - **Comes back**: what recreates it, and what that costs.
 
 ## AI models
@@ -180,8 +180,8 @@ Package caches, build caches and build output of developer tools, and what codin
 - **Looks at:** Claude Code's session scratch folders, `/private/tmp/claude-<uid>/<project>/<session-id>/`. Which sessions have ended comes from `ps` (your processes, and `CLAUDE_CONFIG_DIR` and `HOME` from the environment of each running `claude`), Claude Code's session registries (`<config>/sessions/`) and its transcripts (`~/.claude*/projects/`).
 - **Removed by:** a move to the Trash, one per item; `regrow undo` puts it back. Right before each removal, regrow judges the session again, and leaves the folder in place if the session is kept now or regrow cannot tell.
 - **Keeps:**
-  - A session a running `claude` process is registered for, or was started with (`--resume`, `--session-id`).
-  - A session whose scratch a running process works in.
+  - A session a running `claude` process is registered for, or was started with (`--resume`, `-r`, `--session-id`).
+  - A session whose scratch holds the working folder of a running, registered `claude` session, or the program of a running process started by its full path (another process working in the scratch, a dev server say, does not keep it).
   - A session whose transcript or scratch changed in the last 24 hours, or since an unregistered `claude` process that a session started began running.
   - A session whose scratch holds a git worktree, or a repository with a worktree elsewhere.
   - A session whose transcript or scratch could not be read in full, and every session when a project folder under the scratch root cannot be read.
@@ -241,7 +241,7 @@ Package caches, build caches and build output of developer tools, and what codin
 - **Removed by:** `git -C {path} worktree remove {path}`, once per item; `{path}` is the item's path. It deletes for good: `regrow undo` cannot bring it back. Right before each removal, regrow checks the worktree again, and leaves it in place if it is no longer clean or its HEAD is detached at a commit no branch holds. git itself refuses a worktree with modified or untracked files.
 - **Keeps:**
   - The main worktree, and a worktree with `main`, `master` or the default branch checked out.
-  - A worktree whose commits are not in the default branch, unless its branch's upstream is gone.
+  - A worktree whose commits are in none of `main`, `master`, `origin/main`, `origin/master` and the remote's default branch, unless its branch's upstream is gone.
   - A worktree changed in the last 7 days: any file or folder, or git moving its HEAD.
   - A worktree where `git status --ignored` shows anything but whole ignored build folders (`node_modules`, `target`, `dist`, `.venv` and the like), so an ignored `.env` keeps it; and one with a tracked file flagged assume-unchanged or skip-worktree.
   - A locked or prunable worktree, one in the middle of a rebase, merge, cherry-pick, revert or bisect, and one that has or had a submodule.
@@ -437,7 +437,7 @@ Docker objects, listed through the `docker` command; regrow never touches Docker
 
 **Docker build cache unused 30d+** · safe · [`rules/docker-build-cache.yaml`](../rules/docker-build-cache.yaml)
 
-- **Looks at:** `docker system df -v`, through the daemon your current docker context points at. The size counts records not in use, not shared with an image layer and unused for 30 days.
+- **Looks at:** `docker system df -v`, through the daemon your current docker context points at. The size counts records not in use, not shared with an image layer, and last used 30 or more days ago; a record with no last-used time is not counted.
 - **Removed by:** `docker builder prune --force --filter unused-for=720h`, once for the whole rule: all of it or nothing. It deletes for good: `regrow undo` cannot bring it back.
 - **Keeps:**
   - Build records used in the last 30 days: the command's own filter, `unused-for=720h`, leaves them.
@@ -448,10 +448,10 @@ Docker objects, listed through the `docker` command; regrow never touches Docker
 
 **Docker containers stopped 30d+** · safe · [`rules/docker-containers-stopped.yaml`](../rules/docker-containers-stopped.yaml)
 
-- **Looks at:** `docker system df -v` and `docker container inspect` (ids, names, times, mounts, labels and image; never the environment), through the daemon your current docker context points at.
+- **Looks at:** `docker system df -v` and `docker container inspect` (id, name, state, times, mounts, labels, image name and id; never the environment), through the daemon your current docker context points at.
 - **Removed by:** `docker rm {arg}`, once per item; `{arg}` is the item as the tool names it. It deletes for good: `regrow undo` cannot bring it back.
 - **Keeps:**
-  - Running, paused and restarting containers.
+  - A container in any state but created, exited or dead: running, paused, restarting or being removed.
   - A container created, started or stopped in the last 30 days.
   - A container the keep-list in `~/.config/regrow/config.yaml` names, by name glob or compose project.
 - **Comes back:** docker run / compose up recreates containers from their images; uncommitted writable-layer changes do not come back. Cost: container-layer changes are lost; recreate is one command.
@@ -461,11 +461,11 @@ Docker objects, listed through the `docker` command; regrow never touches Docker
 
 **Docker dangling images** · safe · [`rules/docker-images-dangling.yaml`](../rules/docker-images-dangling.yaml)
 
-- **Looks at:** `docker system df -v`, `docker image inspect` and `docker container inspect`, through the daemon your current docker context points at; an image with no name that no container uses is listed whatever its age.
+- **Looks at:** `docker system df -v`, `docker image inspect` and `docker container inspect`, through the daemon your current docker context points at; an image with no tag that no container uses is listed whatever its age.
 - **Removed by:** `docker image rm {arg}`, once per item; `{arg}` is the item as the tool names it. It deletes for good: `regrow undo` cannot bring it back.
 - **Keeps:**
   - An image any container uses, stopped containers included; when Docker cannot say, every image counts as used.
-  - An image with a name: those belong to `docker-images-unused`.
+  - An image with a tag: those belong to `docker-images-unused`. On Docker's classic image store an image pulled by digest alone has no tag, so it is listed here although `docker images` shows its repository.
 - **Comes back:** Dangling layers are superseded build leftovers; the next build or pull recreates what is still needed. Cost: next build slower; network for re-pulled layers.
 
 ### docker-images-unused
@@ -487,13 +487,13 @@ Docker objects, listed through the `docker` command; regrow never touches Docker
 
 **Docker stale anonymous volumes** · caution · [`rules/docker-volumes-anon.yaml`](../rules/docker-volumes-anon.yaml)
 
-- **Looks at:** `docker system df -v`, `docker volume inspect` and `docker container inspect`, through the daemon your current docker context points at. Each volume's last use is remembered in `~/.local/state/regrow/docker-volumes.json`, so it outlives the containers that used it.
+- **Looks at:** `docker system df -v`, `docker volume inspect` and `docker container inspect`, through the daemon your current docker context points at. A volume's last use is the latest create, start or stop of a container that mounted it when a scan looked, remembered in `~/.local/state/regrow/docker-volumes.json` so it outlives that container; a volume no scan saw mounted counts from its creation.
 - **Removed by:** `docker volume rm {arg}`, once per item; `{arg}` is the item as the tool names it. It deletes for good: `regrow undo` cannot bring it back. Right before each removal, regrow exports the volume to a tarball in regrow staging, and leaves the volume in place if the export fails. That tarball is the only way back. A volume bigger than the export cap is never offered.
 - **Keeps:**
   - A volume any container mounts, stopped containers included.
   - A volume the keep-list in `~/.config/regrow/config.yaml` names, by name glob or compose project.
   - A volume bigger than the export cap (10 GiB unless `volume_export_cap` says otherwise).
-  - An anonymous volume used, or created, in the last 30 days.
+  - An anonymous volume created in the last 30 days, or whose last use a scan recorded in the last 30 days.
   - Kept volumes are listed, with the reason, under `docker-volumes-kept`.
 - **Comes back:** Not regenerable — the pre-delete tarball in regrow staging is the recovery copy (docker volume create, then untar). Cost: data is gone for good once staging is cleared.
 - **Note:** Anonymous volumes appear when a container runs without a named mount. Unreferenced and untouched for 30+ days; each is exported to a tarball in regrow staging before removal.
@@ -543,10 +543,10 @@ System caches, logs, downloads and the Trash.
 
 **Aerial wallpaper videos** · safe · [`rules/aerial-wallpapers.yaml`](../rules/aerial-wallpapers.yaml)
 
-- **Looks at:** `/Library/Application Support/com.apple.idleassetsd/Customer` (macOS 25 and earlier), `~/Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches` (macOS 26 and later).
+- **Looks at:** `/Library/Application Support/com.apple.idleassetsd/Customer` (macOS 15 and earlier), `~/Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches` (macOS 26 and later).
 - **Removed by:** `sudo find {path} -type f -name '*.mov' -delete`, once per item; `{path}` is the item's path. It runs as root through `sudo`, which asks for your password in a terminal; the app leaves it for you to run there. It deletes for good: `regrow undo` cannot bring it back.
 - **Comes back:** macOS downloads the aerial catalogue again when System Settings ▸ Wallpaper is opened, and any aerial selected as wallpaper or screensaver. Cost: roughly 0.5 GB of download per video.
-- **Fix the cause:** Aerial video downloads (macOS 25 and earlier). `regrow doctor` says whether it is in effect here and prints the fix; regrow changes nothing.
+- **Fix the cause:** Aerial video downloads (macOS 15 and earlier). `regrow doctor` says whether it is in effect here and prints the fix; regrow changes nothing.
 - **Note:** The videos come back whenever System Settings ▸ Wallpaper is opened, even with a still wallpaper; `regrow doctor` prints how to stop the downloads.
 
 ### downloaded-installers

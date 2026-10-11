@@ -1,6 +1,8 @@
 // Package rulesdoc writes docs/RULES.md, the reader's catalog of what
-// regrow scans, from the rules themselves, so the page cannot drift
-// from the catalog `regrow rules` lists. Regenerate it with:
+// regrow scans, from the rules themselves, so the page lists exactly
+// the catalog `regrow rules --beta-rules` lists. A rule's scans: and
+// keeps: lines and the preActions sentences are prose: no test holds
+// them to the code they describe. Regenerate the page with:
 //
 //	go test ./internal/rulesdoc -update
 package rulesdoc
@@ -8,6 +10,7 @@ package rulesdoc
 import (
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/lbagic/regrow/internal/engine"
@@ -78,17 +81,17 @@ func Render(catalog []engine.Rule) []byte {
 	p("# What regrow scans\n\n")
 	p("regrow's catalog holds %d rules: %d safe, %d caution and %d surface-only. ", len(catalog), risks[engine.RiskSafe], risks[engine.RiskCaution], risks[engine.RiskSurfaceOnly])
 	p("%d of them are beta, and a scan includes them only with `--beta-rules`. ", beta)
-	p("Every entry below is written from the rule's file in [`rules/`](../rules), the catalog `regrow rules` lists. ")
+	p("Every entry below is written from the rule's file in [`rules/`](../rules), the catalog `regrow rules --beta-rules` lists. ")
 	p("Paths are the macOS ones; the rules also carry Linux paths, for a Linux build that has not shipped. ")
 	p("[SCAN.md](SCAN.md) says what a scan reads, which programs it runs, and what regrow writes.\n\n")
 	p("How to read an entry:\n\n")
-	p("- **safe**: ticked from the start. `regrow clean` with no ids, the checklist and the app begin with every safe rule that found something without an error, leaving out items that could not be read at all.\n")
+	p("- **safe**: ticked from the start. `regrow clean` with no ids, the checklist and the app begin with every safe rule that found something without an error. When some of a rule's items could not be read at all, only the rest are ticked, and a rule whose command acts on all its items at once is not ticked.\n")
 	p("- **caution**: acted on only when you name it or tick it.\n")
 	p("- **surface-only**: shown with its size, never deleted. regrow refuses it even when you name it, and refuses anything that holds it.\n")
 	p("- **beta**: in a scan only with `--beta-rules`.\n")
 	p("- **Looks at**: the folders the rule measures, or what its scan walks and runs.\n")
-	p("- **Removed by**: a move to the Trash, which `regrow undo` puts back (into regrow staging when Finder cannot be reached); or the tool's own cleanup command, which deletes for good; or never. Nothing is removed until you confirm a plan, except by autotrim of the Go build cache, which stays off until you turn it on.\n")
-	p("- **Keeps**: what the rule leaves alone, where that is not plain from what it looks at.\n")
+	p("- **Removed by**: a move to the Trash, which `regrow undo` puts back (into regrow staging when Finder fails); or the command the entry names, mostly the tool's own cleanup command, which deletes for good; or never. Nothing is removed until you confirm a plan (`--yes` confirms it in advance), except by autotrim of the Go build cache, which stays off until you turn it on.\n")
+	p("- **Keeps**: what the rule leaves alone, where that is not plain from what it looks at. The list names the main reasons; the code has narrower ones, mostly an item it cannot read or judge, and each of them keeps more, never less.\n")
 	p("- **Comes back**: what recreates it, and what that costs.\n")
 
 	for _, g := range orderedGroups(catalog) {
@@ -324,13 +327,24 @@ func shellWord(w string) string {
 func versionText(min, max string) string {
 	switch {
 	case min != "" && max != "":
-		return " (macOS " + min + " to " + max + ")"
+		return " (macOS " + min + " to " + macOSMax(max) + ")"
 	case min != "":
 		return " (macOS " + min + " and later)"
 	case max != "":
-		return " (macOS " + max + " and earlier)"
+		return " (macOS " + macOSMax(max) + " and earlier)"
 	}
 	return ""
+}
+
+// macOSMax names the last release an os_max admits. macOS went from 15
+// to 26, so a bound between them, such as "25" for "before 26", admits
+// 15.
+func macOSMax(max string) string {
+	major, _, _ := strings.Cut(max, ".")
+	if n, err := strconv.Atoi(major); err == nil && n > 15 && n < 26 {
+		return "15"
+	}
+	return max
 }
 
 func codeList(names []string) string {

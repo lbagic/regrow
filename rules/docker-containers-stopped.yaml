@@ -8,9 +8,9 @@ risk: safe
 tool_query: docker-containers-stopped
 native_command: docker rm {arg}
 note: Anonymous volumes of removed containers are NOT deleted — they become dangling and show up under the volume rules on the next scan.
-scans: "`docker system df -v` and `docker container inspect` (ids, names, times, mounts, labels and image; never the environment), through the daemon your current docker context points at"
+scans: "`docker system df -v` and `docker container inspect` (id, name, state, times, mounts, labels, image name and id; never the environment), through the daemon your current docker context points at"
 keeps:
-  - "running, paused and restarting containers"
+  - "a container in any state but created, exited or dead: running, paused, restarting or being removed"
   - "a container created, started or stopped in the last 30 days"
   - "a container the keep-list in `~/.config/regrow/config.yaml` names, by name glob or compose project"
 regen:

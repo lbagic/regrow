@@ -113,3 +113,12 @@ func TestCommandQuotesAsAShellReads(t *testing.T) {
 		t.Errorf("command = %q, want %q", got, want)
 	}
 }
+
+func TestMacOSMaxNamesARealRelease(t *testing.T) {
+	cases := map[string]string{"25": "15", "25.9": "15", "16": "15", "15": "15", "14.4": "14.4", "26": "26", "26.1": "26.1"}
+	for in, want := range cases {
+		if got := macOSMax(in); got != want {
+			t.Errorf("macOSMax(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

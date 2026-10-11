@@ -67,7 +67,8 @@ changelog:
 
 release:
   footer: |
-    Nothing is removed before you confirm a plan, except by autotrim,
-    which is off until you turn it on. Every action is journaled before
-    it runs; Trash moves are restorable with `regrow undo`, and
-    docs/RULES.md says how each rule removes and how it comes back.
+    Nothing is removed before you confirm a plan, at the prompt or with
+    --yes, except by autotrim, which is off until you turn it on. Every
+    action is journaled before it runs; Trash moves are restorable with
+    `regrow undo`, and docs/RULES.md says how each rule removes and how
+    it comes back.
