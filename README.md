@@ -1,80 +1,167 @@
-# cleaner
+# regrow
 
-Interactive macOS disk cleaner for developers. Single bash file, zero dependencies,
-**dry-run by default** — nothing is deleted unless you pass `--run` *and* type `yes`.
+What is on your disk, and how it comes back.
+
+regrow is a disk cleaner for macOS, made for developers. It scans for caches, build output, downloaded models, Docker leftovers and the rest of what fills a working Mac, and for each one it says what it is, how regrow would remove it, and what brings it back and at what cost. It removes nothing until you confirm the exact plan it prints (the one exception, autotrim of old Go build cache entries, stays off until you turn it on), and what it can, it moves to the Trash, where `regrow undo` finds it again.
+
+- [docs/RULES.md](docs/RULES.md) lists every rule: what it looks at, how it removes, what it keeps, and how the space comes back.
+- [docs/SCAN.md](docs/SCAN.md) says what a scan reads, which programs it runs, and what regrow writes.
+
+## What it is, and what it is not
+
+regrow is a catalog of rules, one YAML file each in [`rules/`](rules), and a single Go binary that measures them, plans, and runs the plan. A rule names one kind of thing (the Go build cache, an iOS simulator, a Docker volume no container uses), where it lives, its risk, the tool's own command for removing it if there is one, and its regen story: what recreates it and what that costs. Where only a tool, or a tool's own folder layout, can say what exists (Docker, `simctl`, `tmutil`, git, Ollama's manifests), a rule runs a named query in code instead of listing paths.
+
+It is not:
+
+- an app uninstaller, a duplicate finder, or a tool for your documents. Rules for what may be the only copy of something (iOS backups, model libraries) or what regrow cannot judge item by item (`~/Library/Caches`, `/Library/Updates`) are surface-only: shown with their size, never deleted.
+- a background cleaner. The one removal that runs without a confirmed plan is autotrim of Go build cache entries unused for 48 hours, while free space is low. It is off until you turn it on (the app's switch, or `regrow tick --autotrim`), and it refuses to run until you have run `regrow prune go-build --yes` once yourself.
+- a network service. regrow's own code opens no network connection: no telemetry, no update check, no account. A few programs it starts can reach the network on their own, and [docs/SCAN.md](docs/SCAN.md) names them.
+
+regrow is built and tested for macOS only. The rules carry Linux paths for a later Linux build.
+
+## Install
+
+There is no packaged release yet. Build from source with Go 1.25.7 or later, the version `go.mod` names:
 
 ```sh
-bash clean.sh              # scan sizes → checkbox UI → dry-run plan
-bash clean.sh --run        # same, but executes after confirmation
-bash clean.sh --list       # show all module ids
-bash clean.sh --only go_build,trash --run
-bash clean.sh --safe --run # everything risk=safe, no UI
+go install github.com/lbagic/regrow/cmd/regrow@latest
 ```
 
-Checklist UI: `↑/↓`/`j`/`k` move, `space` toggle, `a` all, `n` none, `s` safe-only,
-`enter` continue, `q` quit. Risk `safe` modules are pre-checked; `moderate`/`risky`
-are opt-in; `info` modules are read-only reports.
+or, from a clone, `just install` (which runs `go install ./cmd/regrow`). Either puts `regrow` where `go install` puts programs, `~/go/bin` unless you set `GOBIN` or `GOPATH`.
 
-## What it can clean
+The menubar app, `Regrow.app`, builds from a clone with the Command Line Tools; no Xcode is needed:
 
-| id | target | risk |
-|---|---|---|
-| `aerial` | macOS aerial/moving wallpaper videos (`com.apple.idleassetsd`, sudo) | safe |
-| `go_build` | Go build cache (`go clean -cache`) | safe |
-| `go_mod` | Go module cache (`go clean -modcache`) | moderate |
-| `yarn_cache` / `npm_cache` / `pnpm_store` | JS package-manager caches (native commands) | safe |
-| `docker_prune` | dangling images, stopped containers, build cache (`docker system prune`) | moderate |
-| `docker_volumes` | unused volumes (`docker volume prune`) — deletes data | risky |
-| `xcode_derived` | DerivedData | safe |
-| `xcode_devicesupport` | iOS/watchOS/tvOS DeviceSupport symbols | moderate |
-| `sim_unavailable` | `xcrun simctl delete unavailable` | safe |
-| `sim_caches` | CoreSimulator caches | safe |
-| `xcode_archives` | Archives + dSYMs of shipped builds | risky |
-| `brew_cache` | `brew cleanup -s --prune=all` | safe |
-| `pip_cache` | `pip3 cache purge` | safe |
-| `trash` | empty `~/.Trash` | safe |
-| `macos_installers` | stale `Install macOS *.app` (sudo) | safe |
-| `library_updates` | stuck update payloads in `/Library/Updates` (sudo) | risky |
-| `tm_snapshots` | thin Time Machine local snapshots (big "System Data" cause, sudo) | moderate |
-| `media_analysis` | mediaanalysisd cache (Sequoia 15.1 leak, 100GB+ reports) | safe |
-| `user_logs` | crash reports + diagnostic logs | safe |
-| `spotlight_index` | rebuild bloated Spotlight index (Sequoia bug, `mdutil -E /`, sudo) | moderate |
-| `docker_raw` | report: Docker.raw real vs sparse size, `docker system df` | info |
-| `caches_top` | report: top 15 `~/Library/Caches` entries | info |
-| `node_modules` | report: node_modules under `$CLEANER_WORKSPACE` (default `~/workspace`) | info |
-| `ios_backups` | report: local iPhone backups (delete via Finder) | info |
+```sh
+scripts/signing-cert.sh   # once: a local code-signing identity in your login keychain
+just app                  # build, sign, install into ~/Applications and launch
+```
 
-Executed commands are logged to `~/Library/Logs/cleaner.log`.
+[docs/APP.md](docs/APP.md) covers what the app asks macOS for and what it runs.
 
-## Safety design
+### Full Disk Access
 
-- Dry-run default; `--run` requires typing `yes` (or `--yes` for scripting).
-- Delegates to **native cleaners** (`npm cache clean`, `go clean`, `docker system prune`,
-  `brew cleanup`, `tmutil`, `simctl`) instead of re-implementing deletion — `rm -rf` is
-  used only for the handful of paths with no native command, via `xrm()` which refuses
-  `/`, `$HOME`, and other suspicious roots.
-- Dry-run prints the **exact commands** `--run` would execute (same code path via `x()`).
-- Reports (`info` risk) never mutate anything.
+macOS hides some folders (the Trash, Spotlight's index, other apps' containers) from programs without Full Disk Access. Without it, regrow still runs: a folder it cannot read is shown as "unreadable", or its size as a lower bound ("≥ 2.1 GiB"), and an item it could not read at all is never ticked for you. To measure those folders, grant Full Disk Access to the terminal you run regrow from, or to `Regrow.app`, in System Settings ▸ Privacy & Security ▸ Full Disk Access.
 
-## Adding a module
+## A first session
 
-1. Write one `mod_<id>()` function answering `title|risk|needs_sudo|note|size|clean`
-   (copy an existing one). Route mutations through `x`/`xrm`.
-2. Add the id to the `MODULES` array.
+Of these, only `clean` (and the checklist, after its two confirmations) removes anything, and `undo` moves things back; the others only read.
 
-## Notes
+```sh
+regrow                   # scan: a checklist in the terminal
+regrow plan              # dry run of the default selection
+regrow plan sim-devices  # dry run of what you name
+regrow clean             # the same plan, a y/N prompt, then it runs
+regrow history           # what earlier runs did
+regrow undo              # put the newest run's Trash moves back
+regrow doctor            # runaway bugs, what keeps filling the disk, phantom space
+```
 
-- Terminal may need **Full Disk Access** (System Settings → Privacy & Security) for
-  `~/.Trash` and some `~/Library` paths.
-- "System Data" bloat is usually: local TM snapshots (`tm_snapshots`), Docker.raw
-  (`docker_prune` + Docker Desktop disk cap), `~/Library/Caches`, and staged OS
-  updates. `com.apple.os.update-*` snapshots are OS-managed and clear themselves
-  after a successful update/reboot.
+1. **Scan.** `regrow` (or `regrow scan`) measures every rule and opens a checklist, grouped and largest first. Each row shows its size, its risk, and the command that would remove it or its regen story; the line under the list explains the row under the cursor: what brings it back, at what cost, and an item's id. `→` opens a rule into its items. Safe rules that found something start ticked. Keys: `↑`/`↓` move, `space` ticks a rule or an item, `→`/`←` open and close a rule, `enter` shows the plan, `q` quits. Piped (`regrow scan | less`), it prints the same findings as text, with each item's id.
+2. **Plan.** `enter` in the checklist, or `regrow plan [id ...]`, shows the exact commands the run would execute, one per line, with what is skipped and why, and two totals: what frees space as the run goes, and what moves to the Trash and frees space only when the Trash is emptied. Nothing has run yet.
+3. **Clean.** In the checklist, `x` on the plan screen and then `y` runs what is ticked. From the shell, `regrow clean [id ...]` prints the plan and asks `Proceed? [y/N]`; `--yes` skips the question, for scripts. Without ids, `clean` takes the default selection, the same rules the checklist starts with ticked: every safe rule that found something. A caution rule runs only when you name or tick it. A command that needs administrator rights runs through `sudo`, which asks for your password; the aerial wallpaper rule is safe and needs it, so a bare `regrow clean` that finds aerial videos asks. When the run ends, regrow prints what it freed, what went to the Trash, and the run's id.
+4. **History.** `regrow history` lists every run with its id, its time, what it cleaned, and how many of its Trash moves can still be restored.
+5. **Undo.** `regrow undo` moves the Trash moves of the newest run that has any back where they were; `regrow undo <run-id>` picks a run. It restores what went to the Trash or to regrow staging. It cannot restore what a tool's own command deleted, nor anything after the Trash was emptied.
+6. **Doctor.** `regrow doctor` scans only the rules that watch for a known runaway bug (a Claude Code debug-log loop, the mediaanalysisd leak, a bloated Spotlight index, the Playwright cache), checks the settings that keep refilling the disk (aerial wallpaper downloads, Docker's build-cache limit and memory cap, Go builds in worktrees without `-trimpath`), and explains phantom space. It prints the fix for each and changes nothing.
 
-## Existing tools considered (2026-07 survey)
+Ids are rule ids (`sim-devices`) or item ids (`sim-devices/AAA-111`), as the scan lists them. `--beta-rules` adds the rules still in staged rollout to any command.
 
-- [npkill](https://github.com/voidcosmos/npkill) — `npx npkill` for node_modules; use it, it's the best at that one job.
-- [mac-cleanup-py](https://github.com/mac-cleanup/mac-cleanup-py) — broadest module coverage, but config-based selection, dry-run is a flag not the default.
-- [Mole](https://github.com/tw93/Mole) — most popular/active, but history of aggressive defaults (deleted LaunchAgents #567, wallpapers #577; dry-run mismatch #886).
-- [DevCleaner](https://github.com/vashpan/xcode-dev-cleaner) — best deep-Xcode GUI cleaner.
-- None default to dry-run, none deliberately handle aerial wallpapers or stuck installers → this script.
+## Commands
+
+| Command | What it does |
+|---|---|
+| `regrow [scan] [--json]` | Scan: the checklist in a terminal, a plain listing when piped; `--json` prints the scan as JSON lines ([docs/ENGINE.md](docs/ENGINE.md)). |
+| `regrow plan [id ...] [--json]` | Dry run: the exact commands a clean would run. |
+| `regrow clean [id ...] [--yes]` | Show the plan, ask, run it. |
+| `regrow undo [run-id]` | Restore the Trash moves of the newest run, or of the run named. |
+| `regrow history [--json]` | Past runs, from the oplog. |
+| `regrow doctor [--json]` | Runaway bugs, causes to fix, phantom space. Read-only. |
+| `regrow tick [--autotrim]` | One sample of free space, purgeable space and swap, with a days-to-full forecast and alerts; `--autotrim` also prunes the Go build cache when free space is low. |
+| `regrow prune go-build [--yes]` | Delete Go build cache entries not used for 48 hours, oldest first; a dry run without `--yes`. |
+| `regrow rules [--json]` | List the catalog. |
+| `regrow engine` | JSON lines on stdin and stdout, for the menubar app ([docs/ENGINE.md](docs/ENGINE.md)). |
+| `regrow version`, `regrow help` | Print the version, or this list with the flags. |
+
+Flags go before ids: `regrow clean --yes go-build-cache`. `--rules-dir DIR` loads rules from a folder instead of the built-in catalog.
+
+## The safety model
+
+**Dry run by default.** `scan`, `plan`, `doctor`, `rules`, `history` and `tick` without `--autotrim` remove nothing. Autotrim aside, a removal needs a confirmed plan: `y` at the `clean` prompt (or `--yes`), `x` then `y` in the checklist, or the tick box and button on the app's confirm step. `regrow prune go-build` is a dry run until `--yes`.
+
+**The Trash, not `rm`.** A rule with no command of its own moves each item to the Trash through Finder, so Finder's Put Back works and `regrow undo` can move it back. When Finder cannot be reached (an SSH session, or the app without permission to control Finder), the item is renamed into regrow staging instead, `~/.local/state/regrow/staging/<run-id>/`, which `regrow undo` also restores and emptying the Trash does not free.
+
+**The tool's own command, where there is one.** Where a tool keeps its own books, regrow runs the tool's cleanup command rather than deleting its files: `go clean -cache`, `docker image rm`, `xcrun simctl delete`, `ollama rm`, `tmutil deletelocalsnapshots`. These delete for good: `regrow undo` cannot bring them back, and the rule's regen story says what will. Each plan line says "undo restores" or "no undo". Three removals deserve a closer look, and [docs/RULES.md](docs/RULES.md) spells each out:
+
+- a Docker volume is exported to a tarball in regrow staging before `docker volume rm`, and a volume bigger than the export cap (10 GiB unless you set it) is never offered;
+- aerial wallpaper videos are deleted with `sudo find <folder> -type f -name '*.mov' -delete`;
+- `regrow prune go-build --yes` deletes old Go build cache entries directly, with no Trash and no undo.
+
+**Undo.** `regrow undo` restores Trash and staging moves from the oplog. It refuses to overwrite anything that has reappeared at the original path, and it says how many actions of the run it cannot restore.
+
+**Surface-only rules never delete.** iOS backups, model libraries, `~/Library/Caches`, `/Library/Updates`, the Docker VM disk, APFS purgeable space, and the Docker volumes and agent sessions regrow keeps back are shown so you know where the space is. The planner refuses them even when you name them, and refuses to remove any folder that holds one.
+
+**Beta rules stay out until asked for.** A new rule ships with `beta: true` and joins a scan only with `--beta-rules`, until it has run on real machines.
+
+**The oplog comes first.** Every action is written to `~/.local/state/regrow/oplog.jsonl`, and synced to disk, before it runs; its end is written when it finishes or fails. A Trash move's line records where the item landed, and that record is what `regrow undo` uses. `regrow history` reads the same file.
+
+**Path guards.** Every Trash move, and every command run on one item's path, is refused when the path is empty or relative, is `/`, a folder directly under `/` (such as `/Applications` or `/Users`), your home folder, or a volume's root under `/Volumes`. The planner checks, and the mover checks again right before the move.
+
+**Checked again right before.** Rules whose verdict can change after the scan judge each item again right before they remove it: an agent session that started working again, a worktree that gained a change, a build folder whose project is in use. A refusal leaves the item in place and fails that one action.
+
+**Small refusals.** `clean` refuses an id that matches nothing in the scan rather than run less than you meant. A rule whose command acts on everything at once cannot be run for some of its items. "Empty Trash" is never ticked for you, and when you pick it, it runs before the plan's Trash moves, so those stay restorable.
+
+## What regrow never does
+
+- It never removes anything you did not confirm, except autotrim, which you turn on, which unlocks only after one `regrow prune go-build --yes` of your own, and which removes only Go build cache entries unused for 48 hours while free space is low.
+- It never deletes a surface-only item, or a folder that holds one.
+- It never empties the Trash unless you pick "Empty Trash".
+- It never runs `rm`. Deletion goes through the Trash, a tool's own command, or the two `find … -delete` cases named above.
+- It never changes a system or tool setting. `regrow doctor` prints the fix and leaves it to you.
+- It never sends what it learns about your disk off the machine.
+
+## Where regrow keeps its state
+
+| Path | What |
+|---|---|
+| `~/.local/state/regrow/oplog.jsonl` | the journal of every action, behind `undo` and `history` |
+| `~/.local/state/regrow/staging/<run-id>/` | items moved here when Finder could not be reached, and Docker volume exports |
+| `~/.local/state/regrow/docker-volumes.json` | when each Docker volume was last used, kept by every scan that reaches Docker |
+| `~/.local/state/regrow/headroom.jsonl` | free-space samples from `regrow tick` and the app, 30 days |
+| `~/.local/state/regrow/prune.state` | the lock and the build-deferral clock of the Go build cache prune |
+| `~/.config/regrow/config.yaml` | optional settings (below); regrow never writes it |
+
+`XDG_STATE_HOME` moves `~/.local/state/regrow`, and `XDG_CONFIG_HOME` moves `~/.config/regrow`. regrow never empties its staging folder: what lands there stays until you remove it. [docs/SCAN.md](docs/SCAN.md) lists every file regrow writes; the app's own files are in [docs/APP.md](docs/APP.md).
+
+### Settings
+
+The settings file is optional; a key regrow does not know is an error, not a silent default.
+
+```yaml
+docker:
+  keep:                       # Docker objects regrow never offers
+    - "postgres-*"            # a name glob: volumes, stopped containers, image repositories
+    - project: billing        # every volume and container of a compose project
+  volume_export_cap: 20GiB    # volumes bigger than this are never offered (default 10GiB)
+```
+
+## Working on regrow
+
+```sh
+just            # go build, go vet and go test: the bar every change keeps green
+just golden     # refresh the per-rule golden snapshots after a deliberate rule change
+go test ./internal/rulesdoc -update   # regenerate docs/RULES.md after a rule change
+```
+
+Adding a cleaning target is usually a YAML file in `rules/` with a `fixture:` block, which the golden test scans in a fake home. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) holds the structure, the safety invariants and the decisions log; [docs/PRODUCT.md](docs/PRODUCT.md) the why; [docs/PLAN.md](docs/PLAN.md) the build order; [CONTEXT.md](CONTEXT.md) the words the code uses.
+
+regrow started as `clean.sh`, a bash script that is still in the repository.
+
+## Other tools (surveyed July 2026)
+
+- [npkill](https://github.com/voidcosmos/npkill) finds and removes `node_modules`, and is the best at that one job.
+- [mac-cleanup-py](https://github.com/mac-cleanup/mac-cleanup-py) has the broadest set of modules; its dry run is a flag, not the default.
+- [Mole](https://github.com/tw93/Mole) is the most popular terminal cleaner for macOS.
+- [DevCleaner](https://github.com/vashpan/xcode-dev-cleaner) is the best GUI for Xcode's files.
+
+## License
+
+MIT.

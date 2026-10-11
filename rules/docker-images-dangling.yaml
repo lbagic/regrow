@@ -11,6 +11,10 @@ category: docker
 risk: safe
 tool_query: docker-images-dangling
 native_command: docker image rm {arg}
+scans: "`docker system df -v`, `docker image inspect` and `docker container inspect`, through the daemon your current docker context points at; an image with no name that no container uses is listed whatever its age"
+keeps:
+  - "an image any container uses, stopped containers included; when Docker cannot say, every image counts as used"
+  - "an image with a name: those belong to `docker-images-unused`"
 regen:
   story: Dangling layers are superseded build leftovers; the next build or pull recreates what is still needed.
   cost: next build slower; network for re-pulled layers
