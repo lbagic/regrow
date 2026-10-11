@@ -804,7 +804,7 @@ struct Scenario {
             r.same(await r.text(".top .status"), "", "the top bar's status on the plan")
             r.same(await r.count(".top button"), 0, "actions in the top bar on the plan")
             let lead = await r.text(".lead .say")
-            let volumes = actions.filter { $0.str("pre_action") == "docker-volume-export" }.count
+            let volumes = actions.filter { $0.str("kind") == "native" && $0.str("pre_action") == "docker-volume-export" }.count
             r.expect(volumes > 0 && totals.int("exported") > 0, "the plan holds volumes")
             r.has(lead, human(totals.int("frees_now")) + " comes back as \(actions.filter { $0.str("kind") != "trash" }.count - volumes) commands run", "the lead")
             r.has(lead, human(totals.int("exported")) + " is \(volumes) docker volumes removed after a tarball of each goes to regrow staging", "the lead")
@@ -1109,6 +1109,14 @@ struct Scenario {
             r.has(await r.text(".tray .say"), frees + " frees now", "the tray after the engine refused the review")
             let exported = human(r.transcript.event("plan-all", "plan").obj("totals").int("exported"))
             r.has(await r.text(".tray .say"), exported + " in volume exports", "the tray names the volume exports the ticks hold")
+            // The tray grows past 60 px for its lines on a narrow window (PAGECHECK_SIZE=720x520 draws one).
+            r.expect(await r.flag("""
+                const tray = document.querySelector('.tray').getBoundingClientRect();
+                return [...document.querySelectorAll('.tray > *')].every((el) => {
+                  const box = el.getBoundingClientRect();
+                  return box.top >= tray.top - 0.5 && box.bottom <= tray.bottom + 0.5;
+                });
+                """), "every part of the tray stays inside it")
             await r.shoot()
         },
         Scenario(name: "other-error") { r in
