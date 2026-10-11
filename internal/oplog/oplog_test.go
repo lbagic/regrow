@@ -225,6 +225,14 @@ func TestPendingReverseOrderAndExcludesUndone(t *testing.T) {
 // Finder reuses a name once nothing in the Trash has it, so a later
 // action on the same path means the earlier copy was already gone: the
 // earlier move counts as gone even though something sits at its path.
+func seqs(es []Entry) []int {
+	out := []int{}
+	for _, e := range es {
+		out = append(out, e.Seq)
+	}
+	return out
+}
+
 func TestRunsMarkACopyPathALaterActionTook(t *testing.T) {
 	dir := t.TempDir()
 	for _, name := range []string{"a", "b", "cache"} {
@@ -259,13 +267,54 @@ func TestRunsMarkACopyPathALaterActionTook(t *testing.T) {
 			var got []string
 			for _, r := range Runs(tc.entries) {
 				present, gone := r.OnDisk()
-				seqs := func(es []Entry) []int {
-					out := []int{}
-					for _, e := range es {
-						out = append(out, e.Seq)
-					}
-					return out
+				got = append(got, fmt.Sprintf("%s present %v gone %v", r.ID, seqs(present), seqs(gone)))
+			}
+			if g := strings.Join(got, "; "); g != tc.want {
+				t.Errorf("got  %s\nwant %s", g, tc.want)
+			}
+		})
+	}
+}
+
+// Matching a copy path ignoring case is for receipts with no recorded
+// identity. One with identity is keyed by its exact path, since a volume
+// that tells case apart holds Cache and cache as two items.
+func TestRunsFoldCaseOnlyForAReceiptWithNoIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		file         string
+		older, later uint64 // 1: the file's inode, 2: another one, 0: none
+		want         string
+	}{
+		{"a receipt with identity", "Cache", 1, 2,
+			"r1 present [1] gone []; r2 present [] gone [1]"},
+		{"an old receipt under a newer one", "cache", 0, 1,
+			"r1 present [] gone [1]; r2 present [1] gone []"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, tc.file)
+			if err := os.WriteFile(path, nil, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			fi, err := os.Lstat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ino := fi.Sys().(*syscall.Stat_t).Ino
+			id := func(n uint64) uint64 {
+				if n == 0 {
+					return 0
 				}
+				return ino + n - 1
+			}
+			move := func(run, name string, n uint64) Entry {
+				return Entry{Run: run, Seq: 1, Event: EventDone, Receipt: &trash.Receipt{
+					Original: "/home/" + name, To: filepath.Join(dir, name), Method: trash.MethodFinder, Ino: id(n)}}
+			}
+			var got []string
+			for _, r := range Runs([]Entry{move("r1", "Cache", tc.older), move("r2", "cache", tc.later)}) {
+				present, gone := r.OnDisk()
 				got = append(got, fmt.Sprintf("%s present %v gone %v", r.ID, seqs(present), seqs(gone)))
 			}
 			if g := strings.Join(got, "; "); g != tc.want {

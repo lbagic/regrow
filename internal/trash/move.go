@@ -32,10 +32,11 @@ type Receipt struct {
 	Original string `json:"original"`
 	To       string `json:"to"`
 	Method   Method `json:"method"`
-	// Dev and Ino identify the item at To, read right after the move.
-	// Both are zero when that read failed and in receipts written before
-	// they were recorded; such a receipt is judged by its path alone.
-	Dev uint64 `json:"dev,omitempty"`
+	// Ino identifies the item at To, read right after the move; To
+	// names its volume. No device number: macOS gives a volume a new one
+	// when its disk is attached again. Zero when that read failed and in
+	// receipts written before it was recorded; such a receipt is judged
+	// by its path alone.
 	Ino uint64 `json:"ino,omitempty"`
 }
 
@@ -64,7 +65,7 @@ func (r Receipt) holds(fi fs.FileInfo) bool {
 		return true
 	}
 	st, ok := fi.Sys().(*syscall.Stat_t)
-	return !ok || (uint64(st.Dev) == r.Dev && st.Ino == r.Ino)
+	return !ok || st.Ino == r.Ino
 }
 
 // identify records the identity of the item at To, or leaves it zero
@@ -75,7 +76,7 @@ func (r *Receipt) identify() {
 		return
 	}
 	if st, ok := fi.Sys().(*syscall.Stat_t); ok {
-		r.Dev, r.Ino = uint64(st.Dev), st.Ino
+		r.Ino = st.Ino
 	}
 }
 

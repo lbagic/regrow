@@ -2,10 +2,13 @@ package trash
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -254,5 +257,33 @@ func TestRestoreRefusesAnotherItemAtTheCopyPath(t *testing.T) {
 	}
 	if _, err := os.Lstat(target); !os.IsNotExist(err) {
 		t.Error("another item was restored into the original's place")
+	}
+}
+
+// macOS gives a volume a new device number when its disk is attached
+// again, so a copy still in that volume's Trash is judged by its inode
+// alone, however its receipt was journaled.
+func TestReceiptKeepsItsCopyWhenTheDiskIsRenumbered(t *testing.T) {
+	dir := writeTree(t, "trash/cache/a.bin")
+	to := filepath.Join(dir, "trash", "cache")
+	fi, err := os.Lstat(to)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := fi.Sys().(*syscall.Stat_t)
+	original := filepath.Join(dir, "home", "cache")
+	line := fmt.Sprintf(`{"original":%q,"to":%q,"method":"finder","dev":%d,"ino":%d}`, original, to, uint64(st.Dev)+1, st.Ino)
+	var r Receipt
+	if err := json.Unmarshal([]byte(line), &r); err != nil {
+		t.Fatal(err)
+	}
+	if r.Gone() {
+		t.Error("a copy whose inode matches must read as present on a renumbered disk")
+	}
+	if err := Restore(r); err != nil {
+		t.Fatalf("Restore = %v, want the copy restored", err)
+	}
+	if _, err := os.Lstat(filepath.Join(original, "a.bin")); err != nil {
+		t.Errorf("not restored: %v", err)
 	}
 }

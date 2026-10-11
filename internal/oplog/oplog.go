@@ -192,14 +192,21 @@ type Run struct {
 // Runs groups entries by run id, oldest first. Undo entries group
 // under the run they undo (they share its id).
 func Runs(entries []Entry) []Run {
-	// Folded: a volume that ignores case finds Cache at cache.
-	taken := map[string]bool{}
+	// A receipt with no recorded identity is matched ignoring case, since
+	// a volume that ignores case finds Cache at cache. One with identity
+	// is matched by its exact path: a volume that tells case apart holds
+	// both, and on one that does not, Receipt.Gone sees the other item.
+	exact, folded := map[string]bool{}, map[string]bool{}
 	reused := make([]bool, len(entries))
 	for i := len(entries) - 1; i >= 0; i-- {
 		if e := entries[i]; e.Event == EventDone && e.Receipt != nil {
-			to := strings.ToLower(e.Receipt.To)
-			reused[i] = e.Receipt.Restorable() && taken[to]
-			taken[to] = true
+			to, lower := e.Receipt.To, strings.ToLower(e.Receipt.To)
+			taken := exact[to]
+			if e.Receipt.Ino == 0 {
+				taken = folded[lower]
+			}
+			reused[i] = e.Receipt.Restorable() && taken
+			exact[to], folded[lower] = true, true
 		}
 	}
 	byID := map[string]*Run{}
