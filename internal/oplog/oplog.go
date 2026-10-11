@@ -183,21 +183,23 @@ type Run struct {
 	Start   time.Time
 	Entries []Entry
 	// reused holds the seqs of done moves whose copy path a later done
-	// move in the journal took again: Finder and staging reuse a name
-	// once nothing is there, so what sits at that path is the later
-	// move's item.
+	// action in the journal took again: Finder reuses a name once
+	// nothing in the Trash has it, so what sits at that path is the
+	// later action's item. Only Runs over the whole journal sets it.
 	reused map[int]bool
 }
 
 // Runs groups entries by run id, oldest first. Undo entries group
 // under the run they undo (they share its id).
 func Runs(entries []Entry) []Run {
+	// Folded: a volume that ignores case finds Cache at cache.
 	taken := map[string]bool{}
 	reused := make([]bool, len(entries))
 	for i := len(entries) - 1; i >= 0; i-- {
-		if e := entries[i]; e.Event == EventDone && e.Receipt != nil && e.Receipt.Restorable() {
-			reused[i] = taken[e.Receipt.To]
-			taken[e.Receipt.To] = true
+		if e := entries[i]; e.Event == EventDone && e.Receipt != nil {
+			to := strings.ToLower(e.Receipt.To)
+			reused[i] = e.Receipt.Restorable() && taken[to]
+			taken[to] = true
 		}
 	}
 	byID := map[string]*Run{}
@@ -225,26 +227,14 @@ func Runs(entries []Entry) []Run {
 	return out
 }
 
-// Undoable returns the run's trash receipts that can still be
-// restored — done actions minus those already undone, and minus those
-// whose copy path a later move reused — in reverse execution order
-// (last moved, first restored). Non-restorable receipts (volume export
-// tarballs) are excluded: they are recovery pointers, not rename-back
-// moves.
-func (r Run) Undoable() []Entry {
-	var out []Entry
-	for _, e := range r.pending() {
-		if !r.reused[e.Seq] {
-			out = append(out, e)
-		}
-	}
-	return out
-}
-
-// OnDisk splits the run's not-undone moves by whether each one's Trash
-// or staging copy is still there: present can be restored; gone cannot,
-// its copy removed or its path reused by a later move. It reads the
-// disk and writes nothing to the journal.
+// OnDisk splits the run's Trash and staging moves not yet undone, last
+// moved first, by whether each one's copy is still there: present can
+// be restored; gone cannot, its copy removed, or its path taken by a
+// later action in the journal or by another item (Receipt.Gone). It
+// reads the disk and writes nothing to the journal. A Run that does
+// not come from Runs over the whole journal knows of no later action.
+// Export receipts (volume tarballs) are in neither: they are recovery
+// pointers, not rename-back moves.
 func (r Run) OnDisk() (present, gone []Entry) {
 	for _, e := range r.pending() {
 		if r.reused[e.Seq] || e.Receipt.Gone() {

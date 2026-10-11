@@ -32,6 +32,11 @@ type Receipt struct {
 	Original string `json:"original"`
 	To       string `json:"to"`
 	Method   Method `json:"method"`
+	// Dev and Ino identify the item at To, read right after the move.
+	// Both are zero when that read failed and in receipts written before
+	// they were recorded; such a receipt is judged by its path alone.
+	Dev uint64 `json:"dev,omitempty"`
+	Ino uint64 `json:"ino,omitempty"`
 }
 
 // Restorable reports whether Restore can undo this receipt. Export
@@ -39,12 +44,39 @@ type Receipt struct {
 // not a path.
 func (r Receipt) Restorable() bool { return r.Method != MethodExport }
 
-// Gone reports whether nothing is left at To: the Trash was emptied, or
-// the copy was moved out of the Trash or staging by hand. A stat that
-// fails any other way (a refusal) is not gone; Restore reports it.
+// Gone reports whether the moved item is no longer at To: the Trash
+// was emptied, the copy was moved out by hand, or another item took its
+// name (Finder reuses a name once nothing in the Trash has it, and the
+// volume may ignore case). A stat that fails any other way (a refusal)
+// is not gone; Restore reports it.
 func (r Receipt) Gone() bool {
-	_, err := os.Lstat(r.To)
-	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR)
+	fi, err := os.Lstat(r.To)
+	if err != nil {
+		return errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR)
+	}
+	return !r.holds(fi)
+}
+
+// holds reports whether fi is the item this receipt moved; a receipt
+// with no recorded identity holds whatever is at To.
+func (r Receipt) holds(fi fs.FileInfo) bool {
+	if r.Ino == 0 {
+		return true
+	}
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	return !ok || (uint64(st.Dev) == r.Dev && st.Ino == r.Ino)
+}
+
+// identify records the identity of the item at To, or leaves it zero
+// when To cannot be read.
+func (r *Receipt) identify() {
+	fi, err := os.Lstat(r.To)
+	if err != nil {
+		return
+	}
+	if st, ok := fi.Sys().(*syscall.Stat_t); ok {
+		r.Dev, r.Ino = uint64(st.Dev), st.Ino
+	}
 }
 
 // Mover makes paths recoverable-gone (ARCHITECTURE.md invariant 2):
@@ -75,7 +107,9 @@ func (m *Mover) Move(ctx context.Context, path string) (Receipt, error) {
 		runFinder = finderMove
 	}
 	if to, err := runFinder(ctx, path); err == nil {
-		return Receipt{Original: path, To: to, Method: MethodFinder}, nil
+		r := Receipt{Original: path, To: to, Method: MethodFinder}
+		r.identify()
+		return r, nil
 	} else if ctx.Err() != nil {
 		return Receipt{}, err // cancelled: don't escalate to the fallback
 	}
@@ -84,7 +118,9 @@ func (m *Mover) Move(ctx context.Context, path string) (Receipt, error) {
 	if err != nil {
 		return Receipt{}, err
 	}
-	return Receipt{Original: path, To: to, Method: MethodStaging}, nil
+	r := Receipt{Original: path, To: to, Method: MethodStaging}
+	r.identify()
+	return r, nil
 }
 
 // stage renames path into the staging directory under a name that
@@ -113,13 +149,18 @@ func (m *Mover) stage(path string) (string, error) {
 
 // Restore undoes one receipt: renames the trashed item back to its
 // original path. It refuses to overwrite anything that reappeared at
-// the original location.
+// the original location, and to move another item that took the
+// copy's name.
 func Restore(r Receipt) error {
 	if !r.Restorable() {
 		return fmt.Errorf("restore %s: %s receipts are not auto-restorable (backup kept at %s)", r.Original, r.Method, r.To)
 	}
-	if _, err := os.Lstat(r.To); err != nil {
+	fi, err := os.Lstat(r.To)
+	if err != nil {
 		return fmt.Errorf("restore %s: trashed copy is gone (Trash emptied?): %w", r.Original, err)
+	}
+	if !r.holds(fi) {
+		return fmt.Errorf("restore %s: %s is another item now, not the one regrow moved there: not restored", r.Original, r.To)
 	}
 	if _, err := os.Lstat(r.Original); err == nil {
 		return fmt.Errorf("restore %s: something already exists there again", r.Original)

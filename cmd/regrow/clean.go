@@ -246,14 +246,21 @@ func runUndo(args []string) error {
 			return fmt.Errorf("nothing left to restore in run %s: %s", target.ID, goneText(gone))
 		}
 	} else {
+		anyGone := false
 		for i := len(runs) - 1; i >= 0; i-- {
-			if present, _ := runs[i].OnDisk(); len(present) > 0 {
+			present, gone := runs[i].OnDisk()
+			if len(present) > 0 {
 				target = &runs[i]
 				break
 			}
+			anyGone = anyGone || len(gone) > 0
 		}
 		if target == nil {
-			fmt.Println("Nothing to undo: no run has a Trash or staging move still on disk; `regrow history` says which are gone.")
+			msg := "Nothing to undo: no run has a Trash or staging move still on disk."
+			if anyGone {
+				msg += " `regrow history` says which moves are gone."
+			}
+			fmt.Println(msg)
 			return nil
 		}
 	}
@@ -274,6 +281,9 @@ func runUndo(args []string) error {
 	fmt.Printf("Undo of run %s: %d restored, %d failed.\n", target.ID, res.Restored, res.Failed)
 	for _, f := range res.Failures {
 		fmt.Println("  failed:", f)
+	}
+	if len(res.Gone) > 0 {
+		fmt.Printf("  not restored: %s.\n", goneText(res.Gone))
 	}
 	if res.NativeSkipped > 0 {
 		fmt.Printf("  %d native command(s) are not undoable — their data comes back via the regen story (`regrow rules`).\n", res.NativeSkipped)

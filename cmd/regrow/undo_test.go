@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -145,5 +147,53 @@ func TestUndoSkipsARunWithNothingLeftOnDisk(t *testing.T) {
 	err = runUndo([]string{"r2"})
 	if err == nil || !strings.Contains(err.Error(), "nothing left to restore in run r2: 1 gone from the Trash") {
 		t.Errorf("undo of a run whose copies are gone = %v, want it refused with the reason", err)
+	}
+}
+
+// An item the user trashed by hand, with the moved copy's name, is not
+// that copy: history counts nothing to restore and undo refuses the run.
+func TestUndoNeverRestoresAnItemTrashedByHand(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	logPath, err := oplog.DefaultPath()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	original := filepath.Join(dir, "a", "node_modules")
+	if err := os.MkdirAll(original, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	m := &trash.Mover{Home: "/nope", StagingDir: filepath.Join(dir, "staging"),
+		RunFinder: func(context.Context, string) (string, error) { return "", errors.New("no Finder") }}
+	receipt, err := m.Move(context.Background(), original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(receipt.To, filepath.Join(dir, "emptied")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(receipt.To, "from-c"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	entry := oplog.Entry{Time: time.Now(), Run: "r1", Seq: 1, Event: oplog.EventDone, RuleID: "fixture", Receipt: &receipt}
+	log, err := oplog.Open(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := log.Append(entry); err != nil {
+		t.Fatal(err)
+	}
+	if err := log.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if line := historyLines(oplog.Runs([]oplog.Entry{entry}))[0]; !strings.HasSuffix(line, "(nothing restorable: 1 gone from regrow staging)") {
+		t.Errorf("history = %q, want nothing restorable", line)
+	}
+	if err := runUndo([]string{"r1"}); err == nil || !strings.Contains(err.Error(), "nothing left to restore in run r1") {
+		t.Errorf("undo = %v, want it refused", err)
+	}
+	if _, err := os.Stat(filepath.Join(receipt.To, "from-c")); err != nil {
+		t.Errorf("the item trashed by hand left its place: %v", err)
 	}
 }

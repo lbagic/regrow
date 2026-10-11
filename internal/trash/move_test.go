@@ -225,3 +225,34 @@ func TestReceiptGone(t *testing.T) {
 		t.Error("a copy behind a folder that refuses a stat must not read as gone")
 	}
 }
+
+// Once the copy leaves the Trash, an item the user trashes later can
+// take its name. The receipt knows its own item, so that one reads as
+// gone and is never restored into the original's place.
+func TestRestoreRefusesAnotherItemAtTheCopyPath(t *testing.T) {
+	dir := writeTree(t, "cache/a.bin")
+	target := filepath.Join(dir, "cache")
+	m := &Mover{Home: "/Users/t", StagingDir: filepath.Join(t.TempDir(), "staging"), RunFinder: fakeFinder("", errors.New("no Finder"))}
+	r, err := m.Move(context.Background(), target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Ino == 0 || r.Gone() {
+		t.Fatalf("receipt %+v: want its item's identity recorded and the copy present", r)
+	}
+	if err := os.Rename(r.To, filepath.Join(dir, "taken-out")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(r.To, "another"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if !r.Gone() {
+		t.Error("another item at the copy's path must read as gone")
+	}
+	if err := Restore(r); err == nil || !strings.Contains(err.Error(), "another item") {
+		t.Errorf("Restore = %v, want it refused", err)
+	}
+	if _, err := os.Lstat(target); !os.IsNotExist(err) {
+		t.Error("another item was restored into the original's place")
+	}
+}
