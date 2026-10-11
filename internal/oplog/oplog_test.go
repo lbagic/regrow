@@ -222,9 +222,6 @@ func TestPendingReverseOrderAndExcludesUndone(t *testing.T) {
 	}
 }
 
-// Finder reuses a name once nothing in the Trash has it, so a later
-// action on the same path means the earlier copy was already gone: the
-// earlier move counts as gone even though something sits at its path.
 func seqs(es []Entry) []int {
 	out := []int{}
 	for _, e := range es {
@@ -233,6 +230,9 @@ func seqs(es []Entry) []int {
 	return out
 }
 
+// Finder reuses a name once nothing in the Trash has it, so a later
+// action on the same path means the earlier copy was already gone: the
+// earlier move counts as gone even though something sits at its path.
 func TestRunsMarkACopyPathALaterActionTook(t *testing.T) {
 	dir := t.TempDir()
 	for _, name := range []string{"a", "b", "cache"} {

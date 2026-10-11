@@ -32,11 +32,10 @@ type Receipt struct {
 	Original string `json:"original"`
 	To       string `json:"to"`
 	Method   Method `json:"method"`
-	// Ino identifies the item at To, read right after the move; To
-	// names its volume. No device number: macOS gives a volume a new one
-	// when its disk is attached again. Zero when that read failed and in
-	// receipts written before it was recorded; such a receipt is judged
-	// by its path alone.
+	// Ino identifies the item at To, read right after the move. No
+	// device number: macOS gives a volume a new one when its disk is
+	// attached again. Zero when that read failed and in receipts written
+	// before it was recorded; such a receipt is judged by its path alone.
 	Ino uint64 `json:"ino,omitempty"`
 }
 
