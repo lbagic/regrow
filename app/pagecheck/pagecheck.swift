@@ -641,6 +641,11 @@ struct Scenario {
             r.expect(summary.int("exported") > 0, "the fixture scan holds a volume")
             r.same(await r.texts(".four b"), buckets.map { human(summary.int($0)) }, "the five totals")
             r.has(await r.text(".apart"), "Five totals, never added up", "the note under the totals")
+            r.same(await r.count(".four .t"), 5, "the totals drawn")
+            r.same(await r.js("return getComputedStyle(document.querySelector('.four')).gridTemplateColumns.split(' ').length") as? Int ?? 0, 5, "the columns of the totals")
+            let volumeRow = await r.text(".entry[data-rule=docker-volumes-named]")
+            r.has(volumeRow, "after a tarball goes to regrow staging, no undo", "what the volume row says it runs")
+            r.has(volumeRow, "in a tarball until you delete it", "when the volume row's space comes back")
             let days = t.event("tick", "tick")["days_to_full"] as? Double ?? 0
             r.has(await r.text(".lead h2"), "full in about \(Int(days.rounded())) day", "the headline")
             // The engine's own alert prints the same free space: the page's figure must read as it does.
@@ -804,6 +809,7 @@ struct Scenario {
             r.has(lead, human(totals.int("frees_now")) + " comes back as \(actions.filter { $0.str("kind") != "trash" }.count - volumes) commands run", "the lead")
             r.has(lead, human(totals.int("exported")) + " is \(volumes) docker volumes removed after a tarball of each goes to regrow staging", "the lead")
             r.has(lead, "regrow undo does not restore a volume", "the lead")
+            r.same(await r.js("return document.querySelector('.act[data-rule=docker-volumes-named] .bar i').className") as? String ?? "", "exported", "the colour of a volume's bar")
             r.has(lead, human(totals.int("after_trash")) + " goes to the Trash in \(actions.filter { $0.str("kind") == "trash" }.count) moves", "the lead")
             let headroom = t.event("scan", "headroom")
             r.has(await r.text(".lead .figures"), human(headroom.int("free") + totals.int("frees_now")) + " free once the commands end, up from " + human(headroom.int("free")), "the meter's figure")
@@ -1101,6 +1107,8 @@ struct Scenario {
             r.same(await r.screen(), "findings", "the screen")
             let frees = human(r.transcript.event("plan-all", "plan").obj("totals").int("frees_now"))
             r.has(await r.text(".tray .say"), frees + " frees now", "the tray after the engine refused the review")
+            let exported = human(r.transcript.event("plan-all", "plan").obj("totals").int("exported"))
+            r.has(await r.text(".tray .say"), exported + " in volume exports", "the tray names the volume exports the ticks hold")
             await r.shoot()
         },
         Scenario(name: "other-error") { r in
