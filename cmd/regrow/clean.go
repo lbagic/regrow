@@ -218,8 +218,9 @@ func runSummary(res executor.Result, stagingDir string) []string {
 	return lines
 }
 
-// runUndo restores the newest run that still has something to restore,
-// or the given run id.
+// runUndo restores the newest run with a Trash or staging copy still
+// on disk, or the given run id, and refuses a run whose copies are all
+// gone.
 func runUndo(args []string) error {
 	logPath, err := oplog.DefaultPath()
 	if err != nil {
@@ -241,9 +242,12 @@ func runUndo(args []string) error {
 		if target == nil {
 			return fmt.Errorf("run %q not in the oplog (see `regrow history`)", args[0])
 		}
+		if present, gone := target.OnDisk(); len(present) == 0 && len(gone) > 0 {
+			return fmt.Errorf("nothing left to restore in run %s: %s", target.ID, goneText(gone))
+		}
 	} else {
 		for i := len(runs) - 1; i >= 0; i-- {
-			if len(runs[i].Undoable()) > 0 {
+			if present, _ := runs[i].OnDisk(); len(present) > 0 {
 				target = &runs[i]
 				break
 			}
@@ -324,12 +328,37 @@ func historyLines(runs []oplog.Run) []string {
 		if undone > 0 {
 			status += fmt.Sprintf(", %d undone", undone)
 		}
-		if rest := len(r.Undoable()); rest > 0 {
-			status += fmt.Sprintf(" (%d restorable)", rest)
+		switch present, gone := r.OnDisk(); {
+		case len(present) > 0 && len(gone) > 0:
+			status += fmt.Sprintf(" (%d restorable, %s)", len(present), goneText(gone))
+		case len(present) > 0:
+			status += fmt.Sprintf(" (%d restorable)", len(present))
+		case len(gone) > 0:
+			status += fmt.Sprintf(" (nothing restorable: %s)", goneText(gone))
 		}
 		lines = append(lines, fmt.Sprintf("%s  %s  %10s cleaned  %s", r.ID, r.Start.Local().Format("2006-01-02 15:04"), tui.HumanBytes(runBytes(r)), status))
 	}
 	return append(lines, historyNote...)
+}
+
+// goneText counts the moves whose copy is gone, by where it was.
+func goneText(gone []oplog.Entry) string {
+	var trashed, staged int
+	for _, e := range gone {
+		if e.Receipt.Method == trash.MethodStaging {
+			staged++
+		} else {
+			trashed++
+		}
+	}
+	var parts []string
+	if trashed > 0 {
+		parts = append(parts, fmt.Sprintf("%d gone from the Trash", trashed))
+	}
+	if staged > 0 {
+		parts = append(parts, fmt.Sprintf("%d gone from regrow staging", staged))
+	}
+	return strings.Join(parts, ", ")
 }
 
 var historyNote = []string{

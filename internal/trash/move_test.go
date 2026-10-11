@@ -192,3 +192,21 @@ func TestMoveAndRestoreReadOnlyTree(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestReceiptGone(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "copy")
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for to, want := range map[string]bool{
+		file:                          false,
+		filepath.Join(dir, "emptied"): true,
+		// A component that is a file, not a folder: nothing is there.
+		filepath.Join(file, "inside"): true,
+	} {
+		if got := (Receipt{To: to, Method: MethodFinder}).Gone(); got != want {
+			t.Errorf("Gone(%s) = %v, want %v", to, got, want)
+		}
+	}
+}

@@ -230,3 +230,17 @@ func (r Run) Undoable() []Entry {
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Seq > out[j].Seq })
 	return out
 }
+
+// OnDisk splits Undoable by whether each receipt's Trash or staging
+// copy is still there: present can be restored, gone cannot. It reads
+// the disk and writes nothing to the journal.
+func (r Run) OnDisk() (present, gone []Entry) {
+	for _, e := range r.Undoable() {
+		if e.Receipt.Gone() {
+			gone = append(gone, e)
+		} else {
+			present = append(present, e)
+		}
+	}
+	return present, gone
+}

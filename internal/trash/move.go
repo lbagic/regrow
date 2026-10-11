@@ -2,11 +2,14 @@ package trash
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
 
 // Method says which mechanism made a path recoverable-gone.
@@ -35,6 +38,14 @@ type Receipt struct {
 // receipts cannot be renamed back — Original names a docker volume,
 // not a path.
 func (r Receipt) Restorable() bool { return r.Method != MethodExport }
+
+// Gone reports whether nothing is left at To: the Trash was emptied, or
+// the copy was moved out of the Trash or staging by hand. A stat that
+// fails any other way (a refusal) is not gone; Restore reports it.
+func (r Receipt) Gone() bool {
+	_, err := os.Lstat(r.To)
+	return errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR)
+}
 
 // Mover makes paths recoverable-gone (ARCHITECTURE.md invariant 2):
 // Finder move to the OS Trash first, rename into StagingDir when
