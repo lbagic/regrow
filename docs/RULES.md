@@ -2,7 +2,7 @@
 
 # What regrow scans
 
-regrow's catalog holds 58 rules: 27 safe, 20 caution and 11 surface-only. 21 of them are beta, and a scan includes them only with `--beta-rules`. Every entry below is written from the rule's file in [`rules/`](../rules), the catalog `regrow rules --beta-rules` lists. Paths are the macOS ones; the rules also carry Linux paths, for a Linux build that has not shipped. [SCAN.md](SCAN.md) says what a scan reads, which programs it runs, and what regrow writes.
+regrow's catalog holds 62 rules: 27 safe, 23 caution and 12 surface-only. 25 of them are beta, and a scan includes them only with `--beta-rules`. Every entry below is written from the rule's file in [`rules/`](../rules), the catalog `regrow rules --beta-rules` lists. Paths are the macOS ones; the rules also carry Linux paths, for a Linux build that has not shipped. [SCAN.md](SCAN.md) says what a scan reads, which programs it runs, and what regrow writes.
 
 How to read an entry:
 
@@ -346,6 +346,58 @@ Package caches, build caches and build output of developer tools, and what codin
 - **Removed by:** `yarn cache clean`, once for the whole rule: all of it or nothing. It deletes for good: `regrow undo` cannot bring it back.
 - **Comes back:** Yarn re-downloads package tarballs on the next install. Cost: next installs re-download; network.
 
+## Toolchains
+
+Installed SDKs and tool versions.
+
+| Rule | Risk | Removed by |
+|---|---|---|
+| [Android NDKs (no Android Studio)](#android-ndk) | caution, beta | Trash |
+| [Android SDK (no Android Studio)](#android-sdk) | caution, beta | Trash |
+| [Node versions nothing references (fnm)](#fnm-node-versions) | caution, beta | `fnm uninstall {arg}` |
+
+### android-ndk
+
+**Android NDKs (no Android Studio)** · caution · beta · [`rules/android-ndk.yaml`](../rules/android-ndk.yaml)
+
+- **Looks at:** the NDKs in `~/Library/Android/sdk/ndk/` and `~/Library/Android/sdk/ndk-bundle`, and, to tell whether an Android Studio is installed, the apps in `/Applications` and `~/Applications` and one folder down, JetBrains Toolbox's apps in `~/Library/Application Support/JetBrains/Toolbox/apps`, and Spotlight (`mdfind` for Android Studio's bundle identifier).
+- **Removed by:** a move to the Trash, one per item; `regrow undo` puts it back.
+- **Keeps:**
+  - Every NDK while an Android Studio is installed in any of those places.
+  - Every NDK when one of those places cannot be read, or a link there cannot be followed: the rule then shows an error.
+  - An NDK reached through a symlink, and an SDK anywhere but `~/Library/Android/sdk` or reached through a symlink.
+- **Comes back:** sdkmanager "ndk;&lt;version&gt;" (or the Gradle build that names it) downloads it again. Cost: a 1–2 GB download per NDK; needs the network.
+- **Note:** Command-line Android builds (Gradle, React Native, Flutter) use the SDK without Studio; a build that needs this NDK fails until it is installed again. The row says when ANDROID_HOME points at the SDK.
+
+### android-sdk
+
+**Android SDK (no Android Studio)** · caution · beta · [`rules/android-sdk.yaml`](../rules/android-sdk.yaml)
+
+- **Looks at:** `~/Library/Android/sdk` as one folder; `ANDROID_HOME` and `ANDROID_SDK_ROOT`, to say on the row when one points at it; and, to tell whether an Android Studio is installed, the apps in `/Applications` and `~/Applications` and one folder down, JetBrains Toolbox's apps in `~/Library/Application Support/JetBrains/Toolbox/apps`, and Spotlight (`mdfind` for Android Studio's bundle identifier).
+- **Removed by:** a move to the Trash, one per item; `regrow undo` puts it back.
+- **Keeps:**
+  - The SDK while an Android Studio is installed in any of those places.
+  - The SDK when one of those places cannot be read, or a link there cannot be followed: the rule then shows an error.
+  - An SDK anywhere but `~/Library/Android/sdk`, or reached through a symlink.
+- **Comes back:** Installing Android Studio, or sdkmanager from the command-line tools, downloads the SDK packages a build needs again. Cost: several GB of downloads; needs the network.
+- **Note:** Command-line Android builds (Gradle, React Native, Flutter) use the SDK without Studio, and emulators need its system images; the row says when ANDROID_HOME points here. Undo restores it from the Trash.
+
+### fnm-node-versions
+
+**Node versions nothing references (fnm)** · caution · beta · [`rules/fnm-node-versions.yaml`](../rules/fnm-node-versions.yaml)
+
+- **Looks at:** fnm's folder (`$FNM_DIR`, or whichever exists of `fnm` in `$XDG_DATA_HOME` (else `~/.local/share`), `~/.fnm` and `~/Library/Application Support/fnm`) with its `node-versions` and `aliases`; every `.nvmrc` and `.node-version` in your home folder and in folders up to 10 levels below `~/workspace`, `~/dev`, `~/projects`, `~/src` and `~/code`; the launchd job plists in `~/Library/LaunchAgents`, `/Library/LaunchAgents` and `/Library/LaunchDaemons`, and the version files in each folder a plist names and the folders above it; and the files your running processes execute or map (`lsof -d txt`).
+- **Removed by:** `fnm uninstall {arg}`, once per item; `{arg}` is the item as the tool names it. It deletes for good: `regrow undo` cannot bring it back. Right before each removal, regrow reads every source again, as the scan did, and leaves the version installed if anything names it now or a source cannot be read.
+- **Keeps:**
+  - A version an fnm alias points at, the default included.
+  - A version a `.nvmrc` or `.node-version` there resolves to, the way fnm resolves one (`20` is the newest installed 20.x).
+  - A version a launchd job's plist names a path into, runs through fnm (`fnm exec --using=18`), or leads fnm to through a version file.
+  - A version a running process executes or maps a file from.
+  - A folder in `node-versions` not named like a release (`vX.Y.Z`).
+  - Every version, when any of those cannot be read or understood, when fnm has more than one folder and `FNM_DIR` names none, when a folder belongs to another user (a run under `sudo`), or when `fnm` is not on your `PATH`: the rule then shows an error and offers nothing.
+- **Comes back:** fnm install &lt;version&gt; downloads and installs it again; npm packages installed globally into it need installing again too. Cost: a download of about 30–50 MB per version, plus its global packages; needs the network.
+- **Note:** A project that pins this version only in package.json engines or sits outside the project roots, a shell where you ran `fnm use` with it, and a cron job are not checked; each asks for `fnm install` again.
+
 ## Xcode and simulators
 
 | Rule | Risk | Removed by |
@@ -354,6 +406,7 @@ Package caches, build caches and build output of developer tools, and what codin
 | [iOS simulator devices](#sim-devices) | caution | `xcrun simctl delete {arg}` |
 | [Unavailable simulator devices](#sim-devices-unavailable) | safe | `xcrun simctl delete unavailable` |
 | [Simulator runtimes](#sim-runtimes) | caution | `xcrun simctl runtime delete {arg}` |
+| [Simulator runtimes (no Xcode)](#sim-runtimes-no-xcode) | surface-only, beta | never |
 | [Xcode Archives (released builds + dSYMs)](#xcode-archives) | caution | Trash |
 | [Xcode DerivedData](#xcode-derived-data) | safe | Trash |
 | [Xcode device support symbols](#xcode-device-support) | safe | Trash |
@@ -393,6 +446,18 @@ Package caches, build caches and build output of developer tools, and what codin
   - Runtimes simctl reports as not deletable.
 - **Comes back:** Xcode re-downloads a runtime on demand (Settings ▸ Components). Cost: multi-GB download per runtime.
 - **Note:** Existing simulators of a deleted runtime stop booting until it is re-downloaded.
+
+### sim-runtimes-no-xcode
+
+**Simulator runtimes (no Xcode)** · surface-only · beta · [`rules/sim-runtimes-no-xcode.yaml`](../rules/sim-runtimes-no-xcode.yaml)
+
+- **Looks at:** `xcrun --find simctl`; the apps named like Xcode in `/Applications` and `~/Applications` and one folder down, with their `Info.plist`; Spotlight (`mdfind` for Xcode's bundle identifier); and, only when none of these finds Xcode, `simctl runtime list -j` from CoreSimulator's own copy, `/Library/Developer/PrivateFrameworks/CoreSimulator.framework/Versions/A/Resources/bin/simctl`.
+- **Removed by:** never: surface-only.
+- **Keeps:**
+  - Every runtime while `xcrun` finds `simctl` or an Xcode is installed: `sim-runtimes` lists them then.
+  - Every runtime when an Xcode-named app, an Applications folder or a link there cannot be read or followed, since an Xcode there cannot be ruled out.
+- **Comes back:** Xcode downloads a runtime again when a simulator needs it (Settings ▸ Components). Cost: n/a — regrow never deletes these; a 5–10 GB download per runtime if one is needed again.
+- **Note:** Regrow does not delete these. With the simctl Xcode left behind, /Library/Developer/PrivateFrameworks/CoreSimulator.framework/Versions/A/Resources/bin/simctl runtime list names each runtime's identifier, and the same simctl's runtime delete &lt;identifier&gt; --dry-run shows what would go; without --dry-run it is meant to delete it, which is untested without Xcode. Simulators of a deleted runtime stop booting until it is downloaded again.
 
 ### xcode-archives
 

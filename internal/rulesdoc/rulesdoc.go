@@ -54,6 +54,7 @@ var preActions = map[string]string{
 	engine.PreActionBuildOutputRecheck:         "regrow judges the folder again, as the scan did, and leaves it in place if any reason to keep it holds now.",
 	engine.PreActionNpxRecheck:                 "regrow judges the folder again, as the scan did, and leaves it in place if any reason to keep it holds now or your processes cannot be listed.",
 	engine.PreActionDownloadedInstallerRecheck: "regrow judges the download against the installed apps again, as the scan did, and leaves it in place if any reason to keep it holds now.",
+	engine.PreActionFnmVersionRecheck:          "regrow reads every source again, as the scan did, and leaves the version installed if anything names it now or a source cannot be read.",
 }
 
 // PreActionText is the sentence for a hook, and false when the page has

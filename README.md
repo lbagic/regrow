@@ -2,7 +2,7 @@
 
 What is on your disk, and how it comes back.
 
-regrow is a disk cleaner for macOS, made for developers. It scans for caches, `node_modules` and Rust `target` folders, Docker leftovers, simulators and the rest of what fills a working Mac (downloaded models, other build output and agent scratch are among its beta rules, below), and for each one it says what it is, how regrow would remove it, and what brings it back and at what cost. It removes nothing until you confirm the exact plan it prints, at its prompt or in advance with `--yes`. The exception is the Go build cache prune: `regrow prune go-build --yes` deletes old entries without showing a plan first, and autotrim, which runs that prune by itself, stays off until you turn it on. What it can, regrow moves to the Trash, where `regrow undo` finds it again.
+regrow is a disk cleaner for macOS, made for developers. It scans for caches, `node_modules` and Rust `target` folders, Docker leftovers, simulators and the rest of what fills a working Mac (downloaded models, other build output, agent scratch and toolchains nothing uses are among its beta rules, below), and for each one it says what it is, how regrow would remove it, and what brings it back and at what cost. It removes nothing until you confirm the exact plan it prints, at its prompt or in advance with `--yes`. The exception is the Go build cache prune: `regrow prune go-build --yes` deletes old entries without showing a plan first, and autotrim, which runs that prune by itself, stays off until you turn it on. What it can, regrow moves to the Trash, where `regrow undo` finds it again.
 
 - [docs/RULES.md](docs/RULES.md) lists every rule: what it looks at, how it removes, what it keeps, and how the space comes back.
 - [docs/SCAN.md](docs/SCAN.md) says what a scan reads, which programs it runs, and what regrow writes.
@@ -89,14 +89,14 @@ Flags go before ids: `regrow clean --yes go-build-cache`. `--rules-dir DIR` load
 
 **The Trash, not `rm`.** A rule with no command of its own moves each item to the Trash through Finder, so Finder's Put Back works and `regrow undo` can move it back. When Finder fails (in an SSH session, say, or the app without permission to control Finder), the item is renamed into regrow staging instead, `~/.local/state/regrow/staging/<run-id>/`, which `regrow undo` also restores and emptying the Trash does not free. An item on another volume cannot be renamed there: its action fails and the item stays where it was.
 
-**The tool's own command, where there is one.** Where a tool keeps its own books, regrow runs the tool's cleanup command rather than deleting its files: `go clean -cache`, `docker image rm`, `xcrun simctl delete`, `ollama rm`, `tmutil deletelocalsnapshots`. These delete for good: `regrow undo` cannot bring them back, and the rule's regen story says what will. Each plan line says "undo restores" or "no undo". Two removals deserve a closer look, and [docs/RULES.md](docs/RULES.md) spells each out:
+**The tool's own command, where there is one.** Where a tool keeps its own books, regrow runs the tool's cleanup command rather than deleting its files: `go clean -cache`, `docker image rm`, `xcrun simctl delete`, `ollama rm`, `fnm uninstall`, `tmutil deletelocalsnapshots`. These delete for good: `regrow undo` cannot bring them back, and the rule's regen story says what will. Each plan line says "undo restores" or "no undo". Two removals deserve a closer look, and [docs/RULES.md](docs/RULES.md) spells each out:
 
 - a Docker volume is exported to a tarball in regrow staging before `docker volume rm`, and a volume bigger than the export cap (10 GiB unless you set it) is never offered;
 - `regrow prune go-build --yes` deletes old Go build cache entries directly, with no Trash and no undo.
 
 **Undo.** `regrow undo` restores Trash and staging moves from the oplog. It refuses to overwrite anything that has reappeared at the original path, and it says how many actions of the run it cannot restore.
 
-**Surface-only rules never delete.** iOS backups, model libraries, `~/Library/Caches`, `/Library/Updates`, the aerial wallpaper videos (whose row gives the command to remove them yourself), a macOS update Software Update downloaded, Chrome's on-device AI model, the Docker VM disk, APFS purgeable space, and the Docker volumes and agent sessions regrow keeps back are shown so you know where the space is. The planner refuses them even when you name them, and refuses to remove any folder that holds one.
+**Surface-only rules never delete.** iOS backups, model libraries, `~/Library/Caches`, `/Library/Updates`, the aerial wallpaper videos (whose row gives the command to remove them yourself), a macOS update Software Update downloaded, Chrome's on-device AI model, simulator runtimes left after Xcode went, the Docker VM disk, APFS purgeable space, and the Docker volumes and agent sessions regrow keeps back are shown so you know where the space is. The planner refuses them even when you name them, and refuses to remove any folder that holds one.
 
 **Beta rules stay out until asked for.** A new rule ships with `beta: true` and joins a scan only with `--beta-rules`, until it has run on real machines.
 
@@ -104,7 +104,7 @@ Flags go before ids: `regrow clean --yes go-build-cache`. `--rules-dir DIR` load
 
 **Path guards.** Every Trash move, and every command run on one item's path, is refused when the path is empty or relative, is `/`, a folder directly under `/` (such as `/Applications` or `/Users`), your home folder, or a volume's root under `/Volumes`. The planner checks, and the mover checks again right before the move.
 
-**Checked again right before.** Rules whose verdict can change after the scan judge each item again right before they remove it: an agent session that started working again, a worktree that gained a change, a build folder whose project is in use, an npx folder a process started using, a download whose app was removed. A refusal leaves the item in place and fails that one action.
+**Checked again right before.** Rules whose verdict can change after the scan judge each item again right before they remove it: an agent session that started working again, a worktree that gained a change, a build folder whose project is in use, an npx folder a process started using, a download whose app was removed, a Node version something started naming. A refusal leaves the item in place and fails that one action.
 
 **Small refusals.** `clean` refuses an id that matches nothing in the scan rather than run less than you meant. A rule whose command acts on everything at once cannot be run for some of its items. "Empty Trash" is never ticked for you, and when you pick it, it runs before the plan's Trash moves, so those stay restorable.
 
