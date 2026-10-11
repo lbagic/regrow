@@ -2,7 +2,7 @@
 
 # What regrow scans
 
-regrow's catalog holds 58 rules: 28 safe, 20 caution and 10 surface-only. 21 of them are beta, and a scan includes them only with `--beta-rules`. Every entry below is written from the rule's file in [`rules/`](../rules), the catalog `regrow rules --beta-rules` lists. Paths are the macOS ones; the rules also carry Linux paths, for a Linux build that has not shipped. [SCAN.md](SCAN.md) says what a scan reads, which programs it runs, and what regrow writes.
+regrow's catalog holds 58 rules: 27 safe, 20 caution and 11 surface-only. 21 of them are beta, and a scan includes them only with `--beta-rules`. Every entry below is written from the rule's file in [`rules/`](../rules), the catalog `regrow rules --beta-rules` lists. Paths are the macOS ones; the rules also carry Linux paths, for a Linux build that has not shipped. [SCAN.md](SCAN.md) says what a scan reads, which programs it runs, and what regrow writes.
 
 How to read an entry:
 
@@ -527,7 +527,7 @@ System caches, logs, downloads and the Trash.
 
 | Rule | Risk | Removed by |
 |---|---|---|
-| [Aerial wallpaper videos](#aerial-wallpapers) | safe | `sudo find {path} -type f -name '*.mov' -delete` |
+| [Aerial wallpaper videos](#aerial-wallpapers) | surface-only | never |
 | [Installers of installed apps](#downloaded-installers) | caution, beta | Trash |
 | [Local iOS device backups](#ios-backups) | surface-only | never |
 | [App caches (~/Library/Caches)](#library-caches) | surface-only | never |
@@ -541,11 +541,11 @@ System caches, logs, downloads and the Trash.
 
 ### aerial-wallpapers
 
-**Aerial wallpaper videos** · safe · [`rules/aerial-wallpapers.yaml`](../rules/aerial-wallpapers.yaml)
+**Aerial wallpaper videos** · surface-only · [`rules/aerial-wallpapers.yaml`](../rules/aerial-wallpapers.yaml)
 
 - **Looks at:** `/Library/Application Support/com.apple.idleassetsd/Customer` (macOS 15 and earlier), `~/Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches` (macOS 26 and later).
-- **Removed by:** `sudo find {path} -type f -name '*.mov' -delete`, once per item; `{path}` is the item's path. It runs as root through `sudo`, which asks for your password in a terminal; the app leaves it for you to run there. It deletes for good: `regrow undo` cannot bring it back.
-- **Comes back:** macOS downloads the aerial catalogue again when System Settings ▸ Wallpaper is opened, and any aerial selected as wallpaper or screensaver. Cost: roughly 0.5 GB of download per video.
+- **Removed by:** never: surface-only.
+- **Comes back:** macOS downloads the aerial catalogue again when System Settings ▸ Wallpaper is opened, and any aerial selected as wallpaper or screensaver. To remove the videos yourself: sudo find "/Library/Application Support/com.apple.idleassetsd/Customer" -type f -name '\*.mov' -delete (macOS 15 and earlier), or sudo find ~/Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches -type f -name '\*.mov' -delete (macOS 26 and later). Cost: n/a — regrow never deletes here; roughly 0.5 GB of download per video macOS fetches again.
 - **Fix the cause:** Aerial video downloads (macOS 15 and earlier). `regrow doctor` says whether it is in effect here and prints the fix; regrow changes nothing.
 - **Note:** The videos come back whenever System Settings ▸ Wallpaper is opened, even with a still wallpaper; `regrow doctor` prints how to stop the downloads.
 
