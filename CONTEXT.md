@@ -63,7 +63,7 @@ _Avoid_: cache, database
 Objects a provider deliberately withholds from deletion — in use, keep-listed, over a safety cap, or too recent. Docker volumes and agent sessions have one surface-only rule that lists them with the reason in each row; the other providers list what they keep nowhere.
 
 **App leftover**:
-A folder an app keeps under `~/Library` (Application Support, Caches, Containers and the like), named by its bundle or group id or by its product, that nothing installed owns: no installed bundle has the id and no installed app's entitlements name the group. Offered only by its exact id, once nothing points into it and nothing in it changed for 90 days; a product name or a maker's other id is a fuzzy match, shown and never offered.
+A folder an app keeps under `~/Library` (Application Support, Caches, Containers and the like), named by its bundle or group id or by its product, that nothing installed owns: no installed bundle has the id and no installed app's entitlements name the group. Offered only by its exact id, once nothing points into any folder of its app and none of them changed for 90 days; a product name or a maker's other id is a fuzzy match, shown and never offered.
 _Avoid_: orphan, residue
 
 **Idle project**:

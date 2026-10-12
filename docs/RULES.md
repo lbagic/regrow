@@ -639,7 +639,7 @@ System caches, logs, downloads and the Trash.
 
 **App leftovers (kept)** · surface-only · beta · [`rules/app-leftovers-kept.yaml`](../rules/app-leftovers-kept.yaml)
 
-- **Looks at:** the folders `app-leftovers` reads, in the same pass, and the names of macOS's own frameworks and programs (in `/System/Library/Frameworks`, `/System/Library/PrivateFrameworks`, `/System/Library/CoreServices`, `/usr/libexec`, `/usr/sbin` and `/usr/bin`, and the programs of the launchd jobs in `/System/Library/LaunchAgents` and `/System/Library/LaunchDaemons`), whose folders in Application Support are not listed; each row says why it is not offered.
+- **Looks at:** the folders `app-leftovers` reads, in the same pass, and the names of macOS's own frameworks and programs (in `/System/Library/Frameworks`, `/System/Library/PrivateFrameworks`, `/System/Library/CoreServices`, `/usr/libexec`, `/usr/sbin` and `/usr/bin`, and the files the launchd jobs in `/System/Library/LaunchAgents` and `/System/Library/LaunchDaemons` name, their programs among them), whose folders in Application Support are not listed; each row says why it is not offered.
 - **Removed by:** never: surface-only.
 - **Comes back:** n/a — regrow never deletes these; check the row's reason, then delete a folder yourself if its app is gone. Cost: n/a.
 - **Note:** Each row says why it is not offered. A folder in use, or one that changed recently, moves to "App leftovers (no app has their id)" once nothing points into any folder of its app and none of them changed for 90 days.
