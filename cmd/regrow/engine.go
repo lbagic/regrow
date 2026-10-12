@@ -89,6 +89,13 @@ func newEngineServer(host engine.Host, catalog []engine.Rule, flags []string) *p
 		NewExecutor: func(runID string) (*executor.Executor, func(), error) {
 			return newRunExecutor(host, runID, dockerStream)
 		},
+		StagingDir: func(runID string) string {
+			logPath, err := oplog.DefaultPath()
+			if err != nil {
+				return ""
+			}
+			return runStagingDir(logPath, runID)
+		},
 	}
 }
 

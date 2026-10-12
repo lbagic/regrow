@@ -457,7 +457,7 @@ Installed SDKs and tool versions.
   - Every runtime while `xcrun` finds `simctl`, when `sim-runtimes` lists them, or an Xcode is installed; with an Xcode installed but `xcode-select` pointing at the Command Line Tools, neither rule lists them.
   - Every runtime when an Xcode-named app, an Applications folder or a link there cannot be read or followed, since an Xcode there cannot be ruled out.
 - **Comes back:** Xcode downloads a runtime again when a simulator needs it (Settings ▸ Components). Cost: n/a — regrow never deletes these; a 5–10 GB download per runtime if one is needed again.
-- **Note:** Regrow does not delete these. With the simctl Xcode left behind, /Library/Developer/PrivateFrameworks/CoreSimulator.framework/Versions/A/Resources/bin/simctl runtime list names each runtime's identifier, and the same simctl's runtime delete &lt;identifier&gt; --dry-run shows what would go; without --dry-run it is meant to delete it, which is untested without Xcode. Simulators of a deleted runtime stop booting until it is downloaded again.
+- **Note:** Regrow does not delete these. With the simctl Xcode left behind, `/Library/Developer/PrivateFrameworks/CoreSimulator.framework/Versions/A/Resources/bin/simctl runtime list` names each runtime's identifier, and `/Library/Developer/PrivateFrameworks/CoreSimulator.framework/Versions/A/Resources/bin/simctl runtime delete <identifier> --dry-run` shows what would go; without `--dry-run` it is meant to delete it, which is untested without Xcode. Simulators of a deleted runtime stop booting until it is downloaded again.
 
 ### xcode-archives
 
@@ -570,7 +570,7 @@ Docker objects, listed through the `docker` command; regrow never touches Docker
 - **Looks at:** the volumes the two other volume rules read, in the same pass; each row says why it is kept.
 - **Removed by:** never: surface-only.
 - **Comes back:** n/a — regrow never deletes these; remove a keep reason (stop the container, edit the keep-list) and rescan to reclassify. Cost: n/a.
-- **Note:** Each row says why it is kept. Protect more volumes via the keep-list (name glob or compose project) in ~/.config/regrow/config.yaml.
+- **Note:** Each row says why it is kept. Protect more volumes via the keep-list (name glob or compose project) in `~/.config/regrow/config.yaml`.
 
 ### docker-volumes-named
 
@@ -610,7 +610,7 @@ System caches, logs, downloads and the Trash.
 
 - **Looks at:** `/Library/Application Support/com.apple.idleassetsd/Customer` (macOS 15.x and earlier), `~/Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches` (macOS 26 and later).
 - **Removed by:** never: surface-only.
-- **Comes back:** macOS downloads the aerial catalogue again when System Settings ▸ Wallpaper is opened, and any aerial selected as wallpaper or screensaver. To remove the videos yourself: sudo find "/Library/Application Support/com.apple.idleassetsd/Customer" -type f -name '\*.mov' -delete (macOS 15 and earlier), or sudo find ~/Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches -type f -name '\*.mov' -delete (macOS 26 and later). Cost: n/a — regrow never deletes here; roughly 0.5 GB of download per video macOS fetches again.
+- **Comes back:** macOS downloads the aerial catalogue again when System Settings ▸ Wallpaper is opened, and any aerial selected as wallpaper or screensaver. To remove the videos yourself: `sudo find "/Library/Application Support/com.apple.idleassetsd/Customer" -type f -name '*.mov' -delete` (macOS 15 and earlier), or `sudo find ~/Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches -type f -name '*.mov' -delete` (macOS 26 and later). Cost: n/a — regrow never deletes here; roughly 0.5 GB of download per video macOS fetches again.
 - **Fix the cause:** Aerial video downloads (macOS 15.x and earlier). `regrow doctor` says whether it is in effect here and prints the fix; regrow changes nothing.
 - **Note:** The videos come back whenever System Settings ▸ Wallpaper is opened, even with a still wallpaper; `regrow doctor` prints how to stop the downloads.
 

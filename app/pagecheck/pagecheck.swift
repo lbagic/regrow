@@ -47,6 +47,16 @@ func human(_ n: Int64) -> String {
     return String(format: "%.1f %@iB", Double(n) / Double(div), String(Array("KMGTPE")[exp]))
 }
 
+// tui.ShellJoin, as the page's shellJoin writes it
+func shellJoin(_ argv: [String]) -> String {
+    argv.map { word in
+        guard word.range(of: #"[ \t"'*?\[]"#, options: .regularExpression) != nil,
+            let data = try? JSONSerialization.data(withJSONObject: word, options: [.fragmentsAllowed, .withoutEscapingSlashes])
+        else { return word }
+        return String(decoding: data, as: UTF8.self)
+    }.joined(separator: " ")
+}
+
 struct Transcript {
     private(set) var sections: [String: [String]] = [:]
 
@@ -124,6 +134,10 @@ final class Run: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHa
 
     /// Every message the page posted, in order.
     private(set) var posted: [[String: Any]] = []
+    /// What the copies put on the pasteboard, read back from it: the shell's two calls, on a pasteboard of
+    /// this checker's own, so the owner's is left as it was.
+    private(set) var pasted: [String] = []
+    private let pasteboard = NSPasteboard(name: NSPasteboard.Name("com.github.lbagic.regrow.pagecheck"))
     private var outbox: [String] = []
     private var pumping = false
     private var loads = 0
@@ -248,12 +262,17 @@ final class Run: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHa
         }
     }
 
+    /// What an element says, without the copy controls beside its commands.
+    private static let words = """
+        const words = (el) => { const c = el.cloneNode(true); c.querySelectorAll('.copy').forEach((b) => b.remove()); return c.textContent.replace(/\\s+/g, ' ').trim(); };
+        """
+
     func text(_ selector: String) async -> String {
-        await js("const el = document.querySelector(selector); return el ? el.textContent.replace(/\\s+/g, ' ').trim() : ''", ["selector": selector]) as? String ?? ""
+        await js(Self.words + "const el = document.querySelector(selector); return el ? words(el) : ''", ["selector": selector]) as? String ?? ""
     }
 
     func texts(_ selector: String) async -> [String] {
-        await js("return [...document.querySelectorAll(selector)].map((el) => el.textContent.replace(/\\s+/g, ' ').trim())", ["selector": selector]) as? [String] ?? []
+        await js(Self.words + "return [...document.querySelectorAll(selector)].map(words)", ["selector": selector]) as? [String] ?? []
     }
 
     func count(_ selector: String) async -> Int {
@@ -401,7 +420,7 @@ final class Run: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHa
         guard let body = message.body as? [String: Any] else { return fail("the page posted \(message.body)") }
         posted.append(body)
         let shell = body.str("shell")
-        if !shell.isEmpty { return answer(shell: shell) }
+        if !shell.isEmpty { return answer(shell: shell, body) }
         let id = body.str("id")
         expect(!id.isEmpty && !id.hasPrefix("shell-") && ids.insert(id).inserted, "a request needs an id of its own that does not start with shell-: \(body)")
         switch body.str("type") {
@@ -413,8 +432,12 @@ final class Run: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHa
         }
     }
 
-    private func answer(shell: String) {
+    private func answer(shell: String, _ body: [String: Any]) {
         switch shell {
+        case "copy":
+            pasteboard.clearContents()
+            pasteboard.setString(body.str("text"), forType: .string)
+            pasted.append(pasteboard.string(forType: .string) ?? "")
         case "ready":
             var hello = transcript.lines("hello")[0]
             if play.fdaDenied {
@@ -743,6 +766,44 @@ struct Scenario {
             r.same(r.sent("plan").last?.strs("select").count ?? 0, t.atoms("scan").count - 1, "atoms sent after one is unticked")
             r.has(await r.text(".tray .say"), "counting", "the tray while the engine counts")
         },
+        Scenario(name: "copy") { r in
+            let t = r.transcript
+            await results(r)
+            // The page's words can be selected; its controls and the tray cannot.
+            await drawn(r, [
+                (".lead h2", "-webkit-user-select", "text"), (".entry .story", "-webkit-user-select", "text"),
+                (".entry .cost", "-webkit-user-select", "text"), (".page button", "-webkit-user-select", "none"),
+                (".tray .say", "-webkit-user-select", "none"),
+            ])
+            // A selection outlasts an event that changes nothing on the page.
+            let story = await r.js("const el = document.querySelector('.entry .story'); getSelection().selectAllChildren(el); return getSelection().toString()") as? String ?? ""
+            r.expect(!story.isEmpty, "a story could not be selected")
+            r.send([t.lines("hello")[0]])
+            await r.settle()
+            r.same(await r.js("return getSelection().toString()") as? String ?? "", story, "the selection after an event that changed nothing on the page")
+            // A finding's command, whole, where it runs as drawn.
+            let runs = t.events("scan", "finding").first { e in
+                let rule = e.obj("finding").obj("rule"), command = rule.strs("native_command")
+                return rule.str("risk") == "caution" && e.str("bucket") == "frees_now" && !command.isEmpty && !command.joined().contains("{")
+            }
+            let rule = runs?.obj("finding").obj("rule") ?? [:]
+            r.expect(runs != nil, "the scan holds no caution finding whose command runs as drawn")
+            await r.click("[data-rule=\(rule.str("id"))] .cost .copy")
+            r.same(r.pasted.last ?? "", shellJoin(rule.strs("native_command")), "what Copy beside a finding's command put on the pasteboard")
+            r.same(await r.js("return document.querySelector('[data-rule=\(rule.str("id"))] .cost .copy').textContent") as? String ?? "", "Copied", "a command's Copy once clicked")
+            // A surface-only rule's how, quoted in its note.
+            await r.click("[data-rule=apfs-purgeable] .cost .copy")
+            r.same(r.pasted.last ?? "", "tmutil listlocalsnapshots /", "what Copy beside a shown-only rule's command put on the pasteboard")
+            // An item's path, whole, where it is drawn with ~.
+            let backups = t.events("scan", "finding").first { $0.obj("finding").obj("rule").str("id") == "ios-backups" }?.obj("finding").objs("items") ?? []
+            let largest = backups.max { $0.int("bytes") < $1.int("bytes") }?.str("path") ?? ""
+            await r.click("[data-rule=ios-backups] [data-do=open]")
+            r.has(await r.text("[data-rule=ios-backups] .item .mono"), "~/Library", "an item's path, drawn")
+            await r.click("[data-rule=ios-backups] .item .copy")
+            r.same(r.pasted.last ?? "", largest, "what Copy beside an item's path put on the pasteboard")
+            r.same(r.sentShell("copy"), r.pasted.count, "copies the shell was sent")
+            await r.shoot(top: "[data-rule=\(rule.str("id"))]")
+        },
         Scenario(name: "errors", play: Play(scan: "scan-errors")) { r in
             let t = r.transcript
             await results(r)
@@ -839,6 +900,25 @@ struct Scenario {
             r.same(await r.count("\(group) .ln"), moves.count, "the lines of an opened group")
             r.same(await r.js("return document.querySelector('\(group) .ln [title]').title") as? String ?? "", moves[0].strs("command").map { $0.contains(" ") || $0.contains("\"") ? String(reflecting: $0) : $0 }.joined(separator: " "), "the exact command in the title")
             r.same(r.sent("execute").count, 0, "executes from the plan")
+        },
+        Scenario(name: "copy-plan") { r in
+            await toPlan(r)
+            let plan = r.transcript.event("plan-all", "plan").obj("plan"), first = plan.objs("actions")[0]
+            let whole = first.str("kind") == "trash" && !first.str("path").isEmpty ? first.str("path") : shellJoin(first.strs("command"))
+            r.same(await r.count(".act:not(.skip) .ln .copy"), await r.count(".act:not(.skip) .ln"), "plan lines without a Copy")
+            await r.click(".act:not(.skip) .ln .copy")
+            r.same(r.pasted.last ?? "", whole, "what Copy beside the first action put on the pasteboard")
+            // A skip's reason that names a command in Terminal: the command, without its backticks. A bare name
+            // quoted in a reason (a program not on the PATH) has no Copy.
+            let quoted = plan.objs("skipped").map { $0.str("reason").components(separatedBy: "`") }
+                .flatMap { parts in parts.indices.filter { $0 % 2 == 1 && $0 < parts.count - 1 }.map { parts[$0] } }
+            let commands = quoted.filter { $0.contains(" ") || $0.contains("/") }
+            r.expect(!commands.isEmpty && commands.count < quoted.count, "the skips quote no command, or no bare name")
+            r.same(await r.count(".act.skip p .copy"), commands.count, "Copy controls in the skips' reasons")
+            await r.click(".act.skip p .copy")
+            r.same(r.pasted.last ?? "", commands.first ?? "", "what Copy beside a skip's command put on the pasteboard")
+            r.same(r.sent("execute").count, 0, "executes from copying")
+            await r.shoot()
         },
         Scenario(name: "plan-expired") { r in
             await toConfirm(r)
@@ -972,13 +1052,23 @@ struct Scenario {
             r.has(say, "emptying the Trash does not free", "what staging means")
             r.has(say, human(result.int("exported_bytes")) + " of removed Docker volumes is kept as tarballs", "the figures")
             r.has(say, "regrow undo does not restore them", "what an export means")
-            r.has(say, "in the folder " + result.str("run_id") + " of regrow staging", "where the exports are")
+            r.has(say, "in the run's folder of regrow staging", "where the exports are")
+            let staging = r.transcript.event("execute", "done").str("staging_dir")
+            r.expect(!staging.isEmpty, "the recorded done names no staging folder")
+            r.same(await r.text(".folder .mono"), staging.replacingOccurrences(of: "/Users/dev/", with: "~/"), "the run's folder, drawn with ~")
             r.same(await r.text(".undo .mono"), "\(r.transcript.event("hello", "hello").str("self")) undo \(result.str("run_id"))", "the undo line: the engine's own command")
             r.expect(await r.flag("return getComputedStyle(document.querySelector('.undo .mono')).webkitUserSelect === 'text'"), "the undo command cannot be selected")
             r.same(await r.texts(".sec.bad .err"), journal.filter { $0.str("event") == "fail" }.map { $0.str("error").replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression) }, "what failed")
             r.same(await r.count(".ln[data-state=done]"), journal.filter { $0.str("event") == "done" }.count, "lines marked done")
-            r.same(await r.js("return [...document.querySelectorAll('[data-do]')].map((el) => el.dataset.do)") as? [String] ?? [], ["scan"], "the ways on from a result")
+            r.same(await r.js("return [...document.querySelectorAll('[data-do]')].map((el) => el.dataset.do).filter((d) => d !== 'copy')") as? [String] ?? [], ["scan"], "the ways on from a result")
             await r.shoot()
+            // The undo command and the run's folder are copied whole: the folder with its home, not ~.
+            await r.click(".undo .copy")
+            r.same(r.pasted.last ?? "", "\(r.transcript.event("hello", "hello").str("self")) undo \(result.str("run_id"))", "what Copy beside the undo command put on the pasteboard")
+            r.same(await r.js("return document.querySelector('.undo .copy').textContent") as? String ?? "", "Copied", "the undo command's Copy once clicked")
+            await r.click(".folder .copy")
+            r.same(r.pasted.last ?? "", staging, "what Copy beside the run's folder put on the pasteboard")
+            r.same(await r.count(".sec.bad .ln .copy"), await r.count(".sec.bad .ln"), "failed lines without a Copy")
             await r.click("[data-do=scan]")
             r.same(r.sent("scan").count, 2, "scans after Scan again")
             r.same(await r.screen(), "findings", "the screen after Scan again")

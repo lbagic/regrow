@@ -15,6 +15,9 @@ public struct Router {
         case shell(String)
         /// A `{shell: …}` message from the page, by its name.
         case command(String)
+        /// Text the page asks the shell to put on the pasteboard:
+        /// `{shell: "copy", text}`.
+        case copy(String)
     }
 
     /// Ids with this prefix are the shell's; the page may not use them.
@@ -67,7 +70,11 @@ public struct Router {
             return [.page(Self.error(re: nil, code: "bad_request", message: "a message from the page must be an object"))]
         }
         if let command = fields["shell"] as? String {
-            return [.command(command)]
+            guard command == "copy" else { return [.command(command)] }
+            guard let text = fields["text"] as? String, !text.isEmpty, text.utf8.count <= Self.maxLine else {
+                return [.page(Self.error(re: nil, code: "bad_request", message: "a copy needs a text of at most 1 MiB"))]
+            }
+            return [.copy(text)]
         }
         let id = fields["id"] as? String
         guard let type = fields["type"] as? String, Self.pageTypes.contains(type) else {

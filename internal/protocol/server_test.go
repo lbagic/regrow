@@ -710,6 +710,22 @@ func TestBusyWhileExecuting(t *testing.T) {
 	}
 }
 
+// A run's done names its folder in the staging directory, so a face can
+// show where its staged moves and volume exports are.
+func TestExecuteDoneNamesTheRunsStagingDir(t *testing.T) {
+	m := newMachine(t)
+	srv := m.server()
+	srv.StagingDir = func(runID string) string { return "/state/regrow/staging/" + runID }
+	p := start(t, srv)
+	p.expect("hello")
+	plan := p.planned("p1", p.scanned("s", 2), `["fixture-cache"]`)
+	p.send(`{"type":"execute","id":"x1","plan_id":"` + plan.PlanID + `"}`)
+	done := p.expect("journal/x1", "journal/x1", "done/x1")[2]
+	if want := "/state/regrow/staging/" + plan.PlanID; done.Staging != want {
+		t.Fatalf("staging_dir = %q, want %q: %s", done.Staging, want, done.raw)
+	}
+}
+
 // Two plans of one scan, both emptying the Trash: run back to back,
 // the second would permanently delete the first run's Trash moves.
 func TestExecuteSpendsEveryPlanOfItsScan(t *testing.T) {

@@ -46,6 +46,7 @@ type event struct {
 	Result    *executor.Result `json:"result"`
 	Canceled  *bool            `json:"canceled"`
 	ElapsedMS *int64           `json:"elapsed_ms"`
+	Staging   string           `json:"staging_dir"`
 
 	raw string
 }

@@ -51,6 +51,10 @@ svg { width: 14px; height: 14px; flex: none; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 input[type="checkbox"] { accent-color: var(--accent); margin: 0; width: 15px; height: 15px; }
 .mono { font: 12px/1.5 var(--mono); -webkit-user-select: text; cursor: text; }
+/* the page's words can be selected and copied; its controls cannot */
+.page { -webkit-user-select: text; }
+.page button, .page input, .page label, .page svg { -webkit-user-select: none; }
+.page .link.copy { margin: 0 0 0 8px; font-family: var(--sans); vertical-align: 1px; }
 .nb { white-space: nowrap; }
 .unit { font-weight: 400; color: var(--ink-2); }
 .err { color: var(--danger); overflow-wrap: anywhere; white-space: pre-wrap; }
@@ -209,8 +213,8 @@ input[type="checkbox"] { accent-color: var(--accent); margin: 0; width: 15px; he
 /* a row that arrived a moment ago, or the action that is running: after the rows, so its side padding wins */
 .fresh { --under: var(--accent-soft); background: var(--accent-soft); margin: 0 -10px; padding-left: 10px; padding-right: 10px; border-radius: 8px; border-color: transparent; }
 .fold .fresh { margin: 0 8px 0 -6px; padding: 2px 6px; border-radius: 3px; }
-.undo { margin-top: 10px; font-size: 12.5px; color: var(--ink-2); }
-.undo .mono { color: var(--ink); margin-left: 6px; }
+.undo, .folder { margin-top: 10px; font-size: 12.5px; color: var(--ink-2); }
+.undo .mono, .folder .mono { color: var(--ink); margin-left: 6px; }
 
 /* confirm */
 .ask { max-width: 560px; margin: 26px auto 0; }
@@ -255,9 +259,10 @@ const S = {
   note: '',           // why the plan under review replaced another
   automation: '',     // asking | allowed | denied: whether regrow may control Finder
   read: false,        // the confirm step's tick box
-  run: null,          // {req, marks: seq → {state, error, method}, stopping, result, canceled, error}
+  run: null,          // {req, marks: seq → {state, error, method}, stopping, result, canceled, error, staging}
   safeOpen: false,    // "Safe to clear" shows each finding
   open: new Set(),    // findings and plan groups opened to their lines
+  copied: '',         // the text the last copy control handed to the shell
 };
 
 const newScan = () => ({ req: '', id: '', rules: 0, headroom: null, rows: [], totals: null, exclusive: null,
@@ -364,6 +369,7 @@ const on = {
       S.scan.phase = e.canceled ? 'canceled' : 'done';
       if (!e.canceled) ask('plan', 'first', { scan_id: S.scan.id });
     } else if (role === 'run') {
+      S.run.staging = e.staging_dir || '';
       ended(e.result, e.canceled, '');
     }
   },
@@ -466,7 +472,7 @@ const act = {
     if (expired(p)) { S.screen = 'plan'; return; }
     p.sent = true;
     S.cut = null;
-    S.run = { req: ask('execute', 'run', { plan_id: p.id }), marks: {}, stopping: false, result: null, canceled: false, error: '' };
+    S.run = { req: ask('execute', 'run', { plan_id: p.id }), marks: {}, stopping: false, result: null, canceled: false, error: '', staging: '' };
     S.screen = 'running';
   },
   halt() {
@@ -474,6 +480,7 @@ const act = {
     S.run.stopping = true;
     ask('cancel', 'cancel', { target: S.run.req });
   },
+  copy(el) { if (el.dataset.text) { S.copied = el.dataset.text; post({ shell: 'copy', text: S.copied }); } },
   fda() { if (S.hello && S.hello.fda === 'denied') { S.opened = true; post({ shell: 'open-full-disk-access' }); } },
   relaunch() { if (S.opened) post({ shell: 'relaunch' }); },
 };
@@ -585,8 +592,12 @@ function size(n, lower) {
 }
 // A command or path may wrap at a space or after a slash, never inside a name.
 const unbroken = (s) => new Markup(String(s).split(' ').map((word) => word.split('/').map((name) => (name ? '<span class="nb">' + esc(name) + '</span>' : '')).join('/<wbr>')).join(' '));
-// A sentence of the engine's, with what it quotes in backticks set in mono.
-const sentence = (s) => new Markup(String(s).split('`').map((part, i) => (i % 2 ? '<span class="mono">' + unbroken(part).s + '</span>' : esc(part))).join(''));
+// A control that hands `text` to the shell for the pasteboard: the text whole, not the form drawn beside it
+// (a path drawn with ~ is copied in full).
+const copy = (text, what) => h`<button class="link copy" data-do="copy" data-text="${text}" aria-label="Copy the ${what}">${S.copied === text ? 'Copied' : 'Copy'}</button>`;
+// A sentence of the engine's or a rule's, with what it quotes in backticks set in mono. A quote that holds a
+// space or a slash, a command with its arguments or a path, has its copy control; a bare name has none.
+const sentence = (s) => new Markup(String(s).split('`').map((part, i) => (i % 2 ? '<span class="mono">' + unbroken(part).s + '</span>' + (/[ /]/.test(part) ? copy(part, 'command').s : '') : esc(part))).join(''));
 
 function bar(bytes, bucket, scale) {
   return h`<span class="bar" aria-hidden="true">${bytes > 0 ? h`<i class="${bucket}" style="width:${Math.min(100, bytes / scale * 100).toFixed(2)}%"></i>` : ''}</span>`;
@@ -623,7 +634,7 @@ function notices(all) {
     // Only what was reported reached the page, and the engine journals an action before it reports it and
     // skips moves it never journals, so the note says nothing it would have to guess from the marks.
     const c = S.cut;
-    rows.push(h`<div class="note">${ICON.caution}<span>The engine stopped during the run, after reporting ${c.done} of ${num(c.of, 'action')} done.${c.moves ? h` If it moved anything, <span class="mono">${cli()} undo ${c.id}</span> puts it back; an item it was moving as it stopped may be in the Trash or in regrow staging, and undo does not know of it.` : ''}</span></div>`);
+    rows.push(h`<div class="note">${ICON.caution}<span>The engine stopped during the run, after reporting ${c.done} of ${num(c.of, 'action')} done.${c.moves ? h` If it moved anything, <span class="mono">${cli()} undo ${c.id}</span>${copy(cli() + ' undo ' + c.id, 'command')} puts it back; an item it was moving as it stopped may be in the Trash or in regrow staging, and undo does not know of it.` : ''}</span></div>`);
   }
   if (all && S.env) {
     rows.push(h`<div class="note">${ICON.caution}<span>regrow could not read your login shell's environment, so tools outside the system folders are not found: <span class="mono">${S.env}</span></span></div>`);
@@ -708,15 +719,17 @@ function entry(v, scale, fresh, small) {
   }
   const open = S.open.has('r' + row.n), each = !!row.select && !row.whole;
   const kept = rule.risk !== 'safe' && rule.risk !== 'caution';
+  const command = shellJoin(rule.native_command), runnable = !/\{(path|arg)\}/.test(command);
+  const shown = h`<span class="mono">${unbroken(command)}</span>${runnable ? copy(command, 'command') : ''}`;
   const runs = row.bucket === 'after_trash' ? 'Goes to the Trash; regrow undo restores it.'
-    : row.bucket === 'exported' ? h`Runs <span class="mono">${unbroken(shellJoin(rule.native_command))}</span> after a tarball goes to regrow staging, no undo.`
-    : row.bucket !== 'frees_now' ? '' : rule.native_command ? h`Runs <span class="mono">${unbroken(shellJoin(rule.native_command))}</span>, no undo.` : 'A command frees it, with no undo.';
+    : row.bucket === 'exported' ? h`Runs ${shown} after a tarball goes to regrow staging, no undo.`
+    : row.bucket !== 'frees_now' ? '' : rule.native_command ? h`Runs ${shown}, no undo.` : 'A command frees it, with no undo.';
   const count = v.items.length > 1 ? h`<button class="link count" data-do="open" data-key="r${row.n}" id="o${row.n}" aria-expanded="${String(open)}">${ICON.open}${each ? v.picked + ' of ' : ''}${num(v.items.length, v.items[0].path ? 'folder' : 'item')}</button>` : '';
   return h`<div class="entry ${row.select ? '' : 'plain'} ${small ? 'small' : ''} ${fresh ? 'fresh' : ''}" data-rule="${row.id}">
     ${row.select ? h`<span class="chk"><input type="checkbox" id="t${row.n}" data-tick="${row.n}" aria-label="Add ${rule.title} to the plan" ${v.picked === row.select.length ? 'checked' : v.picked ? 'data-some' : ''} ${canTick() ? '' : 'disabled'}></span>` : ''}
     <div class="text"><h4>${rule.title}${count}</h4>
-      ${small ? h`<p class="story">${regen.story}${v.used ? ` Last used ${ago(v.used)}.` : ''}</p>`
-        : h`<p class="story">${regen.story}</p><p class="cost">${kept ? rule.note : h`Costs: ${regen.cost}. ${runs}`}</p>`}</div>
+      ${small ? h`<p class="story">${sentence(regen.story || '')}${v.used ? ` Last used ${ago(v.used)}.` : ''}</p>`
+        : h`<p class="story">${sentence(regen.story || '')}</p><p class="cost">${kept ? sentence(rule.note || '') : h`Costs: ${regen.cost}. ${runs}`}</p>`}</div>
     ${side(v, row.bucket, scale, small)}
     ${open ? h`<div class="items">${v.items.map((it) => item(row, it, each, scale))}</div>` : ''}</div>`;
 }
@@ -725,7 +738,7 @@ function entry(v, scale, fresh, small) {
 function item(row, it, each, scale) {
   return h`<div class="item ${each ? '' : 'plain'}" data-id="${it.id}">
     ${each ? h`<span class="chk">${it.atom ? h`<input type="checkbox" id="t${row.n}-${it.i}" data-tick="${row.n}" data-item="${it.i}" aria-label="Add ${it.name} to the plan" ${S.ticked.has(it.atom) ? 'checked' : ''} ${canTick() ? '' : 'disabled'}>` : ''}</span>` : ''}
-    <div class="text">${it.path ? h`<span class="mono" title="${it.name}">${unbroken(tilde(it.name))}</span>` : it.name}
+    <div class="text">${it.path ? h`<span class="mono" title="${it.name}">${unbroken(tilde(it.name))}</span>${copy(it.name, 'path')}` : it.name}
       <span class="meta">${it.blind ? needs() : it.used ? 'last used ' + ago(it.used) : 'last use not known'}</span></div>
     ${side(it, row.bucket, scale, true)}</div>`;
 }
@@ -738,12 +751,14 @@ function drawPlan() {
       ${hr ? h`${meter(hr, t.frees_now, t.after_trash)}<div class="figures"><span><b>${human(hr.free + t.frees_now)}</b> free once the commands end, up from ${human(hr.free)} now</span></div>` : ''}</section>
     ${notices(false)}
     ${p.skipped.length ? section('Skipped', `${p.skipped.length} ticked ${p.skipped.length === 1 ? 'finding' : 'findings'} the plan cannot run`, '',
-      p.skipped.map((s) => h`<div class="act skip">${ICON.caution}<div><h4>${titleOf(s.rule_id)}</h4>${s.item_key ? h`<span class="ln mono">${unbroken(tilde(s.item_key))}</span>` : ''}<p>${sentence(s.reason)}</p></div></div>`)) : ''}
+      p.skipped.map((s) => h`<div class="act skip">${ICON.caution}<div><h4>${titleOf(s.rule_id)}</h4>${s.item_key ? h`<span class="ln mono">${unbroken(tilde(s.item_key))}${copy(s.item_key, 'path')}</span>` : ''}<p>${sentence(s.reason)}</p></div></div>`)) : ''}
     ${p.actions.length ? section('In the order they run', `${num(p.commands, 'command')} and ${num(moves, 'move')} to the Trash`, tellActions(p), actions('plan')) : ''}`;
 }
 
-// An action as it is read: the path a move takes, or the command; the home folder as ~.
-const told = (a) => unbroken(tilde(a.kind === 'trash' && a.path ? a.path : shellJoin(a.command)));
+// An action as it is copied: the path a move takes, or the command. It is read with the home folder as ~.
+const whole = (a) => (a.kind === 'trash' && a.path ? a.path : shellJoin(a.command));
+const told = (a) => unbroken(tilde(whole(a)));
+const copyAction = (a) => copy(whole(a), a.kind === 'trash' && a.path ? 'path' : 'command');
 const tellActions = (p) => h`<span class="scale">A full bar is ${human(Math.max(1, ...p.groups.map((g) => g.bytes)))}, the largest action</span>`;
 
 // The plan's actions in the engine's order, grouped by rule. On the plan a group shows its first line and
@@ -759,7 +774,7 @@ function actions(mode) {
     const more = many && mode === 'plan' ? h`<button class="link" data-do="open" data-key="g${gi}" id="g${gi}" aria-expanded="${String(open)}">${open ? 'Show only the first' : `and ${g.actions.length - 1} more like it`}</button>` : '';
     const line = (a) => {
       const st = states[a.seq - first.seq];
-      return h`<span class="ln mono" ${st ? h`data-state="${st.state}"` : ''}>${st ? ICON[st.state] || ICON.skipped : ''}<span title="${shellJoin(a.command)}">${told(a)}</span>${open ? '' : more}${st && st.error && mode === 'running' ? h`<span class="err">${st.error}</span>` : ''}</span>`;
+      return h`<span class="ln mono" ${st ? h`data-state="${st.state}"` : ''}>${st ? ICON[st.state] || ICON.skipped : ''}<span title="${shellJoin(a.command)}">${told(a)}</span>${copyAction(a)}${open ? '' : more}${st && st.error && mode === 'running' ? h`<span class="err">${st.error}</span>` : ''}</span>`;
     };
     return h`<div class="act ${kinds.includes('running') ? 'fresh' : ''}" data-rule="${g.rule}"><span class="seq">${many ? first.seq + '–' + (first.seq + g.actions.length - 1) : first.seq}</span>
       <div class="text"><h4>${titleOf(g.rule)}</h4>${(open ? g.actions : [first]).map(line)}${open ? more : ''}
@@ -798,13 +813,16 @@ function drawResult() {
   const failed = states.filter(([, s]) => s.state === 'fail'), skipped = states.filter(([, s]) => s.state === 'skipped').length;
   const trash = r.trash_bytes || 0, staged = r.staged_bytes || 0, exported = r.exported_bytes || 0, freed = Math.max(0, (r.bytes || 0) - trash - staged - exported);
   const moved = trash || staged || states.some(([, s]) => s.method === 'finder' || s.method === 'staging');
+  const id = r.run_id || p.id, undo = cli() + ' undo ' + id;
+  // The run's folder in regrow staging, as the engine names it, where something of the run is.
+  const folder = run.staging && (staged || exported) ? h`<p class="folder">The run's folder in regrow staging:<span class="mono">${unbroken(tilde(run.staging))}</span>${copy(run.staging, 'folder')}</p>` : '';
   return h`<section class="lead"><h2>${run.canceled ? 'Stopped' : 'The run has ended'}: ${r.done || 0} of ${num(p.actions.length, 'action')} done${r.failed ? `, ${r.failed} failed` : ''}${skipped ? `, ${skipped} skipped` : ''}.</h2>
       ${run.error ? h`<p class="err mono">${run.error}</p>` : ''}
-      <p class="say">${freed ? h`<i class="sw frees_now"></i><b>${human(freed)}</b> is free now. ` : ''}${trash ? h`<i class="sw after_trash"></i><b>${human(trash)}</b> is in the Trash, and is free once you empty it. ` : ''}${staged ? h`<b>${human(staged)}</b> is in regrow staging, because Finder could not take it: emptying the Trash does not free that. ` : ''}${exported ? h`<b>${human(exported)}</b> of removed Docker volumes is kept as tarballs (docker-volume-*.tar) in the folder <span class="mono">${r.run_id || p.id}</span> of regrow staging. Delete those files to free that room; regrow undo does not restore them: they are the recovery copy. Docker hands the space it held for them back to the Mac only when it trims its disk image.` : ''}${freed || trash || staged || exported ? '' : 'No space was freed.'}</p>
-      ${moved ? h`<p class="undo">To put back what went to the Trash${staged ? ' and to staging' : ''}:<span class="mono">${cli()} undo ${r.run_id || p.id}</span></p>` : ''}</section>
+      <p class="say">${freed ? h`<i class="sw frees_now"></i><b>${human(freed)}</b> is free now. ` : ''}${trash ? h`<i class="sw after_trash"></i><b>${human(trash)}</b> is in the Trash, and is free once you empty it. ` : ''}${staged ? h`<b>${human(staged)}</b> is in regrow staging, because Finder could not take it: emptying the Trash does not free that. ` : ''}${exported ? h`<b>${human(exported)}</b> of removed Docker volumes is kept as tarballs (docker-volume-*.tar) ${run.staging ? "in the run's folder of regrow staging" : h`in the folder <span class="mono">${id}</span>${copy(id, 'run id')} of regrow staging`}. Delete those files to free that room; regrow undo does not restore them: they are the recovery copy. Docker hands the space it held for them back to the Mac only when it trims its disk image.` : ''}${freed || trash || staged || exported ? '' : 'No space was freed.'}</p>
+      ${moved ? h`<p class="undo">To put back what went to the Trash${staged ? ' and to staging' : ''}:<span class="mono">${undo}</span>${copy(undo, 'command')}</p>` : ''}${folder}</section>
     ${notices(false)}
     ${failed.length ? section('Failed', `${num(failed.length, 'action')} ended with an error`, '',
-      failed.map(([a, s]) => h`<div class="act skip">${ICON.fail}<div><h4>${titleOf(a.rule_id)}</h4><span class="ln mono">${told(a)}</span><p class="err mono">${s.error}</p></div></div>`), true) : ''}
+      failed.map(([a, s]) => h`<div class="act skip">${ICON.fail}<div><h4>${titleOf(a.rule_id)}</h4><span class="ln mono">${told(a)}${copyAction(a)}</span><p class="err mono">${s.error}</p></div></div>`), true) : ''}
     ${section('In the order they ran', 'what became of each action', tellActions(p), actions('result'))}`;
 }
 
@@ -876,13 +894,22 @@ const SCREENS = { findings: drawFindings, plan: drawPlan, confirm: drawConfirm, 
 const root = document.documentElement, $ = (id) => document.getElementById(id);
 let clockDrawn = '', renders = 0;
 
-function render() {
+// A region is drawn again only when its markup changed, so text selected in it stays selected. `all` draws
+// every region: a tick box the user just changed may show what the state does not.
+const painted = { top: '', page: '', tray: '' };
+function paint(id, markup, all) {
+  const html = show(markup);
+  if (!all && html === painted[id]) return false;
+  $(id).innerHTML = painted[id] = html;
+  return true;
+}
+
+function render(all) {
   const page = $('page'), screen = S.down ? 'down' : S.screen, at = page.scrollTop;
   const had = document.activeElement || {}, focus = had.id ? '#' + had.id : had.dataset && had.dataset.do ? '[data-do="' + had.dataset.do + '"]' : '';
-  $('top').innerHTML = show(drawTop());
-  page.innerHTML = show(SCREENS[screen]());
-  $('tray').innerHTML = show(drawTray());
-  for (const box of page.querySelectorAll('[data-some]')) box.indeterminate = true;
+  paint('top', drawTop(), all);
+  if (paint('page', SCREENS[screen](), all)) for (const box of page.querySelectorAll('[data-some]')) box.indeterminate = true;
+  paint('tray', drawTray(), all);
   // A scrollbar that takes room takes it from the side padding, so the rows keep their width.
   page.style.paddingRight = 32 - (page.offsetWidth - page.clientWidth) + 'px';
   page.scrollTop = root.dataset.screen === screen ? at : 0;
@@ -912,7 +939,7 @@ document.addEventListener('click', (e) => {
 document.addEventListener('change', (e) => {
   if (e.target.dataset.tick) toggle(e.target);
   else if (e.target.id === 'read' && S.screen === 'confirm') S.read = e.target.checked;
-  render();
+  render(true);
 });
 // Return never runs the plan: on the confirm step it does nothing at all.
 document.addEventListener('keydown', (e) => { if (e.key === 'Enter' && S.screen === 'confirm') e.preventDefault(); }, true);

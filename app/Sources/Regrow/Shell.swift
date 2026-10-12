@@ -257,6 +257,9 @@ final class Shell: ObservableObject {
                 shellEvent(line)
             case .command(let name):
                 pageCommand(name)
+            case .copy(let text):
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(text, forType: .string)
             }
         }
     }

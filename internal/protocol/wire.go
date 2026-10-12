@@ -153,6 +153,8 @@ type executeDoneEvent struct {
 	head
 	Result   executor.Result `json:"result"`
 	Canceled bool            `json:"canceled"`
+	// StagingDir is the run's folder in the staging directory.
+	StagingDir string `json:"staging_dir,omitempty"`
 }
 
 type errorEvent struct {

@@ -69,6 +69,9 @@ type Server struct {
 	// is called once the run has ended. The server sets the run id,
 	// the stop hook, the journal tee, and RunNative when it is nil.
 	NewExecutor func(runID string) (ex *executor.Executor, release func(), err error)
+	// StagingDir names the folder a run's staged moves and volume
+	// exports go to, for the run's done event; nil names none.
+	StagingDir func(runID string) string
 	// ProbeFDA answers hello's fda field; nil means ProbeFDA(Host).
 	ProbeFDA func() FDA
 	// Now is injectable for plan expiry in tests.
@@ -535,7 +538,11 @@ func (s *session) runExecute(op *operation, runID string, held heldPlan, stopped
 		s.end(op, ev, nil)
 		return
 	}
-	s.end(op, executeDoneEvent{head{"done", op.re}, res, res.Stopped}, nil)
+	ev := executeDoneEvent{head: head{"done", op.re}, Result: res, Canceled: res.Stopped}
+	if s.srv.StagingDir != nil {
+		ev.StagingDir = s.srv.StagingDir(runID)
+	}
+	s.end(op, ev, nil)
 }
 
 func (s *session) cancel(req request) {

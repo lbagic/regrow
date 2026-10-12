@@ -162,6 +162,16 @@ struct RouterTests {
         #expect(router.pageMessage(["shell": "ready"]) == [.command("ready")])
     }
 
+    @Test("a copy is its text, whole; one without a text is refused")
+    func copyMessages() {
+        var router = started()
+        let command = #"sudo find "/Library/Application Support/x" -type f -name '*.mov' -delete"#
+        #expect(router.pageMessage(["shell": "copy", "text": command]) == [.copy(command)])
+        #expect(refusal(router.pageMessage(["shell": "copy"]))?.code == "bad_request")
+        #expect(refusal(router.pageMessage(["shell": "copy", "text": ""]))?.code == "bad_request")
+        #expect(refusal(router.pageMessage(["shell": "copy", "text": 7]))?.code == "bad_request")
+    }
+
     @Test("events go to the side their re names; hello goes to both")
     func routingByRe() {
         var router = Router()

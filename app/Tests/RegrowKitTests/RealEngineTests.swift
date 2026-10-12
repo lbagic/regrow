@@ -76,7 +76,7 @@ struct RealEngineTests {
                 case .engine(let line): child?.send(line)
                 case .page(let line): page.add(Self.object(line))
                 case .shell(let line): shell.add(Self.object(line))
-                case .command: break
+                case .command, .copy: break
                 }
             }
         }
