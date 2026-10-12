@@ -22,10 +22,10 @@ let arguments = Array(CommandLine.arguments.dropFirst())
 switch arguments.first {
 case "--swap":
     guard arguments.count == 3 else { usage("--swap <this bundle> ~/Applications/Regrow.app") }
-    let staged = URL(fileURLWithPath: arguments[1])
-    let destination = URL(fileURLWithPath: arguments[2])
     do {
-        try BundleSwap.check(staged: staged, destination: destination, running: Bundle.main.bundleURL)
+        let (staged, destination) = try BundleSwap.check(
+            staged: URL(fileURLWithPath: arguments[1]), destination: URL(fileURLWithPath: arguments[2]),
+            running: Bundle.main.bundleURL)
         try BundleSwap.swap(staged: staged, destination: destination)
         exit(0)
     } catch {

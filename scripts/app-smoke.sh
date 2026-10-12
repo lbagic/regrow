@@ -38,14 +38,20 @@ fi
 
 # The app takes no other folder: the per-user temp folder from getconf, not
 # TMPDIR, and a name of this shape.
-work=$(mktemp -d "$(getconf DARWIN_USER_TEMP_DIR)regrow-smoke.XXXXXX")
-mkdir -p "$work/state/regrow"
+folder() {
+	made=$(mktemp -d "$(getconf DARWIN_USER_TEMP_DIR)regrow-smoke.XXXXXX")
+	mkdir -p "$made/state/regrow"
+	echo "$made"
+}
+work=$(folder)
+second=""
 
 finish() {
 	if [ "$1" -eq 0 ]; then
 		rm -rf "${work:?}"
+		if [ -n "$second" ]; then rm -rf "${second:?}"; fi
 	else
-		echo "Left for a look: $work" >&2
+		echo "Left for a look: $work $second" >&2
 	fi
 	exit "$1"
 }
@@ -61,15 +67,21 @@ report() {
 	grep -q '^RESULT ok$' "$work/result.txt"
 }
 
-# One sample ten minutes old, $1 bytes above free space now. Swap as it is
-# now, so the fall in free space is the only change.
+# One sample in folder $2 (else $work), ten minutes old, $1 bytes above free
+# space now. Swap as it is now, so the fall in free space is the only change.
 history() {
 	total=$(df -k /System/Volumes/Data | awk 'NR==2 { printf "%.0f", $2 * 1024 }')
 	free=$(df -k /System/Volumes/Data | awk 'NR==2 { printf "%.0f", $4 * 1024 }')
 	before=$(awk -v f="$free" -v d="$1" 'BEGIN { printf "%.0f", f + d }')
 	swap=$(sysctl -n vm.swapusage | awk '{ printf "%.0f", $6 * 1024 * 1024 }')
 	printf '{"at":"%s","total":%s,"free":%s,"purgeable":0,"swap_used":%s}\n' \
-		"$(date -u -v-10M +%Y-%m-%dT%H:%M:%SZ)" "$total" "$before" "$swap" >"$work/state/regrow/headroom.jsonl"
+		"$(date -u -v-10M +%Y-%m-%dT%H:%M:%SZ)" "$total" "$before" "$swap" >"${2:-$work}/state/regrow/headroom.jsonl"
+}
+
+# Whether the smoke run in folder $1 started an engine: proof that a launch
+# with a door in its environment reached the point where the door would act.
+started() {
+	[ -f "$1/result.txt" ] && grep -q 'engine started: ' "$1/smoke.log" 2>/dev/null
 }
 
 if [ "$mode" = doors ]; then
@@ -88,40 +100,52 @@ if [ "$mode" = doors ]; then
 	clang -dynamiclib -o "$probe/mark.dylib" "$probe/mark.c"
 	echo a >"$probe/swap-a/which"
 	echo b >"$probe/swap-b/which"
-	history 0
+	second=$(folder)
+	history 0 "$work"
+	history 0 "$second"
 
-	# `open -W` cannot wait for an app that has already exited. zsh reads
-	# ZDOTDIR before HOME, so each has a start of its own.
+	# zsh reads ZDOTDIR before HOME, so each has a start and a folder of its
+	# own. `open -W` cannot wait for an app that has already exited, as a
+	# refusal does: the refusals are told by what the app wrote to stderr.
 	open -n -W --env REGROW_ENGINE="$probe/engine" --env HOME="$probe/home" \
 		--env DYLD_INSERT_LIBRARIES="$probe/mark.dylib" "$APP" --args --smoke-alert "$work" 2>/dev/null || true
-	open -n -W --env ZDOTDIR="$probe/zdotdir" "$APP" --args --smoke-alert "$work" 2>/dev/null || true
-	open -n -W "$APP" --args --smoke "$probe/elsewhere" 2>/dev/null || true
-	open -n -W "$APP" --args --swap "$probe/swap-a" "$probe/swap-b" 2>/dev/null || true
+	open -n -W --env ZDOTDIR="$probe/zdotdir" "$APP" --args --smoke-alert "$second" 2>/dev/null || true
+	open -n -W --stderr "$probe/smoke.err" "$APP" --args --smoke "$probe/elsewhere" 2>/dev/null || true
+	open -n -W --stderr "$probe/swap.err" "$APP" --args --swap "$probe/swap-a" "$probe/swap-b" 2>/dev/null || true
 
 	status=0
-	if [ ! -f "$work/result.txt" ]; then
-		echo "FAIL started: the app wrote no result, so no variable was tried. Its log: ~/Library/Logs/regrow/app.log"
-		status=1
-	fi
-	for door in REGROW_ENGINE HOME ZDOTDIR DYLD_INSERT_LIBRARIES; do
-		if [ -e "$marks/$door" ]; then
-			echo "FAIL $door: the app ran what it named"
+	verdict() { # door, folder its launch ran in
+		if [ -e "$marks/$1" ]; then
+			echo "FAIL $1: the app ran what it named"
+			status=1
+		elif ! started "$2"; then
+			echo "FAIL $1: not tried, the app started no engine in $2"
 			status=1
 		else
-			echo "PASS $door: ignored"
+			echo "PASS $1: ignored"
 		fi
-	done
+	}
+	verdict REGROW_ENGINE "$work"
+	verdict HOME "$work"
+	verdict DYLD_INSERT_LIBRARIES "$work"
+	verdict ZDOTDIR "$second"
 	if [ -e "$probe/elsewhere/result.txt" ]; then
 		echo "FAIL --smoke: the app ran a smoke test in $probe/elsewhere"
+		status=1
+	elif ! grep -q 'usage: Regrow --smoke' "$probe/smoke.err" 2>/dev/null; then
+		echo "FAIL --smoke: not tried, the app said nothing about $probe/elsewhere"
 		status=1
 	else
 		echo "PASS --smoke: refused a folder of another shape"
 	fi
-	if [ "$(cat "$probe/swap-a/which")" = a ] && [ "$(cat "$probe/swap-b/which")" = b ]; then
-		echo "PASS --swap: refused two other paths"
-	else
+	if [ "$(cat "$probe/swap-a/which")" != a ] || [ "$(cat "$probe/swap-b/which")" != b ]; then
 		echo "FAIL --swap: the app swapped $probe/swap-a and $probe/swap-b"
 		status=1
+	elif ! grep -q 'is not this bundle' "$probe/swap.err" 2>/dev/null; then
+		echo "FAIL --swap: not tried, the app said nothing about the swap"
+		status=1
+	else
+		echo "PASS --swap: refused two other paths"
 	fi
 	if [ "$status" -eq 0 ]; then echo "RESULT ok"; else echo "RESULT failed"; fi
 	finish "$status"
@@ -134,6 +158,16 @@ if [ "$mode" = alert ]; then
 	report || status=1
 	finish "$status"
 fi
+
+# The app's rule moves every ~/regrow-smoke-*, so this check runs only on
+# the one folder it makes.
+for other in "$HOME"/regrow-smoke-*; do
+	if [ -e "$other" ]; then
+		echo "FAIL: $other is there already, from an earlier check or another program, and the app would move it too. Move it out of your home folder, then run this again." >&2
+		rm -rf "${work:?}"
+		exit 1
+	fi
+done
 
 token="regrow smoke $$ $(date +%s)"
 sentinel="$HOME/regrow-smoke-$$"

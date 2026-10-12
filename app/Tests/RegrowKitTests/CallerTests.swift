@@ -191,16 +191,44 @@ struct CallerTests {
         let home = URL(fileURLWithPath: "/Users/owner")
         let staged = URL(fileURLWithPath: "/Users/owner/Applications/.Regrow.app.staged")
         let installed = URL(fileURLWithPath: "/Users/owner/Applications/Regrow.app")
-        try BundleSwap.check(staged: staged, destination: installed, running: staged, home: home)
+        let pair = try BundleSwap.check(staged: staged, destination: installed, running: staged, home: home)
+        #expect(pair.staged.path == staged.path && pair.destination.path == installed.path)
         #expect(throws: BundleSwap.Failure.self) {
-            try BundleSwap.check(
+            _ = try BundleSwap.check(
                 staged: URL(fileURLWithPath: "/Users/owner/Library/Messages"), destination: installed,
                 running: staged, home: home)
         }
         #expect(throws: BundleSwap.Failure.self) {
-            try BundleSwap.check(
+            _ = try BundleSwap.check(
                 staged: staged, destination: URL(fileURLWithPath: "/Users/owner/Library/Messages"),
                 running: staged, home: home)
+        }
+    }
+
+    @Test("a link the caller names for this bundle is not what moves: the bundle itself is put in place")
+    func swapThroughALink() async throws {
+        try await withTemporaryDirectory { directory in
+            let home = directory.appendingPathComponent("home")
+            let applications = home.appendingPathComponent("Applications")
+            let running = applications.appendingPathComponent(".Regrow.app.staged")
+            let installed = applications.appendingPathComponent("Regrow.app")
+            for (bundle, mark) in [(running, "new"), (installed, "installed")] {
+                try FileManager.default.createDirectory(at: bundle, withIntermediateDirectories: true)
+                try Data(mark.utf8).write(to: bundle.appendingPathComponent("which"))
+            }
+            let callers = directory.appendingPathComponent("callers")
+            try FileManager.default.createDirectory(at: callers, withIntermediateDirectories: true)
+            let link = callers.appendingPathComponent("staged")
+            try FileManager.default.createSymbolicLink(at: link, withDestinationURL: running)
+
+            let (staged, destination) = try BundleSwap.check(
+                staged: link, destination: installed, running: running, home: home)
+            try BundleSwap.swap(staged: staged, destination: destination)
+
+            let kind = try FileManager.default.attributesOfItem(atPath: installed.path)[.type] as? FileAttributeType
+            #expect(kind == .typeDirectory)
+            #expect(try String(contentsOf: installed.appendingPathComponent("which"), encoding: .utf8) == "new")
+            #expect(try FileManager.default.destinationOfSymbolicLink(atPath: link.path) == running.path)
         }
     }
 }

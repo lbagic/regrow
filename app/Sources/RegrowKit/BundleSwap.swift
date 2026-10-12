@@ -10,18 +10,21 @@ public enum BundleSwap {
     /// A bundle puts only itself in place, and only at
     /// `~/Applications/Regrow.app`: run through LaunchServices it holds
     /// the owner's grants, and a swap of two other paths would move a
-    /// protected folder where anything can read it.
-    public static func check(staged: URL, destination: URL, running: URL, home: URL = Account.home) throws {
-        func same(_ one: URL, _ other: URL) -> Bool {
-            one.standardizedFileURL.resolvingSymlinksInPath().path
-                == other.standardizedFileURL.resolvingSymlinksInPath().path
-        }
-        guard same(staged, running) else {
+    /// protected folder where anything can read it. Returns the two
+    /// paths to swap, as resolved here: a link the caller named is
+    /// never what moves.
+    public static func check(
+        staged: URL, destination: URL, running: URL, home: URL = Account.home
+    ) throws -> (staged: URL, destination: URL) {
+        func resolved(_ url: URL) -> URL { url.standardizedFileURL.resolvingSymlinksInPath() }
+        let bundle = resolved(running), installed = home.appendingPathComponent("Applications/Regrow.app")
+        guard resolved(staged).path == bundle.path else {
             throw Failure(description: "\(staged.path) is not this bundle (\(running.path))")
         }
-        guard same(destination, home.appendingPathComponent("Applications/Regrow.app")) else {
+        guard resolved(destination).path == resolved(installed).path else {
             throw Failure(description: "\(destination.path) is not ~/Applications/Regrow.app")
         }
+        return (bundle, installed)
     }
 
     /// With a destination in place the two trade names, and the old

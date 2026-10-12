@@ -53,7 +53,7 @@ Anything running as you can start the app with variables and arguments of its ch
 - No `REGROW_` variable. `REGROW_ENGINE`, `REGROW_PAGE`, `REGROW_RULES_DIR`, `REGROW_HOME`, `REGROW_STATE_HOME` and `REGROW_LOG` point a development run at other files only in an ad hoc or unsigned build (`just app-build`, `swift run`). The line is the signature, not the path: a copy of the installed app anywhere holds its grants.
 - Nothing the engine, the login shell, osascript or the relaunch helper inherit from the app's environment: each starts from the login shell's environment, or from your account's (home, user and shell from the password database, the system `PATH`).
 - No `DYLD_` variable: app and engine run with the hardened runtime.
-- A smoke check only in a folder `mktemp` made as `$(getconf DARWIN_USER_TEMP_DIR)regrow-smoke.<x>`, and the trash check only on `~/regrow-smoke-*`, through the rule the bundle carries.
+- A smoke check only in a folder `mktemp` made as `$(getconf DARWIN_USER_TEMP_DIR)regrow-smoke.<x>`, and the trash check only on `~/regrow-smoke-*`, through the rule the bundle carries. `just app-smoke trash` refuses to start while one is there already, so it moves only the folder it made.
 - `--swap` only of the running bundle into `~/Applications/Regrow.app`, as `just app` runs it.
 
 What stays open needs your files changed: the bundle in `~/Applications` is yours to write, the signing key signs for any program without asking, and the login shell runs your profile with the app's access. [ARCHITECTURE.md](ARCHITECTURE.md)'s decisions log has the list.
