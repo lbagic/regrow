@@ -325,10 +325,16 @@ func shellWord(w string) string {
 	return "'" + strings.ReplaceAll(w, "'", `'\''`) + "'"
 }
 
+// versionText names the macOS releases a path's or a cause's bounds
+// admit, read as engine.CompareVersion reads them.
 func versionText(min, max string) string {
 	switch {
 	case min != "" && max != "":
-		return " (macOS " + macOSMin(min) + " to " + macOSMax(max) + ")"
+		first := macOSMin(min)
+		if engine.CompareVersion(first, max) > 0 {
+			return " (no macOS release)"
+		}
+		return " (macOS " + first + " to " + macOSMax(max) + ")"
 	case min != "":
 		return " (macOS " + macOSMin(min) + " and later)"
 	case max != "":
@@ -338,24 +344,34 @@ func versionText(min, max string) string {
 }
 
 // macOSMax names the last release an os_max admits. A missing part
-// compares as 0, so "15" admits 15.0 but not 15.2; and macOS went from
-// 15 to 26, so a bound between them, such as "25", admits all of 15.
+// compares as 0, so "26" admits 26.0.0 but not 26.0.1, and is written
+// out to three parts; a bound in the release gap, such as "25", admits
+// all of 15.
 func macOSMax(max string) string {
-	major, _, _ := strings.Cut(max, ".")
-	if n, err := strconv.Atoi(major); err == nil && n > 15 && n < 26 {
+	if inReleaseGap(max) {
 		return "15"
 	}
-	return max + ".0"
+	for strings.Count(max, ".") < 2 {
+		max += ".0"
+	}
+	return max
 }
 
-// macOSMin names the first release an os_min admits: a bound between 15
-// and 26 admits 26 onwards.
+// macOSMin names the first release an os_min admits: a bound in the
+// release gap admits 26 onwards.
 func macOSMin(min string) string {
-	major, _, _ := strings.Cut(min, ".")
-	if n, err := strconv.Atoi(major); err == nil && n > 15 && n < 26 {
+	if inReleaseGap(min) {
 		return "26"
 	}
 	return min
+}
+
+// inReleaseGap reports a version whose major number no macOS release
+// has: macOS went from 15 to 26.
+func inReleaseGap(v string) bool {
+	major, _, _ := strings.Cut(v, ".")
+	n, err := strconv.Atoi(major)
+	return err == nil && n > 15 && n < 26
 }
 
 func codeList(names []string) string {

@@ -115,16 +115,25 @@ func TestCommandQuotesAsAShellReads(t *testing.T) {
 }
 
 func TestVersionBoundsNameWhatTheyAdmit(t *testing.T) {
-	max := map[string]string{"25": "15", "25.9": "15", "16": "15", "15": "15.0", "14.4": "14.4.0", "26": "26.0"}
-	for in, want := range max {
-		if got := macOSMax(in); got != want {
-			t.Errorf("macOSMax(%q) = %q, want %q", in, got, want)
-		}
+	cases := []struct{ min, max, want string }{
+		{"", "", ""},
+		{"", "25", " (macOS 15 and earlier)"},
+		{"", "25.9", " (macOS 15 and earlier)"},
+		{"", "26", " (macOS 26.0.0 and earlier)"},
+		{"", "15", " (macOS 15.0.0 and earlier)"},
+		{"", "14.4", " (macOS 14.4.0 and earlier)"},
+		{"", "26.0.1", " (macOS 26.0.1 and earlier)"},
+		{"26", "", " (macOS 26 and later)"},
+		{"16", "", " (macOS 26 and later)"},
+		{"14.4", "", " (macOS 14.4 and later)"},
+		{"14", "15.7", " (macOS 14 to 15.7.0)"},
+		{"16", "26.1", " (macOS 26 to 26.1.0)"},
+		{"16", "25", " (no macOS release)"},
+		{"26", "15", " (no macOS release)"},
 	}
-	min := map[string]string{"16": "26", "25": "26", "26": "26", "14.4": "14.4"}
-	for in, want := range min {
-		if got := macOSMin(in); got != want {
-			t.Errorf("macOSMin(%q) = %q, want %q", in, got, want)
+	for _, c := range cases {
+		if got := versionText(c.min, c.max); got != c.want {
+			t.Errorf("versionText(%q, %q) = %q, want %q", c.min, c.max, got, c.want)
 		}
 	}
 }

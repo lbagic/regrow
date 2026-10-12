@@ -67,10 +67,10 @@ func (p *PathEntry) UnmarshalYAML(node *yaml.Node) error {
 
 // matches reports whether the entry applies to the given host version.
 func (p PathEntry) matches(version string) bool {
-	if p.OSMin != "" && compareVersion(version, p.OSMin) < 0 {
+	if p.OSMin != "" && CompareVersion(version, p.OSMin) < 0 {
 		return false
 	}
-	if p.OSMax != "" && compareVersion(version, p.OSMax) > 0 {
+	if p.OSMax != "" && CompareVersion(version, p.OSMax) > 0 {
 		return false
 	}
 	return true
