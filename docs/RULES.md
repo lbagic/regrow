@@ -11,7 +11,7 @@ How to read an entry:
 - **surface-only**: shown with its size, never deleted. regrow refuses it even when you name it, and refuses anything that holds it.
 - **beta**: in a scan only with `--beta-rules`.
 - **Looks at**: the folders the rule measures, or what its scan walks and runs.
-- **Removed by**: a move to the Trash, which `regrow undo` puts back (into regrow staging when Finder fails); or the command the entry names, mostly the tool's own cleanup command, which deletes for good; or never. Nothing is removed until you confirm a plan (`--yes` confirms it in advance), except by autotrim of the Go build cache, which stays off until you turn it on.
+- **Removed by**: a move to the Trash, which `regrow undo` puts back (into regrow staging when Finder fails); or the command the entry names, mostly the tool's own cleanup command, which deletes for good; or never. Nothing is removed until you confirm a plan (`--yes` confirms it in advance), except by the Go build cache prune: `regrow prune go-build --yes` deletes without showing a plan first, and autotrim, which runs that prune by itself, stays off until you turn it on.
 - **Keeps**: what the rule leaves alone, where that is not plain from what it looks at. The list names the main reasons; the code has narrower ones, mostly an item it cannot read or judge, and each of them keeps more, never less.
 - **Comes back**: what recreates it, and what that costs.
 
@@ -364,10 +364,10 @@ Installed SDKs and tool versions.
 - **Removed by:** a move to the Trash, one per item; `regrow undo` puts it back.
 - **Keeps:**
   - Every NDK while an Android Studio is installed in any of those places.
-  - Every NDK when one of those places cannot be read, or a link there cannot be followed: the rule then shows an error.
+  - Every NDK when an Applications folder or JetBrains Toolbox's apps folder cannot be read in full, or a link in an Applications folder cannot be followed: the rule then shows an error. A Toolbox folder that is a link leading nowhere, and Spotlight not answering, count as no Android Studio.
   - An NDK reached through a symlink, and an SDK anywhere but `~/Library/Android/sdk` or reached through a symlink.
 - **Comes back:** sdkmanager "ndk;&lt;version&gt;" (or the Gradle build that names it) downloads it again. Cost: a 1–2 GB download per NDK; needs the network.
-- **Note:** Command-line Android builds (Gradle, React Native, Flutter) use the SDK without Studio; a build that needs this NDK fails until it is installed again. The row says when ANDROID_HOME points at the SDK.
+- **Note:** Command-line Android builds (Gradle, React Native, Flutter) use the SDK without Studio; a build that needs this NDK fails until it is installed again. The android-sdk row says when ANDROID_HOME points at the SDK.
 
 ### android-sdk
 
@@ -377,7 +377,7 @@ Installed SDKs and tool versions.
 - **Removed by:** a move to the Trash, one per item; `regrow undo` puts it back.
 - **Keeps:**
   - The SDK while an Android Studio is installed in any of those places.
-  - The SDK when one of those places cannot be read, or a link there cannot be followed: the rule then shows an error.
+  - The SDK when an Applications folder or JetBrains Toolbox's apps folder cannot be read in full, or a link in an Applications folder cannot be followed: the rule then shows an error. A Toolbox folder that is a link leading nowhere, and Spotlight not answering, count as no Android Studio.
   - An SDK anywhere but `~/Library/Android/sdk`, or reached through a symlink.
 - **Comes back:** Installing Android Studio, or sdkmanager from the command-line tools, downloads the SDK packages a build needs again. Cost: several GB of downloads; needs the network.
 - **Note:** Command-line Android builds (Gradle, React Native, Flutter) use the SDK without Studio, and emulators need its system images; the row says when ANDROID_HOME points here. Undo restores it from the Trash.
@@ -386,13 +386,13 @@ Installed SDKs and tool versions.
 
 **Node versions nothing references (fnm)** · caution · beta · [`rules/fnm-node-versions.yaml`](../rules/fnm-node-versions.yaml)
 
-- **Looks at:** fnm's folder (`$FNM_DIR`, or whichever exists of `fnm` in `$XDG_DATA_HOME` (else `~/.local/share`), `~/.fnm` and `~/Library/Application Support/fnm`) with its `node-versions` and `aliases`; every `.nvmrc` and `.node-version` in your home folder and in folders up to 10 levels below `~/workspace`, `~/dev`, `~/projects`, `~/src` and `~/code`; the launchd job plists in `~/Library/LaunchAgents`, `/Library/LaunchAgents` and `/Library/LaunchDaemons`, and the version files in each folder a plist names and the folders above it; and the files your running processes execute or map (`lsof -d txt`).
+- **Looks at:** fnm's folder (`$FNM_DIR`, or whichever exists of `fnm` in `$XDG_DATA_HOME` (else `~/.local/share`), `~/.fnm` and `~/Library/Application Support/fnm`) with its `node-versions` and `aliases`; every `.nvmrc` and `.node-version` in your home folder and in folders up to 10 levels below `~/workspace`, `~/dev`, `~/projects`, `~/src` and `~/code`, without following a symlinked folder or entering `.git`, `.Trash`, `Library` or `node_modules`; the launchd job plists in `~/Library/LaunchAgents`, `/Library/LaunchAgents` and `/Library/LaunchDaemons`, and the version files in each folder a plist names and the folders above it; and the files your running processes execute or map (`lsof -d txt`).
 - **Removed by:** `fnm uninstall {arg}`, once per item; `{arg}` is the item as the tool names it. It deletes for good: `regrow undo` cannot bring it back. Right before each removal, regrow reads every source again, as the scan did, and leaves the version installed if anything names it now or a source cannot be read.
 - **Keeps:**
   - A version an fnm alias points at, the default included.
   - A version a `.nvmrc` or `.node-version` there resolves to, the way fnm resolves one (`20` is the newest installed 20.x).
-  - A version a launchd job's plist names a path into, runs through fnm (`fnm exec --using=18`), or leads fnm to through a version file.
-  - A version a running process executes or maps a file from.
+  - A version a launchd job's plist names an absolute path into, runs through fnm (`fnm exec --using=18`), or leads fnm to through a version file.
+  - A version a running process of yours executes or maps a file from.
   - A folder in `node-versions` not named like a release (`vX.Y.Z`).
   - Every version, when any of those cannot be read or understood, when fnm has more than one folder and `FNM_DIR` names none, when a folder belongs to another user (a run under `sudo`), or when `fnm` is not on your `PATH`: the rule then shows an error and offers nothing.
 - **Comes back:** fnm install &lt;version&gt; downloads and installs it again; npm packages installed globally into it need installing again too. Cost: a download of about 30–50 MB per version, plus its global packages; needs the network.
@@ -454,7 +454,7 @@ Installed SDKs and tool versions.
 - **Looks at:** `xcrun --find simctl`; the apps named like Xcode in `/Applications` and `~/Applications` and one folder down, with their `Info.plist`; Spotlight (`mdfind` for Xcode's bundle identifier); and, only when none of these finds Xcode, `simctl runtime list -j` from CoreSimulator's own copy, `/Library/Developer/PrivateFrameworks/CoreSimulator.framework/Versions/A/Resources/bin/simctl`.
 - **Removed by:** never: surface-only.
 - **Keeps:**
-  - Every runtime while `xcrun` finds `simctl` or an Xcode is installed: `sim-runtimes` lists them then.
+  - Every runtime while `xcrun` finds `simctl`, when `sim-runtimes` lists them, or an Xcode is installed; with an Xcode installed but `xcode-select` pointing at the Command Line Tools, neither rule lists them.
   - Every runtime when an Xcode-named app, an Applications folder or a link there cannot be read or followed, since an Xcode there cannot be ruled out.
 - **Comes back:** Xcode downloads a runtime again when a simulator needs it (Settings ▸ Components). Cost: n/a — regrow never deletes these; a 5–10 GB download per runtime if one is needed again.
 - **Note:** Regrow does not delete these. With the simctl Xcode left behind, /Library/Developer/PrivateFrameworks/CoreSimulator.framework/Versions/A/Resources/bin/simctl runtime list names each runtime's identifier, and the same simctl's runtime delete &lt;identifier&gt; --dry-run shows what would go; without --dry-run it is meant to delete it, which is untested without Xcode. Simulators of a deleted runtime stop booting until it is downloaded again.
@@ -526,11 +526,11 @@ Docker objects, listed through the `docker` command; regrow never touches Docker
 
 **Docker dangling images** · safe · [`rules/docker-images-dangling.yaml`](../rules/docker-images-dangling.yaml)
 
-- **Looks at:** `docker system df -v`, `docker image inspect` and `docker container inspect`, through the daemon your current docker context points at; an image with no tag and no digest reference that no container uses is listed whatever its age.
+- **Looks at:** `docker system df -v`, `docker image inspect` and `docker container inspect`, through the daemon your current docker context points at; an image `docker system df` shows no repository for and whose `RepoTags` is empty, that no container uses, is listed whatever its age.
 - **Removed by:** `docker image rm {arg}`, once per item; `{arg}` is the item as the tool names it. It deletes for good: `regrow undo` cannot bring it back.
 - **Keeps:**
   - An image any container uses, stopped containers included; when Docker cannot say, every image counts as used.
-  - An image with a tag, which belongs to `docker-images-unused`, and, on Docker's containerd image store, one pulled by digest alone, which is in neither rule. On the classic image store such an image has no digest reference in Docker's record, so it is listed here.
+  - An image with a tag, which belongs to `docker-images-unused`, and, on Docker's containerd image store, one pulled by digest alone, which Docker records in `RepoTags` and which is in neither rule. On the classic image store such an image has an empty `RepoTags`, so it is listed here.
 - **Comes back:** Dangling layers are superseded build leftovers; the next build or pull recreates what is still needed. Cost: next build slower; network for re-pulled layers.
 
 ### docker-images-unused
@@ -623,7 +623,7 @@ System caches, logs, downloads and the Trash.
 - **Keeps:**
   - A download modified, changed, created or added to the folder in the last 14 days.
   - A `.zip` that holds no app, more than one app, or anything beside the app (macOS's `__MACOSX` folder aside), and one whose app's `Info.plist` cannot be read.
-  - A download no installed app matches: a `.zip` whose app's bundle identifier no installed app carries; a `.dmg` or `.pkg` whose file name matches no installed app's name, both read without versions, architectures, a copy number such as `(1)`, words such as `mac`, `intel` or `install` and an `installer` or `setup` ending, and with case, spaces and punctuation aside; so `Sequoia.dmg` matches `Install macOS Sequoia.app`.
+  - A download no installed app matches: a `.zip` whose app's bundle identifier no installed app carries; a `.dmg` or `.pkg` whose file name matches no installed app's name, both read without dotted versions (`4.2`, `v1.10.3`), architectures, a copy number such as `(1)`, words such as `mac`, `intel` or `install` and an `installer` or `setup` ending, and with case, spaces and punctuation aside; so `Sequoia.dmg` matches `Install macOS Sequoia.app`.
   - A download newer than an installed copy of its app: a `.zip` whose app has a higher version, or the same version and a higher build, a `.dmg` or `.pkg` whose name spells a higher version, and a `.dmg` or `.pkg` that arrived or changed after the app was installed.
   - A `.zip` whose app's version cannot be compared with an installed copy's, and one whose app shares its name with an installed app whose `Info.plist` cannot be read.
   - A `.dmg` or `.pkg` when an installed copy's date added cannot be read, or, if its name spells a version, when that copy's `Info.plist` cannot be read or its version compared.

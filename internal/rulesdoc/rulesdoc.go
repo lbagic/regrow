@@ -91,7 +91,7 @@ func Render(catalog []engine.Rule) []byte {
 	p("- **surface-only**: shown with its size, never deleted. regrow refuses it even when you name it, and refuses anything that holds it.\n")
 	p("- **beta**: in a scan only with `--beta-rules`.\n")
 	p("- **Looks at**: the folders the rule measures, or what its scan walks and runs.\n")
-	p("- **Removed by**: a move to the Trash, which `regrow undo` puts back (into regrow staging when Finder fails); or the command the entry names, mostly the tool's own cleanup command, which deletes for good; or never. Nothing is removed until you confirm a plan (`--yes` confirms it in advance), except by autotrim of the Go build cache, which stays off until you turn it on.\n")
+	p("- **Removed by**: a move to the Trash, which `regrow undo` puts back (into regrow staging when Finder fails); or the command the entry names, mostly the tool's own cleanup command, which deletes for good; or never. Nothing is removed until you confirm a plan (`--yes` confirms it in advance), except by the Go build cache prune: `regrow prune go-build --yes` deletes without showing a plan first, and autotrim, which runs that prune by itself, stays off until you turn it on.\n")
 	p("- **Keeps**: what the rule leaves alone, where that is not plain from what it looks at. The list names the main reasons; the code has narrower ones, mostly an item it cannot read or judge, and each of them keeps more, never less.\n")
 	p("- **Comes back**: what recreates it, and what that costs.\n")
 
