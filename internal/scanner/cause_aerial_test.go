@@ -132,7 +132,7 @@ func TestAerialWallpapersAreShownOnly(t *testing.T) {
 			host.Version = tc.version
 			writeFile(t, host.ExpandPath(tc.video), 1<<20)
 			s := New(host)
-			s.Queries = nil
+			s.Queries = map[string]ToolQuery{rule.ToolQuery: (&aerialVideos{w: testWalker(), host: host}).Items}
 			findings := s.Scan(context.Background(), []engine.Rule{rule})
 			if f := findings[0]; f.Err != "" || len(f.Items) == 0 {
 				t.Fatalf("finding %+v, want the video's folder found", f)
@@ -145,5 +145,80 @@ func TestAerialWallpapersAreShownOnly(t *testing.T) {
 				t.Errorf("plan by id: actions %+v, skipped %+v; want no action and one surface-only skip", plan.Actions, plan.Skipped)
 			}
 		})
+	}
+}
+
+// Deleting a video frees its bytes only when no link outside the folder
+// holds the file too. The row sizes the folder by what deleting frees,
+// and the files held elsewhere apart, so the two add up to the folder.
+func TestAerialVideosSplitByLinks(t *testing.T) {
+	host := engine.Host{OS: "darwin", Version: "15.7.7", Root: t.TempDir()}
+	host.Home = filepath.Join(host.Root, "Users/dev")
+	customer := filepath.Join(host.Root, "Library/Application Support/com.apple.idleassetsd/Customer")
+	single := filepath.Join(customer, "4KSDR240FPS", "a.mov")
+	heldOutside := filepath.Join(customer, "4KSDR240FPS", "b.mov")
+	twiceInside := filepath.Join(customer, "4KSDR", "c.mov")
+	writeFile(t, single, 1<<20)
+	writeFile(t, heldOutside, 3<<20)
+	writeFile(t, twiceInside, 2<<20)
+	temp := filepath.Join(host.Root, "private/var/folders/zz/x/T/com.apple.idleassetsd")
+	if err := os.MkdirAll(temp, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(heldOutside, filepath.Join(temp, "CFNetworkDownload_1.tmp")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(twiceInside, filepath.Join(customer, "4KSDR", "c-copy.mov")); err != nil {
+		t.Fatal(err)
+	}
+	size := func(path string) int64 {
+		fi, err := os.Lstat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return physicalSize(fi)
+	}
+	// DirSize counts every link: c twice, b once.
+	whole, err := DirSize(context.Background(), customer)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	items, err := (&aerialVideos{w: testWalker(), host: host}).Items(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("items %+v, want the folder and the files held outside it", items)
+	}
+	folder, held := items[0], items[1]
+	if folder.Path != customer || folder.Bytes != whole.Bytes-size(heldOutside)-size(twiceInside) {
+		t.Errorf("folder item %+v, want %s with %d bytes", folder, customer, whole.Bytes-size(heldOutside)-size(twiceInside))
+	}
+	if held.Path != "" || held.Bytes != size(heldOutside) || !strings.HasPrefix(held.Label, "1 file a link outside the folder also holds") {
+		t.Errorf("held item %+v, want b.mov's %d bytes with no path", held, size(heldOutside))
+	}
+
+	// With no link outside, one item holds it all.
+	if err := os.Remove(filepath.Join(temp, "CFNetworkDownload_1.tmp")); err != nil {
+		t.Fatal(err)
+	}
+	items, err = (&aerialVideos{w: testWalker(), host: host}).Items(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].Bytes != whole.Bytes-size(twiceInside) {
+		t.Errorf("items %+v, want the folder alone with %d bytes", items, whole.Bytes-size(twiceInside))
+	}
+
+	// macOS 26 keeps them in the wallpaper agent's container.
+	host.Version = "26.0"
+	if items, err := (&aerialVideos{w: testWalker(), host: host}).Items(context.Background()); err != nil || len(items) != 0 {
+		t.Errorf("on 26 with only the 15 folder: items %+v, err %v; want nothing", items, err)
+	}
+	writeFile(t, filepath.Join(host.Home, "Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches/a.mov"), 1<<20)
+	if items, err := (&aerialVideos{w: testWalker(), host: host}).Items(context.Background()); err != nil || len(items) != 1 ||
+		items[0].Path != filepath.Join(host.Home, "Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches") {
+		t.Errorf("on 26: items %+v, err %v; want the container's folder", items, err)
 	}
 }

@@ -146,12 +146,13 @@ func TestAerialCauseFixText(t *testing.T) {
 	}
 	const removeOld = `sudo find "/Library/Application Support/com.apple.idleassetsd/Customer" -type f -name '*.mov' -delete`
 	const removeNew = `sudo find ~/Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches -type f -name '*.mov' -delete`
+	const removeTemp = `sudo find /private/var/folders/zz -path '*/T/com.apple.idleassetsd/CFNetworkDownload_*.tmp' -delete`
 	if rule.Risk != RiskSurfaceOnly || len(rule.NativeCommand) != 0 || rule.Sudo {
 		t.Errorf("risk %q, command %q, sudo %v; want surface-only with nothing to run", rule.Risk, rule.NativeCommand, rule.Sudo)
 	}
 	// Quoted after a colon, so a face sets each on a line of its own with
 	// a way to copy it.
-	for _, want := range []string{"on macOS 15 and earlier: `" + removeOld + "`", "On macOS 26 and later: `" + removeNew + "`"} {
+	for _, want := range []string{"on macOS 15 and earlier: `" + removeOld + "`", "On macOS 26 and later: `" + removeNew + "`", "frees nothing until that copy goes too", "(untested in this form): `" + removeTemp + "`"} {
 		if !strings.Contains(rule.Regen.Story, want) {
 			t.Errorf("the row's story does not name %q:\n%s", want, rule.Regen.Story)
 		}
@@ -169,10 +170,12 @@ func TestAerialCauseFixText(t *testing.T) {
 	for _, want := range [][]string{
 		{"Quit System Settings", "Wallpaper"},
 		{"come back", "the pane is opened"},
-		// The disable is untested against SIP; the same line must say so.
-		{"sudo launchctl disable system/com.apple.idleassetsd", "untested", "System Integrity Protection"},
+		// The disable leaves the running downloader alone, and was not
+		// tried across a restart; the same line must say both.
+		{"sudo launchctl disable system/com.apple.idleassetsd", "until a restart", "untested", "sudo launchctl enable system/com.apple.idleassetsd"},
 		{"sudo killall idleassetsd"},
 		{"Then remove the videos: " + removeOld},
+		{"frees nothing until that copy goes too: " + removeTemp},
 	} {
 		if !line(want...) {
 			t.Errorf("no fix line with %q in:\n%s", want, strings.Join(fix, "\n"))

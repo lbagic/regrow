@@ -3,20 +3,19 @@
 # system dir through macOS 15, wallpaper.agent container from 26.
 # A raw `find … -delete` as root has no Trash and no undo, which
 # invariants 2 and 4 keep regrow from running: surface-only, and the
-# row gives the command to run yourself.
+# row gives the command to run yourself. The aerial-videos query
+# (internal/scanner/tool_aerial.go) sizes the folder in two parts,
+# since a video the downloader's temp folder also links frees nothing
+# when only the folder's copy goes.
 id: aerial-wallpapers
 title: Aerial wallpaper videos
 category: macos
 risk: surface-only
-paths:
-  darwin:
-    - path: /Library/Application Support/com.apple.idleassetsd/Customer
-      os_max: "25"
-    - path: ~/Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches
-      os_min: "26"
+tool_query: aerial-videos
 note: "The videos come back whenever System Settings ▸ Wallpaper is opened, even with a still wallpaper. To see how to stop the downloads: `regrow doctor`."
+scans: "the files in `/Library/Application Support/com.apple.idleassetsd/Customer` (macOS 15 and earlier) or `~/Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches` (macOS 26 and later), with each file's link count; a file that has links outside the folder is counted apart"
 regen:
-  story: 'macOS downloads the aerial catalogue again when System Settings ▸ Wallpaper is opened, and any aerial selected as wallpaper or screensaver. To remove the videos yourself on macOS 15 and earlier: `sudo find "/Library/Application Support/com.apple.idleassetsd/Customer" -type f -name ''*.mov'' -delete`. On macOS 26 and later: `sudo find ~/Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches -type f -name ''*.mov'' -delete`.'
+  story: 'macOS downloads the aerial catalogue again when System Settings ▸ Wallpaper is opened, and any aerial selected as wallpaper or screensaver. To remove the videos yourself on macOS 15 and earlier: `sudo find "/Library/Application Support/com.apple.idleassetsd/Customer" -type f -name ''*.mov'' -delete`. On macOS 26 and later: `sudo find ~/Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches -type f -name ''*.mov'' -delete`. A video the downloader''s temp folder also holds frees nothing until that copy goes too, and macOS 15 keeps those copies in a folder only root can read. To remove them (untested in this form): `sudo find /private/var/folders/zz -path ''*/T/com.apple.idleassetsd/CFNetworkDownload_*.tmp'' -delete`.'
   cost: n/a — regrow never deletes here; roughly 0.5 GB of download per video macOS fetches again
 sudo: false
 # Seen on macOS 15.7, where idleassetsd is the downloader; the row
@@ -29,9 +28,13 @@ causes:
     fix:
       - "Quit System Settings after visiting Wallpaper, so the open pane cannot start another batch."
       - "A batch already running goes on, and the videos come back the next time the pane is opened. To stop the downloader itself:"
-      - "sudo launchctl disable system/com.apple.idleassetsd   (untested: System Integrity Protection may refuse it)"
+      - "sudo launchctl disable system/com.apple.idleassetsd   (accepted on macOS 15.7; the downloader already running goes on until a restart, and whether the setting holds after one is untested; to undo: sudo launchctl enable system/com.apple.idleassetsd)"
       - "sudo killall idleassetsd   (stops the batch that is running now)"
       - "Then remove the videos: sudo find \"/Library/Application Support/com.apple.idleassetsd/Customer\" -type f -name '*.mov' -delete"
+      - "A video the downloader's temp folder also holds frees nothing until that copy goes too: sudo find /private/var/folders/zz -path '*/T/com.apple.idleassetsd/CFNetworkDownload_*.tmp' -delete   (untested in this form)"
 fixture:
-  files:
-    - /Library/Application Support/com.apple.idleassetsd/Customer/4KSDR240FPS/a.mov
+  items:
+    - path: /Library/Application Support/com.apple.idleassetsd/Customer
+      bytes: 23000000000
+    - label: "16 files a link outside the folder also holds, such as the downloader's temp copies: deleting them here frees nothing"
+      bytes: 11000000000
