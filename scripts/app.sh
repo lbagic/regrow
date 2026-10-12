@@ -6,7 +6,9 @@
 #   scripts/app.sh signed    the same, signed with the identity scripts/signing-cert.sh
 #                            recorded: the installed app's twin, left in place for checks.
 #   scripts/app.sh install   build, sign with that identity, replace
-#                            ~/Applications/Regrow.app, launch it.
+#                            ~/Applications/Regrow.app, launch it, then run
+#                            `scripts/app-smoke.sh all` against it. --no-check skips
+#                            the checks.
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -18,10 +20,12 @@ SIGN_LIMIT=60
 QUIT_LIMIT=45
 
 mode="${1:-}"
-case "$mode" in
-build | signed | install) ;;
+check=yes
+case "$mode $*" in
+"install install --no-check") check=no ;;
+"build build" | "signed signed" | "install install") ;;
 *)
-	echo "usage: $0 build|signed|install" >&2
+	echo "usage: $0 build|signed|install [--no-check]" >&2
 	exit 64
 	;;
 esac
@@ -177,3 +181,10 @@ rm -rf "${staged:?}"
 
 open "$DEST"
 echo "Installed $DEST and launched it."
+if [ "$check" = no ]; then
+	exit 0
+fi
+if ! sh "$ROOT/scripts/app-smoke.sh" all "$DEST"; then
+	echo "Installed, but a check failed: its lines above say which and where it left its files." >&2
+	exit 1
+fi

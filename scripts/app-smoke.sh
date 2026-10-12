@@ -14,6 +14,8 @@
 #   scripts/app-smoke.sh doors   Starts the app the ways anything on this machine
 #                                can (open --env, open --args) and shows it runs and
 #                                moves nothing they name. No notification, no Trash.
+#   scripts/app-smoke.sh all     trash, alert and doors in turn, then one RESULT line
+#                                naming any that failed. `scripts/app.sh install` runs it.
 #
 # A second argument names another bundle to check, such as the one
 # `scripts/app.sh signed` leaves in app/.build/bundle.
@@ -25,12 +27,27 @@ set -eu
 APP="${2:-$HOME/Applications/Regrow.app}"
 mode="${1:-}"
 case "$mode" in
-trash | alert | doors) ;;
+trash | alert | doors | all) ;;
 *)
-	echo "usage: $0 trash|alert|doors [bundle]" >&2
+	echo "usage: $0 trash|alert|doors|all [bundle]" >&2
 	exit 64
 	;;
 esac
+
+# Each check runs on its own, so one that fails leaves the next its turn.
+if [ "$mode" = all ]; then
+	failed=""
+	for check in trash alert doors; do
+		echo "== $check"
+		sh "$0" "$check" "$APP" || failed="$failed $check"
+	done
+	if [ -z "$failed" ]; then
+		echo "RESULT ok: trash, alert and doors"
+		exit 0
+	fi
+	echo "RESULT failed:$failed"
+	exit 1
+fi
 if [ ! -d "$APP" ]; then
 	echo "$APP is not installed: run \`just app\` first." >&2
 	exit 1

@@ -12,7 +12,7 @@ just app
 ```
 
 1. `scripts/signing-cert.sh` makes a self-signed code-signing identity, "regrow local signing", in the login keychain and writes its SHA-1 to `.signing-identity` (not committed). The first signature raises a keychain dialog: choose "Always Allow". Run again, it finds the identity, prints the same hash and creates nothing. `--dry-run` only reads the keychain.
-2. `just app` builds the app and the engine, signs both by that hash with the hardened runtime, asks a running Regrow to quit, waits for its engine to finish the action it is on, exchanges the bundle in `~/Applications` in one step, and launches it. From `~/Applications` the app registers itself to open at login and asks to send notifications.
+2. `just app` builds the app and the engine, signs both by that hash with the hardened runtime, asks a running Regrow to quit, waits for its engine to finish the action it is on, exchanges the bundle in `~/Applications` in one step, and launches it. From `~/Applications` the app registers itself to open at login and asks to send notifications. Then it runs the three smoke checks below against the installed app and ends with their `RESULT` line; `just app --no-check` skips them.
 
 macOS ties its grants to the bundle id and the signature. Signed with the same identity, a rebuilt app keeps Full Disk Access, the right to control Finder and its notifications. `just app-build` makes an ad-hoc signed bundle under `app/.build/bundle` for a look; it keeps no grant, registers nothing, asks for nothing and posts no notification.
 
@@ -42,9 +42,10 @@ just page-check        # the page through WebKit: assertions and a PNG per state
 just app-smoke trash   # through the installed app: a folder it creates goes to the Trash and comes back
 just app-smoke alert   # through the installed app: one tick that must raise a notification
 just app-smoke doors   # through the installed app: it runs and moves nothing its launch names
+just app-smoke all     # the three in turn, then one RESULT line naming any that failed
 ```
 
-The smoke checks start the installed app through LaunchServices, so the grants they exercise are the app's, and use a state directory of their own. Each prints one `PASS` or `FAIL` line per stage; one that fails leaves its directory in place and names it, with the app's `result.json`, `smoke.log` and `engine.log` inside. `doors` starts the app with `open --env` and `open --args` the ways any program could, each with a probe that leaves a file if it runs: `REGROW_ENGINE`, `HOME` and `ZDOTDIR` for the login shell, `DYLD_INSERT_LIBRARIES`, a smoke folder of another shape and a `--swap` of two other paths. A second argument checks another bundle: `scripts/app.sh signed` builds and signs one as `just app` does, in `app/.build/bundle`, without installing it.
+The smoke checks start the installed app through LaunchServices, so the grants they exercise are the app's, and use a state directory of their own. Each prints one `PASS` or `FAIL` line per stage and a `RESULT` line, and `all` runs every check even after one fails; one that fails leaves its directory in place and names it, with the app's `result.json`, `smoke.log` and `engine.log` inside. `doors` starts the app with `open --env` and `open --args` the ways any program could, each with a probe that leaves a file if it runs: `REGROW_ENGINE`, `HOME` and `ZDOTDIR` for the login shell, `DYLD_INSERT_LIBRARIES`, a smoke folder of another shape and a `--swap` of two other paths. A second argument checks another bundle: `scripts/app.sh signed` builds and signs one as `just app` does, in `app/.build/bundle`, without installing it.
 
 ## What a launch can choose
 
