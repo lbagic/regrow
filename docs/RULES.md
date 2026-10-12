@@ -612,7 +612,7 @@ System caches, logs, downloads and the Trash.
 - **Removed by:** never: surface-only.
 - **Comes back:** macOS downloads the aerial catalogue again when System Settings ▸ Wallpaper is opened, and any aerial selected as wallpaper or screensaver. To remove the videos yourself on macOS 15 and earlier: `sudo find "/Library/Application Support/com.apple.idleassetsd/Customer" -type f -name '*.mov' -delete`. On macOS 26 and later: `sudo find ~/Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches -type f -name '*.mov' -delete`. Cost: n/a — regrow never deletes here; roughly 0.5 GB of download per video macOS fetches again.
 - **Fix the cause:** Aerial video downloads (macOS 15.x and earlier). `regrow doctor` says whether it is in effect here and prints the fix; regrow changes nothing.
-- **Note:** The videos come back whenever System Settings ▸ Wallpaper is opened, even with a still wallpaper; `regrow doctor` prints how to stop the downloads.
+- **Note:** The videos come back whenever System Settings ▸ Wallpaper is opened, even with a still wallpaper. To see how to stop the downloads: `regrow doctor`.
 
 ### downloaded-installers
 
@@ -653,7 +653,7 @@ System caches, logs, downloads and the Trash.
 
 - **Looks at:** `/Library/Updates`.
 - **Removed by:** never: surface-only.
-- **Comes back:** Check `softwareupdate -l` first; payloads re-download if an update still needs them. Cost: n/a — regrow never deletes here.
+- **Comes back:** Check what is pending first: `softwareupdate -l`. Payloads re-download if an update still needs them. Cost: n/a — regrow never deletes here.
 
 ### macos-installers
 
@@ -670,7 +670,7 @@ System caches, logs, downloads and the Trash.
 - **Looks at:** `/System/Library/AssetsV2/com_apple_MobileAsset_MacSoftwareUpdate/*.asset`.
 - **Removed by:** never: surface-only.
 - **Comes back:** Software Update downloads updates by itself while Download new updates when available is on. Cost: n/a — regrow never deletes here, and System Integrity Protection refuses even sudo.
-- **Note:** Installing the update uses the download up: System Settings ▸ General ▸ Software Update, or `softwareupdate --list` to see it first. To stop macOS downloading the next one, turn off Download new updates when available (Software Update ▸ Automatic updates ⓘ), or run: `sudo defaults write /Library/Preferences/com.apple.SoftwareUpdate AutomaticDownload -bool false`.
+- **Note:** Installing the update uses the download up: System Settings ▸ General ▸ Software Update. To see it first: `softwareupdate --list`. To stop macOS downloading the next one, turn off Download new updates when available (Software Update ▸ Automatic updates ⓘ), or run: `sudo defaults write /Library/Preferences/com.apple.SoftwareUpdate AutomaticDownload -bool false`.
 
 ### media-analysis-cache
 

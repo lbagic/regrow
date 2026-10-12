@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -88,15 +89,20 @@ func TestRuleFilesAreNamedByID(t *testing.T) {
 	}
 }
 
-// A `sudo` command in a rule's text is one regrow leaves to the owner.
-// The app's page sets a quoted command on a line of its own, with its
-// Copy, only when a colon brings it in.
-func TestSudoCommandsComeAfterAColon(t *testing.T) {
+// A command in a rule's text that starts with one of these is one the
+// owner runs. The app's page sets a quoted command on a line of its own,
+// with its Copy, only when a colon brings it in.
+var ownerCommands = []string{"sudo ", "regrow ", "softwareupdate "}
+
+func TestOwnerCommandsComeAfterAColon(t *testing.T) {
+	owners := func(quote string) bool {
+		return slices.ContainsFunc(ownerCommands, func(p string) bool { return strings.HasPrefix(quote, p) })
+	}
 	for _, r := range catalog(t) {
 		for _, text := range []string{r.Note, r.Regen.Story} {
 			parts := strings.Split(text, "`")
 			for i := 1; i < len(parts)-1; i += 2 {
-				if strings.HasPrefix(parts[i], "sudo ") && !strings.HasSuffix(strings.TrimRight(parts[i-1], " "), ":") {
+				if owners(parts[i]) && !strings.HasSuffix(strings.TrimRight(parts[i-1], " "), ":") {
 					t.Errorf("%s: `%s` follows %q, not a colon", r.ID, parts[i], parts[i-1])
 				}
 			}

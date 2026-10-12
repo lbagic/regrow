@@ -70,8 +70,8 @@ final class Shell: ObservableObject {
 
     /// A launch at login opens no window; any other is the owner opening
     /// the app.
-    func start(atLogin: Bool) {
-        log("launched from \(Bundle.main.bundlePath), pid \(getpid())\(atLogin ? ", at login" : "")")
+    func start(atLogin reason: String?) {
+        log("launched from \(Bundle.main.bundlePath), pid \(getpid())\(reason.map { ", at login: \($0)" } ?? "")")
         if Config.installed {
             notifier.askPermission()
             registerLoginItem()
@@ -94,7 +94,7 @@ final class Shell: ObservableObject {
                 }
             }
         }
-        if config.openScan || !atLogin {
+        if config.openScan || reason == nil {
             openScan()
         }
     }

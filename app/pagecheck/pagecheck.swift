@@ -47,13 +47,11 @@ func human(_ n: Int64) -> String {
     return String(format: "%.1f %@iB", Double(n) / Double(div), String(Array("KMGTPE")[exp]))
 }
 
-// tui.ShellJoin, as the page's shellJoin writes it
-func shellJoin(_ argv: [String]) -> String {
+// A command as a shell reads it back, as the page's shellLine writes it for the pasteboard
+func shellLine(_ argv: [String]) -> String {
     argv.map { word in
-        guard word.range(of: #"[ \t"'*?\[]"#, options: .regularExpression) != nil,
-            let data = try? JSONSerialization.data(withJSONObject: word, options: [.fragmentsAllowed, .withoutEscapingSlashes])
-        else { return word }
-        return String(decoding: data, as: UTF8.self)
+        guard word.range(of: #"[ \t\n'"\\$`*?\[\](){}<>|&;!#]"#, options: .regularExpression) != nil else { return word }
+        return "'" + word.replacingOccurrences(of: "'", with: #"'\''"#) + "'"
     }.joined(separator: " ")
 }
 
@@ -789,7 +787,7 @@ struct Scenario {
             let rule = runs?.obj("finding").obj("rule") ?? [:]
             r.expect(runs != nil, "the scan holds no caution finding whose command runs as drawn")
             await r.click("[data-rule=\(rule.str("id"))] .cost .copy")
-            r.same(r.pasted.last ?? "", shellJoin(rule.strs("native_command")), "what Copy beside a finding's command put on the pasteboard")
+            r.same(r.pasted.last ?? "", shellLine(rule.strs("native_command")), "what Copy beside a finding's command put on the pasteboard")
             r.same(await r.js("return document.querySelector('[data-rule=\(rule.str("id"))] .cost .copy').textContent") as? String ?? "", "Copied", "a command's Copy once clicked")
             // A surface-only rule's how, quoted in its note after a colon: a line of its own, which ends the
             // sentence without the stop the note writes after it.
@@ -806,6 +804,21 @@ struct Scenario {
             r.has(await r.text("[data-rule=ios-backups] .item .mono"), "~/Library", "an item's path, drawn")
             await r.click("[data-rule=ios-backups] .item .copy")
             r.same(r.pasted.last ?? "", largest, "what Copy beside an item's path put on the pasteboard")
+            // A Copy pressed from the keyboard keeps the focus once its region is drawn again.
+            let held = await r.js("""
+                const all = [...document.querySelectorAll('.page .copy')], el = all[all.length - 1];
+                el.focus(); el.click(); return el.dataset.text
+                """) as? String ?? ""
+            await r.settle()
+            r.same(await r.js("return (document.activeElement && document.activeElement.dataset.text) || ''") as? String ?? "", held, "the focus after a Copy pressed from the keyboard")
+            // regrow quoted in a rule's text is started as the engine names itself.
+            let named = await r.js("""
+                const d = document.createElement('div'); d.innerHTML = sentence('To see how to stop them: `regrow doctor`.').s;
+                return [d.querySelector('.copy').dataset.text, d.querySelector('.mono').textContent, cli()]
+                """) as? [String] ?? []
+            r.expect(named.count == 3 && named[2] != "regrow", "the engine names itself by its path in this transcript: \(named)")
+            r.same(named.first ?? "", (named.last ?? "") + " doctor", "what Copy beside a rule's regrow command puts on the pasteboard")
+            r.same(named.count == 3 ? named[1] : "", (named.last ?? "") + " doctor", "a rule's regrow command, drawn")
             r.same(r.sentShell("copy"), r.pasted.count, "copies the shell was sent")
             await r.shoot(top: "[data-rule=\(rule.str("id"))]")
         },
@@ -909,7 +922,7 @@ struct Scenario {
         Scenario(name: "copy-plan") { r in
             await toPlan(r)
             let plan = r.transcript.event("plan-all", "plan").obj("plan"), first = plan.objs("actions")[0]
-            let whole = first.str("kind") == "trash" && !first.str("path").isEmpty ? first.str("path") : shellJoin(first.strs("command"))
+            let whole = first.str("kind") == "trash" && !first.str("path").isEmpty ? first.str("path") : shellLine(first.strs("command"))
             r.same(await r.count(".act:not(.skip) .ln .copy"), await r.count(".act:not(.skip) .ln"), "plan lines without a Copy")
             await r.click(".act:not(.skip) .ln .copy")
             r.same(r.pasted.last ?? "", whole, "what Copy beside the first action put on the pasteboard")

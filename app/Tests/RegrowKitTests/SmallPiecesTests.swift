@@ -294,3 +294,21 @@ struct RestartDelayTests {
         #expect(delay.after(uptime: 0.1) == 2)
     }
 }
+
+@Suite("Login session")
+struct LoginSessionTests {
+    @Test("a launch from just before the login record to two minutes after it is the login's")
+    func loginLaunch() {
+        let login = Date(timeIntervalSince1970: 1_791_000_000)
+        #expect(LoginSession.isLoginLaunch(at: login.addingTimeInterval(5), sessionStart: login))
+        #expect(LoginSession.isLoginLaunch(at: login.addingTimeInterval(-LoginSession.early), sessionStart: login))
+        #expect(!LoginSession.isLoginLaunch(at: login.addingTimeInterval(LoginSession.window), sessionStart: login))
+        #expect(!LoginSession.isLoginLaunch(at: login.addingTimeInterval(-LoginSession.early - 1), sessionStart: login))
+        #expect(!LoginSession.isLoginLaunch(at: login, sessionStart: nil))
+    }
+
+    @Test("a user with no console login has no session start")
+    func noConsoleLogin() {
+        #expect(LoginSession.consoleStart(user: "regrow-no-such-user") == nil)
+    }
+}

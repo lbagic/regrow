@@ -99,15 +99,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ) { _ in
             MainActor.assumeIsolated { Shell.shared.woke() }
         }
-        Shell.shared.start(atLogin: Self.launchedAtLogin())
+        Shell.shared.start(atLogin: Self.loginReason())
     }
 
-    /// Read while the launch's open-application event is the current one.
-    private static func launchedAtLogin() -> Bool {
-        guard let event = NSAppleEventManager.shared().currentAppleEvent, event.eventID == kAEOpenApplication else {
-            return false
+    /// Why this launch is the login's, or nil when the owner opened the
+    /// app. The marker is read while the launch's open-application event
+    /// is the current one.
+    private static func loginReason() -> String? {
+        if let event = NSAppleEventManager.shared().currentAppleEvent, event.eventID == kAEOpenApplication,
+            event.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue == keyAELaunchedAsLogInItem
+        {
+            return "marked as a login item"
         }
-        return event.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue == keyAELaunchedAsLogInItem
+        if LoginSession.isLoginLaunch(at: Date(), sessionStart: LoginSession.consoleStart()) {
+            return "started within \(Int(LoginSession.window)) s of the login"
+        }
+        return nil
     }
 
     /// Opening the app while it runs, from Finder, Spotlight or `open`.

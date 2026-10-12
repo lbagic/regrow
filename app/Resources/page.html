@@ -540,6 +540,8 @@ const tilde = (s) => (home ? String(s).replace(home, '$1~') : String(s));
 const shellJoin = (argv) => [].concat(argv || []).map((a) => (/[ \t"'*?[]/.test(a) ? JSON.stringify(a) : a)).join(' ');
 // One word as a shell reads it back, quoted as the engine's shellQuote quotes it.
 const shellWord = (s) => (/[ \t\n'"\\$`*?[\](){}<>|&;!#]/.test(s) ? "'" + s.replace(/'/g, "'\\''") + "'" : s);
+// A command as a shell reads it back, for the pasteboard; shellJoin is how it is drawn.
+const shellLine = (argv) => [].concat(argv || []).map(shellWord).join(' ');
 // How regrow is started in Terminal, as the engine names itself: an app's engine goes by its path.
 const cli = () => shellWord((S.hello && S.hello.self) || 'regrow');
 
@@ -600,13 +602,14 @@ const copy = (text, what) => h`<button class="link copy" data-do="copy" data-tex
 // A sentence of the engine's or a rule's, with what it quotes in backticks set in mono. A quote that holds a
 // space or a slash, a command with its arguments or a path, has its copy control; a bare name has none. A
 // command the sentence brings in with a colon is one to run yourself: it gets a line of its own, which ends
-// its clause, so the stop written after it is not drawn.
+// its clause, so the stop written after it is not drawn. A quoted `regrow` command starts regrow as cli() does.
 const ownLine = (parts, i) => i % 2 === 1 && i < parts.length - 1 && parts[i].includes(' ') && /:\s*$/.test(parts[i - 1]);
 const sentence = (s) => {
   const parts = String(s).split('`');
   return new Markup(parts.map((part, i) => {
     if (i % 2 === 0) return esc(ownLine(parts, i - 1) ? part.replace(/^[.,;]/, '') : part);
-    const quote = '<span class="mono">' + unbroken(part).s + '</span>' + (/[ /]/.test(part) ? copy(part, 'command').s : '');
+    const said = /^regrow( |$)/.test(part) ? cli() + part.slice(6) : part;
+    const quote = '<span class="mono">' + unbroken(said).s + '</span>' + (/[ /]/.test(said) ? copy(said, 'command').s : '');
     return ownLine(parts, i) ? '<span class="cmd">' + quote + '</span>' : quote;
   }).join(''));
 };
@@ -732,7 +735,7 @@ function entry(v, scale, fresh, small) {
   const open = S.open.has('r' + row.n), each = !!row.select && !row.whole;
   const kept = rule.risk !== 'safe' && rule.risk !== 'caution';
   const command = shellJoin(rule.native_command), runnable = !/\{(path|arg)\}/.test(command);
-  const shown = h`<span class="mono">${unbroken(command)}</span>${runnable ? copy(command, 'command') : ''}`;
+  const shown = h`<span class="mono">${unbroken(command)}</span>${runnable ? copy(shellLine(rule.native_command), 'command') : ''}`;
   const runs = row.bucket === 'after_trash' ? 'Goes to the Trash; regrow undo restores it.'
     : row.bucket === 'exported' ? h`Runs ${shown} after a tarball goes to regrow staging, no undo.`
     : row.bucket !== 'frees_now' ? '' : rule.native_command ? h`Runs ${shown}, no undo.` : 'A command frees it, with no undo.';
@@ -768,9 +771,9 @@ function drawPlan() {
 }
 
 // An action as it is copied: the path a move takes, or the command. It is read with the home folder as ~.
-const whole = (a) => (a.kind === 'trash' && a.path ? a.path : shellJoin(a.command));
-const told = (a) => unbroken(tilde(whole(a)));
-const copyAction = (a) => copy(whole(a), a.kind === 'trash' && a.path ? 'path' : 'command');
+const moves = (a) => a.kind === 'trash' && !!a.path;
+const told = (a) => unbroken(tilde(moves(a) ? a.path : shellJoin(a.command)));
+const copyAction = (a) => (moves(a) ? copy(a.path, 'path') : copy(shellLine(a.command), 'command'));
 const tellActions = (p) => h`<span class="scale">A full bar is ${human(Math.max(1, ...p.groups.map((g) => g.bytes)))}, the largest action</span>`;
 
 // The plan's actions in the engine's order, grouped by rule. On the plan a group shows its first line and
@@ -918,7 +921,7 @@ function paint(id, markup, all) {
 
 function render(all) {
   const page = $('page'), screen = S.down ? 'down' : S.screen, at = page.scrollTop;
-  const had = document.activeElement || {}, focus = had.id ? '#' + had.id : had.dataset && had.dataset.do ? '[data-do="' + had.dataset.do + '"]' : '';
+  const had = document.activeElement || {}, focus = had.id ? '#' + had.id : had.dataset && had.dataset.do ? '[data-do="' + had.dataset.do + '"]' + (had.dataset.text ? '[data-text="' + CSS.escape(had.dataset.text) + '"]' : '') : '';
   paint('top', drawTop(), all);
   if (paint('page', SCREENS[screen](), all)) for (const box of page.querySelectorAll('[data-some]')) box.indeterminate = true;
   paint('tray', drawTray(), all);
