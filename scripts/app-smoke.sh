@@ -35,6 +35,20 @@ if [ ! -d "$APP" ]; then
 	echo "$APP is not installed: run \`just app\` first." >&2
 	exit 1
 fi
+if [ "$mode" = doors ] && codesign -dv "$APP" 2>&1 | grep -q '^CodeDirectory.*flags=.*adhoc'; then
+	echo "$APP is signed ad hoc, and an ad hoc build takes the overrides on purpose: check a bundle signed as \`just app\` or \`scripts/app.sh signed\` sign it." >&2
+	exit 1
+fi
+# The app's smoke rule moves every ~/regrow-smoke-*, so a check that can
+# reach it starts only when there is none, a link included.
+if [ "$mode" != alert ]; then
+	for other in "$HOME"/regrow-smoke-*; do
+		if [ -e "$other" ] || [ -L "$other" ]; then
+			echo "$other is there already, from an earlier check or another program, and the app would move it too. Move it out of your home folder, then run this again." >&2
+			exit 1
+		fi
+	done
+fi
 
 # The app takes no other folder: the per-user temp folder from getconf, not
 # TMPDIR, and a name of this shape.
@@ -141,7 +155,7 @@ if [ "$mode" = doors ]; then
 	if [ "$(cat "$probe/swap-a/which")" != a ] || [ "$(cat "$probe/swap-b/which")" != b ]; then
 		echo "FAIL --swap: the app swapped $probe/swap-a and $probe/swap-b"
 		status=1
-	elif ! grep -q 'is not this bundle' "$probe/swap.err" 2>/dev/null; then
+	elif ! grep -q 'swap takes' "$probe/swap.err" 2>/dev/null; then
 		echo "FAIL --swap: not tried, the app said nothing about the swap"
 		status=1
 	else
@@ -158,16 +172,6 @@ if [ "$mode" = alert ]; then
 	report || status=1
 	finish "$status"
 fi
-
-# The app's rule moves every ~/regrow-smoke-*, so this check runs only on
-# the one folder it makes.
-for other in "$HOME"/regrow-smoke-*; do
-	if [ -e "$other" ]; then
-		echo "FAIL: $other is there already, from an earlier check or another program, and the app would move it too. Move it out of your home folder, then run this again." >&2
-		rm -rf "${work:?}"
-		exit 1
-	fi
-done
 
 token="regrow smoke $$ $(date +%s)"
 sentinel="$HOME/regrow-smoke-$$"

@@ -4,7 +4,8 @@ import RegrowKit
 // One executable, four ways to run it. The three with an argument show
 // no menu and exit when done:
 //
-//   --swap <this bundle> ~/Applications/Regrow.app   put this bundle in place
+//   --swap ~/Applications/.Regrow.app.staged ~/Applications/Regrow.app
+//                                          put the staged bundle in place
 //   --smoke <dir>                          trash a sentinel and undo it
 //   --smoke-alert <dir>                    one tick, its notifications
 //
@@ -21,7 +22,7 @@ let arguments = Array(CommandLine.arguments.dropFirst())
 
 switch arguments.first {
 case "--swap":
-    guard arguments.count == 3 else { usage("--swap <this bundle> ~/Applications/Regrow.app") }
+    guard arguments.count == 3 else { usage("--swap ~/Applications/.Regrow.app.staged ~/Applications/Regrow.app") }
     do {
         let (staged, destination) = try BundleSwap.check(
             staged: URL(fileURLWithPath: arguments[1]), destination: URL(fileURLWithPath: arguments[2]),

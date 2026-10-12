@@ -7,24 +7,32 @@ public enum BundleSwap {
         public let description: String
     }
 
-    /// A bundle puts only itself in place, and only at
-    /// `~/Applications/Regrow.app`: run through LaunchServices it holds
-    /// the owner's grants, and a swap of two other paths would move a
-    /// protected folder where anything can read it. Returns the two
-    /// paths to swap, as resolved here: a link the caller named is
-    /// never what moves.
+    /// The two paths `--swap` renames: `~/Applications/.Regrow.app.staged`
+    /// and `~/Applications/Regrow.app`, as written, never resolved. Run
+    /// through LaunchServices the app holds the owner's grants, and a
+    /// link in a resolved path can be re-pointed between a check and the
+    /// rename; `rename` does not follow a link in a path's last part, so
+    /// only entries of these two names can move. The running bundle must
+    /// be the staged one: a bundle puts only itself in place.
     public static func check(
         staged: URL, destination: URL, running: URL, home: URL = Account.home
     ) throws -> (staged: URL, destination: URL) {
-        func resolved(_ url: URL) -> URL { url.standardizedFileURL.resolvingSymlinksInPath() }
-        let bundle = resolved(running), installed = home.appendingPathComponent("Applications/Regrow.app")
-        guard resolved(staged).path == bundle.path else {
-            throw Failure(description: "\(staged.path) is not this bundle (\(running.path))")
+        let applications = home.appendingPathComponent("Applications")
+        let pair = (
+            staged: applications.appendingPathComponent(".Regrow.app.staged"),
+            destination: applications.appendingPathComponent("Regrow.app")
+        )
+        guard staged.standardizedFileURL.path == pair.staged.path,
+            destination.standardizedFileURL.path == pair.destination.path
+        else {
+            throw Failure(description: "--swap takes \(pair.staged.path) and \(pair.destination.path)")
         }
-        guard resolved(destination).path == resolved(installed).path else {
-            throw Failure(description: "\(destination.path) is not ~/Applications/Regrow.app")
+        guard running.standardizedFileURL.resolvingSymlinksInPath().path
+            == pair.staged.resolvingSymlinksInPath().path
+        else {
+            throw Failure(description: "\(running.path) is not \(pair.staged.path)")
         }
-        return (bundle, installed)
+        return pair
     }
 
     /// With a destination in place the two trade names, and the old

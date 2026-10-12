@@ -186,49 +186,124 @@ struct CallerTests {
 
     // MARK: Bundle swap
 
-    @Test("a bundle swaps only itself into ~/Applications/Regrow.app")
-    func swapItself() throws {
+    private static func bundle(_ url: URL, _ mark: String) throws {
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        try Data(mark.utf8).write(to: url.appendingPathComponent("which"))
+    }
+
+    private static func mark(_ url: URL) -> String? {
+        try? String(contentsOf: url.appendingPathComponent("which"), encoding: .utf8)
+    }
+
+    private static func kind(_ url: URL) -> FileAttributeType? {
+        (try? FileManager.default.attributesOfItem(atPath: url.path))?[.type] as? FileAttributeType
+    }
+
+    @Test("--swap takes ~/Applications/.Regrow.app.staged and ~/Applications/Regrow.app, and nothing else")
+    func swapPaths() throws {
         let home = URL(fileURLWithPath: "/Users/owner")
         let staged = URL(fileURLWithPath: "/Users/owner/Applications/.Regrow.app.staged")
         let installed = URL(fileURLWithPath: "/Users/owner/Applications/Regrow.app")
         let pair = try BundleSwap.check(staged: staged, destination: installed, running: staged, home: home)
         #expect(pair.staged.path == staged.path && pair.destination.path == installed.path)
-        #expect(throws: BundleSwap.Failure.self) {
-            _ = try BundleSwap.check(
-                staged: URL(fileURLWithPath: "/Users/owner/Library/Messages"), destination: installed,
-                running: staged, home: home)
+        for (one, other) in [(URL(fileURLWithPath: "/Users/owner/Library/Messages"), installed),
+                             (staged, URL(fileURLWithPath: "/Users/owner/Library/Messages"))] {
+            #expect(throws: BundleSwap.Failure.self) {
+                _ = try BundleSwap.check(staged: one, destination: other, running: staged, home: home)
+            }
         }
         #expect(throws: BundleSwap.Failure.self) {
             _ = try BundleSwap.check(
-                staged: staged, destination: URL(fileURLWithPath: "/Users/owner/Library/Messages"),
-                running: staged, home: home)
+                staged: staged, destination: installed, running: URL(fileURLWithPath: "/tmp/Regrow.app"), home: home)
         }
     }
 
-    @Test("a link the caller names for this bundle is not what moves: the bundle itself is put in place")
-    func swapThroughALink() async throws {
+    @Test("install's swap: the staged copy, run as its own path with a trailing slash, takes the installed one's place")
+    func installSwap() async throws {
         try await withTemporaryDirectory { directory in
             let home = directory.appendingPathComponent("home")
-            let applications = home.appendingPathComponent("Applications")
-            let running = applications.appendingPathComponent(".Regrow.app.staged")
-            let installed = applications.appendingPathComponent("Regrow.app")
-            for (bundle, mark) in [(running, "new"), (installed, "installed")] {
-                try FileManager.default.createDirectory(at: bundle, withIntermediateDirectories: true)
-                try Data(mark.utf8).write(to: bundle.appendingPathComponent("which"))
+            let staged = home.appendingPathComponent("Applications/.Regrow.app.staged")
+            let installed = home.appendingPathComponent("Applications/Regrow.app")
+            try Self.bundle(staged, "new")
+            try Self.bundle(installed, "installed")
+            let running = URL(fileURLWithPath: staged.path + "/", isDirectory: true)
+
+            let pair = try BundleSwap.check(staged: staged, destination: installed, running: running, home: home)
+            try BundleSwap.swap(staged: pair.staged, destination: pair.destination)
+            #expect(Self.mark(installed) == "new")
+            #expect(Self.mark(staged) == "installed")
+
+            try FileManager.default.removeItem(at: staged)
+            try FileManager.default.removeItem(at: installed)
+            try Self.bundle(staged, "first")
+            let first = try BundleSwap.check(staged: staged, destination: installed, running: running, home: home)
+            try BundleSwap.swap(staged: first.staged, destination: first.destination)
+            #expect(Self.mark(installed) == "first")
+            #expect(Self.kind(staged) == nil)
+        }
+    }
+
+    @Test("a link the caller names for the staged bundle is refused")
+    func stagedLinkRefused() async throws {
+        try await withTemporaryDirectory { directory in
+            let home = directory.appendingPathComponent("home")
+            let staged = home.appendingPathComponent("Applications/.Regrow.app.staged")
+            try Self.bundle(staged, "new")
+            let link = directory.appendingPathComponent("callers/staged")
+            try FileManager.default.createDirectory(at: link.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try FileManager.default.createSymbolicLink(at: link, withDestinationURL: staged)
+            #expect(throws: BundleSwap.Failure.self) {
+                _ = try BundleSwap.check(
+                    staged: link, destination: home.appendingPathComponent("Applications/Regrow.app"), running: staged,
+                    home: home)
             }
-            let callers = directory.appendingPathComponent("callers")
-            try FileManager.default.createDirectory(at: callers, withIntermediateDirectories: true)
-            let link = callers.appendingPathComponent("staged")
-            try FileManager.default.createSymbolicLink(at: link, withDestinationURL: running)
+        }
+    }
 
-            let (staged, destination) = try BundleSwap.check(
-                staged: link, destination: installed, running: running, home: home)
-            try BundleSwap.swap(staged: staged, destination: destination)
+    @Test("a link planted at ~/Applications/Regrow.app is what moves, not the folder it points at")
+    func destinationLink() async throws {
+        try await withTemporaryDirectory { directory in
+            let home = directory.appendingPathComponent("home")
+            let staged = home.appendingPathComponent("Applications/.Regrow.app.staged")
+            let installed = home.appendingPathComponent("Applications/Regrow.app")
+            let protected = home.appendingPathComponent("Library/Messages")
+            try Self.bundle(staged, "new")
+            try Self.bundle(protected, "messages")
+            try FileManager.default.createSymbolicLink(at: installed, withDestinationURL: protected)
 
-            let kind = try FileManager.default.attributesOfItem(atPath: installed.path)[.type] as? FileAttributeType
-            #expect(kind == .typeDirectory)
-            #expect(try String(contentsOf: installed.appendingPathComponent("which"), encoding: .utf8) == "new")
-            #expect(try FileManager.default.destinationOfSymbolicLink(atPath: link.path) == running.path)
+            let pair = try BundleSwap.check(staged: staged, destination: installed, running: staged, home: home)
+            try BundleSwap.swap(staged: pair.staged, destination: pair.destination)
+            #expect(Self.mark(protected) == "messages")
+            #expect(Self.kind(installed) == .typeDirectory)
+            #expect(Self.kind(staged) == .typeSymbolicLink)
+        }
+    }
+
+    @Test("a running bundle's path re-pointed at a protected folder after launch moves nothing")
+    func runningPathRepointed() async throws {
+        try await withTemporaryDirectory { directory in
+            let home = directory.appendingPathComponent("home")
+            let staged = home.appendingPathComponent("Applications/.Regrow.app.staged")
+            let installed = home.appendingPathComponent("Applications/Regrow.app")
+            let protected = home.appendingPathComponent("Library/Messages")
+            try Self.bundle(installed, "installed")
+            try Self.bundle(protected, "messages")
+            // Started from callers/Regrow.app, which Bundle.main keeps; the
+            // caller then put a link to the protected folder at that path,
+            // and at the staged path too.
+            let launched = directory.appendingPathComponent("callers/Regrow.app")
+            try FileManager.default.createDirectory(at: launched.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try FileManager.default.createSymbolicLink(at: launched, withDestinationURL: protected)
+            #expect(throws: BundleSwap.Failure.self) {
+                _ = try BundleSwap.check(staged: protected, destination: installed, running: launched, home: home)
+            }
+            try FileManager.default.createSymbolicLink(at: staged, withDestinationURL: protected)
+            let pair = try BundleSwap.check(staged: staged, destination: installed, running: launched, home: home)
+            try BundleSwap.swap(staged: pair.staged, destination: pair.destination)
+            #expect(Self.mark(protected) == "messages")
+            #expect(Self.kind(staged) == .typeDirectory)
+            #expect(Self.mark(staged) == "installed")
+            #expect(Self.kind(installed) == .typeSymbolicLink)
         }
     }
 }
