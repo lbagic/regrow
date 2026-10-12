@@ -13,7 +13,8 @@ public enum BundleSwap {
     /// link in a resolved path can be re-pointed between a check and the
     /// rename; `rename` does not follow a link in a path's last part, so
     /// only entries of these two names can move. The running bundle must
-    /// be the staged one: a bundle puts only itself in place.
+    /// resolve where the staged path resolves, so a link planted at the
+    /// staged path lets any bundle through, the installed one included.
     public static func check(
         staged: URL, destination: URL, running: URL, home: URL = Account.home
     ) throws -> (staged: URL, destination: URL) {
