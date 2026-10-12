@@ -56,7 +56,7 @@ Anything running as you can start the app with variables and arguments of its ch
 - A smoke check only in a folder `mktemp` made as `$(getconf DARWIN_USER_TEMP_DIR)regrow-smoke.<x>`, and the trash check only on `~/regrow-smoke-*`, through the rule the bundle carries. `just app-smoke trash` refuses to start while one is there already.
 - `--swap` only of `~/Applications/.Regrow.app.staged` and `~/Applications/Regrow.app`, from the staged bundle, as `just app` runs it; the two are renamed as written, so a link at either is what moves.
 
-What stays open needs your files changed: the bundle in `~/Applications` is yours to write, a copy of it with its engine replaced still gets Full Disk Access (macOS checks the app's own executable, not the engine inside it), the signing key signs for any program without asking, and the login shell runs your profile with the app's access. [ARCHITECTURE.md](ARCHITECTURE.md)'s decisions log has the list.
+What stays open needs your files changed: the bundle in `~/Applications` is yours to write, a copy of it with its engine replaced still gets Full Disk Access (macOS checks the app's own executable, not the engine inside it), the signing key signs for any program without asking, and the login shell runs your profile with the app's access. So Regrow's Full Disk Access is only as safe as your own files. [ARCHITECTURE.md](ARCHITECTURE.md)'s decisions log has the list.
 
 The app's log is `~/Library/Logs/regrow/app.log`, with the engine's stderr in `engine.log` beside it.
 
