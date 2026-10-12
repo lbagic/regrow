@@ -152,8 +152,6 @@ go test ./internal/rulesdoc -update   # regenerate docs/RULES.md after a rule ch
 
 Adding a cleaning target is usually a YAML file in `rules/` with a `fixture:` block, which the golden test scans in a fake home. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) holds the structure, the safety invariants and the decisions log; [docs/PRODUCT.md](docs/PRODUCT.md) the why; [docs/PLAN.md](docs/PLAN.md) the build order; [CONTEXT.md](CONTEXT.md) the words the code uses.
 
-regrow started as `clean.sh`, a bash script that is still in the repository.
-
 ## Other tools (surveyed July 2026)
 
 - [npkill](https://github.com/voidcosmos/npkill) finds and removes `node_modules`, and is the best at that one job.

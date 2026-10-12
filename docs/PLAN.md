@@ -10,7 +10,7 @@ Each phase = one or a few Claude sessions with a ready prompt. Milestones (M1–
 - [x] P0-B scaffold — repo pushed, CI green (2026-07-13, github.com/lbagic/regrow)
 - [x] P1-C engine + schema (2026-07-13)
 - [x] P1-D TUI (2026-07-13)
-- [x] P1-E port clean.sh + Tier-S rules → **M1 usable** (2026-07-13, 30 rules, real scan found 158.8 GiB)
+- [x] P1-E port the bash script's modules + Tier-S rules → **M1 usable** (2026-07-13, 30 rules, real scan found 158.8 GiB)
 - [x] Architecture review + Prompt-F groundwork (2026-07-13): trash seam, per-rule golden fixtures, scan cancellation — [review doc](plans/2026-07-13-architecture-review.md)
 - [x] P2-F safety hardening (2026-07-13): clean/undo/history, trash+staging+receipts, oplog, placeholder validation, --beta-rules, GoReleaser+release CI — code done; **M2 needs manual publish** (tap repo, TAP_GITHUB_TOKEN secret, tag v0.1.0)
 - [x] P3-G0 item identity (2026-07-13): `ruleID/key` ids, per-item plan/clean selectors + `Plan.Unmatched` typo guard, TUI expandable item rows (all/partial/none), `--json` keys, refits: sim devices/runtimes, xcode-archives (per-archive glob), tm-snapshots (per-snapshot delete) — [design doc](plans/2026-07-13-item-identity.md)
@@ -40,13 +40,15 @@ Each phase = one or a few Claude sessions with a ready prompt. Milestones (M1–
 - [x] undo counts what is on disk (2026-10-11): `regrow history`'s "restorable" and a bare `regrow undo`'s pick count only moves whose Trash or staging copy is still there; a run with nothing left says why, and `regrow undo <run-id>` refuses it
 - [x] reclaim figure without volume exports (2026-10-12): the plan's "Would reclaim" (`regrow plan`, the TUI plan screen, and `regrow clean`'s list, once "Total:") adds up "Frees now" and "Frees after Trash" through `Plan.ReclaimBytes`, so a docker volume's export, whose tarball keeps its bytes on disk, is on its own "Volume exports" line only
 - [x] user docs (2026-10-11): README rewritten for regrow; [RULES.md](RULES.md) generated from the catalog by `internal/rulesdoc` with a staleness test, rules gain `scans` and `keeps`; [SCAN.md](SCAN.md), what a scan reads, runs and writes
+- [ ] PR 6.6 coverage: app leftovers ([attack plan](plans/2026-10-04-attack-plan.md) item 6): waits on the owner granting `Regrow.app` Full Disk Access (a PR 5 owner checkpoint, [APP.md](APP.md)), and starts then
+- [ ] PR 6.9 coverage: regrow-trash expiry ([attack plan](plans/2026-10-04-attack-plan.md) item 9): deferred (2026-10-12): planned as later, an owner checkpoint
 
 **Now:** personal-first reset — [attack plan](plans/2026-10-04-attack-plan.md): PR 1 planner safety, PR 2 scan correctness, PR 3 `regrow engine` protocol and PR 4 headroom + go-build prune done (owner runs the first `regrow prune go-build --yes`), PR 5 menubar shell done (owner checkpoints in [APP.md](APP.md): signing identity, `just app`, the smoke checks, Full Disk Access, autotrim) → PR 6+ coverage (6.1 agent sessions with its liveness follow-up, 6.2 git worktrees, 6.3 build output, 6.4 Docker unused images, 6.5 toolchains, 6.7 small fry and 6.8 fix-the-cause rows done; the owner applies the fixes `regrow doctor` prints and runs the first `regrow clean --beta-rules docker-images-unused`, the first `regrow clean --beta-rules build-output/<path>`, the first `regrow clean --beta-rules npx-cache` and `regrow clean --beta-rules downloaded-installers`, and the first `regrow clean --beta-rules` of `fnm-node-versions`, `android-ndk` and `android-sdk`). `regrow history` sizes count finished actions only, and a docker volume is counted in its export, not as freed (the run summary, and the scan's and plan's totals); `aerial-wallpapers` is surface-only; undo counts only what is still on disk; "Would reclaim", on `regrow plan`, the TUI and `regrow clean`, leaves out a docker volume's export. User docs: README, generated [RULES.md](RULES.md), [SCAN.md](SCAN.md). Launch work (Prompt I, M2 publish) parked.
 
 ```mermaid
 flowchart TD
     P0[Phase 0: Decisions<br/>name · repo · license] --> P1[Phase 1: Skeleton<br/>engine + TUI + 15 safe rules]
-    P1 --> M1{{M1: USABLE FOR ME<br/>replaces clean.sh daily}}
+    P1 --> M1{{M1: USABLE FOR ME<br/>replaces the bash script daily}}
     M1 --> P2[Phase 2: Safety hardening<br/>trash/undo · golden tests · CI]
     P2 --> M2{{M2: SHAREABLE<br/>brew tap, friends use it}}
     M2 --> P3[Phase 3: Wedge<br/>item identity · ML models · docker<br/>doctor · phantom space]
@@ -78,10 +80,10 @@ Exit: name chosen, repo pushed, CI green on hello-world.
 **Prompt D — TUI:**
 > Bubbletea checklist TUI per PRODUCT.md §4 sketch: grouped by category, size-ranked, risk colors, note on cursor, plan screen before any action. `--json` output mode.
 
-**Prompt E — port clean.sh:**
-> Port all modules from clean.sh into YAML rules + add Tier-S from docs/research/02: DerivedData, DeviceSupport, CoreSimulator devices+runtimes (simctl only), docker prune, npm/yarn/pnpm, go, brew, pip/uv, TM snapshots, aerial (Sequoia+Tahoe paths), trash. Golden test per rule with fixture $HOME.
+**Prompt E — port the bash script:**
+> Port all modules from the bash script regrow started from (removed 2026-10-12; git history keeps it) into YAML rules + add Tier-S from docs/research/02: DerivedData, DeviceSupport, CoreSimulator devices+runtimes (simctl only), docker prune, npm/yarn/pnpm, go, brew, pip/uv, TM snapshots, aerial (Sequoia+Tahoe paths), trash. Golden test per rule with fixture $HOME.
 
-**M1 check:** `regrow` run on this Mac finds ≥60GB, executes via trash, undo works. clean.sh retired.
+**M1 check:** `regrow` run on this Mac finds ≥60GB, executes via trash, undo works. The bash script retired.
 
 ## Phase 2 — Safety hardening → **M2: shareable**
 
