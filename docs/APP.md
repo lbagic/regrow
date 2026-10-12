@@ -1,6 +1,6 @@
 # The menubar app
 
-`Regrow.app` keeps regrow in the menu bar: free space, purgeable space, swap and days-to-full at a glance, a watch tick every 15 minutes and on wake whose alerts arrive as notifications, and a window that scans, plans and runs a clean. Opening the app from Finder, Spotlight or `open` shows the window, also while it runs; a launch at login shows only the menu bar item, whose Scan… opens it. A launch in the first two minutes after you log in counts as the login's, so opening the app then needs a second open to show the window. It is a shell around `regrow engine` ([ENGINE.md](ENGINE.md)): the Go binary sits inside the bundle and does all the work. The scan page follows [DESIGN.md](../DESIGN.md).
+`Regrow.app` keeps regrow in the menu bar: free space, purgeable space, swap and days-to-full at a glance, a watch tick every 15 minutes and on wake whose alerts arrive as notifications, and a window that scans, plans and runs a clean. Opening the app from Finder, Spotlight or `open` shows the window, also while it runs; a launch at login shows only the menu bar item, whose Scan… opens it. While Regrow is in your Login Items, a launch in the first two minutes after you log in counts as the login's and opens no window; opening the app while it runs always shows it, and so does a relaunch. It is a shell around `regrow engine` ([ENGINE.md](ENGINE.md)): the Go binary sits inside the bundle and does all the work. The scan page follows [DESIGN.md](../DESIGN.md).
 
 It builds with the Command Line Tools alone. No Xcode is needed.
 

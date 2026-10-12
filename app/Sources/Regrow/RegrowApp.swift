@@ -1,5 +1,6 @@
 import AppKit
 import RegrowKit
+import ServiceManagement
 import SwiftUI
 
 /// The menu bar item is the app's only scene; the scan window is the
@@ -111,7 +112,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         {
             return "marked as a login item"
         }
-        if LoginSession.isLoginLaunch(at: Date(), sessionStart: LoginSession.consoleStart()) {
+        // Only a registered login item is started by the login; the owner
+        // opening the app while that item runs is a reopen.
+        if SMAppService.mainApp.status == .enabled,
+            LoginSession.isLoginLaunch(at: Date(), sessionStart: LoginSession.consoleStart())
+        {
             return "started within \(Int(LoginSession.window)) s of the login"
         }
         return nil

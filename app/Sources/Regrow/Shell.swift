@@ -447,7 +447,7 @@ final class Shell: ObservableObject {
             log("relaunch asked for outside a bundle: quit and start it again by hand")
             return
         }
-        let wait = #"i=0; while kill -0 "$1" 2>/dev/null && [ "$i" -lt 600 ]; do sleep 0.1; i=$((i+1)); done; exec /usr/bin/open "$2""#
+        let wait = #"i=0; while kill -0 "$1" 2>/dev/null && [ "$i" -lt 600 ]; do sleep 0.1; i=$((i+1)); done; exec /usr/bin/open "$2" --args --open-scan"#
         let null = open("/dev/null", O_RDWR | O_CLOEXEC)
         defer { close(null) }
         do {

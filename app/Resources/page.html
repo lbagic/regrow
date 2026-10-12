@@ -540,8 +540,10 @@ const tilde = (s) => (home ? String(s).replace(home, '$1~') : String(s));
 const shellJoin = (argv) => [].concat(argv || []).map((a) => (/[ \t"'*?[]/.test(a) ? JSON.stringify(a) : a)).join(' ');
 // One word as a shell reads it back, quoted as the engine's shellQuote quotes it.
 const shellWord = (s) => (/[ \t\n'"\\$`*?[\](){}<>|&;!#]/.test(s) ? "'" + s.replace(/'/g, "'\\''") + "'" : s);
-// A command as a shell reads it back, for the pasteboard; shellJoin is how it is drawn.
+// A command as a shell reads it back, for the pasteboard, and as it is drawn: the home folder as ~ only in a
+// word left unquoted, where a shell expands it.
 const shellLine = (argv) => [].concat(argv || []).map(shellWord).join(' ');
+const drawnLine = (argv) => [].concat(argv || []).map((w) => (shellWord(w) === w ? tilde(w) : shellWord(w))).join(' ');
 // How regrow is started in Terminal, as the engine names itself: an app's engine goes by its path.
 const cli = () => shellWord((S.hello && S.hello.self) || 'regrow');
 
@@ -608,7 +610,7 @@ const sentence = (s) => {
   const parts = String(s).split('`');
   return new Markup(parts.map((part, i) => {
     if (i % 2 === 0) return esc(ownLine(parts, i - 1) ? part.replace(/^[.,;]/, '') : part);
-    const said = /^regrow( |$)/.test(part) ? cli() + part.slice(6) : part;
+    const said = part.replace(/^regrow(?= |$)/, () => cli());
     const quote = '<span class="mono">' + unbroken(said).s + '</span>' + (/[ /]/.test(said) ? copy(said, 'command').s : '');
     return ownLine(parts, i) ? '<span class="cmd">' + quote + '</span>' : quote;
   }).join(''));
@@ -735,7 +737,8 @@ function entry(v, scale, fresh, small) {
   const open = S.open.has('r' + row.n), each = !!row.select && !row.whole;
   const kept = rule.risk !== 'safe' && rule.risk !== 'caution';
   const command = shellJoin(rule.native_command), runnable = !/\{(path|arg)\}/.test(command);
-  const shown = h`<span class="mono">${unbroken(command)}</span>${runnable ? copy(shellLine(rule.native_command), 'command') : ''}`;
+  const shown = runnable ? h`<span class="mono">${unbroken(drawnLine(rule.native_command))}</span>${copy(shellLine(rule.native_command), 'command')}`
+    : h`<span class="mono">${unbroken(command)}</span>`;
   const runs = row.bucket === 'after_trash' ? 'Goes to the Trash; regrow undo restores it.'
     : row.bucket === 'exported' ? h`Runs ${shown} after a tarball goes to regrow staging, no undo.`
     : row.bucket !== 'frees_now' ? '' : rule.native_command ? h`Runs ${shown}, no undo.` : 'A command frees it, with no undo.';
@@ -772,7 +775,7 @@ function drawPlan() {
 
 // An action as it is copied: the path a move takes, or the command. It is read with the home folder as ~.
 const moves = (a) => a.kind === 'trash' && !!a.path;
-const told = (a) => unbroken(tilde(moves(a) ? a.path : shellJoin(a.command)));
+const told = (a) => unbroken(moves(a) ? tilde(a.path) : drawnLine(a.command));
 const copyAction = (a) => (moves(a) ? copy(a.path, 'path') : copy(shellLine(a.command), 'command'));
 const tellActions = (p) => h`<span class="scale">A full bar is ${human(Math.max(1, ...p.groups.map((g) => g.bytes)))}, the largest action</span>`;
 
