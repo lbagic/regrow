@@ -56,10 +56,10 @@ func newLeftoversFixture(t *testing.T) *leftoversFixture {
 		host: f.host,
 		idle: appLeftoversIdle,
 		now:  func() time.Time { return now },
-		spotlight: func(context.Context) []string {
+		spotlight: func(context.Context) ([]string, error) {
 			f.mu.Lock()
 			defer f.mu.Unlock()
-			return slices.Clone(f.spot)
+			return slices.Clone(f.spot), nil
 		},
 		entitlements: func(_ context.Context, bundle string) ([]byte, error) {
 			f.mu.Lock()
@@ -1094,5 +1094,170 @@ func TestAppLeftoversUnparsableEntitlementsAreAnError(t *testing.T) {
 	f.folder("Containers", "org.gone.app")
 	if offered, _, err := f.a.judge(context.Background(), ""); err == nil {
 		t.Errorf("offered %v, want an error", paths(offered))
+	}
+}
+
+// An app inside a plain folder named like one (a checkout called
+// site.app) owns its folders, whether it runs or Spotlight knows it,
+// the folder too or not.
+func TestAppLeftoversAppInsideAFolderNamedLikeOne(t *testing.T) {
+	cases := map[string]func(f *leftoversFixture, real string){
+		"running": func(f *leftoversFixture, real string) {
+			f.procs = []string{filepath.Join(real, "Contents", "MacOS", "Real")}
+		},
+		"running, Spotlight knows it": func(f *leftoversFixture, real string) {
+			f.procs = []string{filepath.Join(real, "Contents", "MacOS", "Real")}
+			f.spot = []string{real}
+		},
+		"Spotlight knows the folder and it": func(f *leftoversFixture, real string) {
+			f.spot = []string{f.host.ExpandPath("/Volumes/code/site.app"), real}
+		},
+	}
+	for name, setup := range cases {
+		t.Run(name, func(t *testing.T) {
+			f := newLeftoversFixture(t)
+			real := f.app("/Volumes/code/site.app/build/Real.app", "com.real.app")
+			dir := f.folder("Containers", "com.real.app")
+			setup(f, real)
+			offered, kept := f.judge()
+			if slices.Contains(append(paths(offered), paths(kept)...), dir) {
+				t.Errorf("listed %s, which Real.app owns", dir)
+			}
+			f.a.memo = &ownersMemo{}
+			if err := f.a.recheck(context.Background(), dir); err == nil {
+				t.Errorf("the recheck passed %s, which Real.app owns", dir)
+			}
+		})
+	}
+}
+
+// A Spotlight that fails is not one that knows no apps; with no mdfind
+// there are none from it.
+func TestAppLeftoversFailingSpotlightIsAnError(t *testing.T) {
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "mdfind"), []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	f := newLeftoversFixture(t)
+	f.folder("Containers", "org.gone.app")
+	f.a.spotlight = mdfindApps
+	if offered, _, err := f.a.judge(context.Background(), ""); err == nil {
+		t.Errorf("offered %v with mdfind failing, want an error", paths(offered))
+	}
+	t.Setenv("PATH", t.TempDir())
+	if apps, err := mdfindApps(context.Background()); err != nil || len(apps) > 0 {
+		t.Errorf("with no mdfind: %v, %v; want none and no error", apps, err)
+	}
+}
+
+// Within the memo's minute, a recheck reads an app started since whole:
+// its groups are owners, a plug-in of it that cannot be read is an
+// error, and an app read once is not read again.
+func TestRecheckReadsAppsStartedSince(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root reads every file")
+	}
+	f := newLeftoversFixture(t)
+	gone := f.folder("Containers", "org.gone.app")
+	f.a.memo = &ownersMemo{}
+	ctx := context.Background()
+	if err := f.a.recheck(ctx, gone); err != nil {
+		t.Fatalf("recheck of an offered folder: %v", err)
+	}
+	dmg := f.app("/Volumes/Dmg/Dmg.app", "com.dmg.app")
+	f.ents[dmg] = entitlementsXML("group.io.shared.data")
+	group := f.folder("Group Containers", "group.io.shared.data")
+	f.procs = []string{filepath.Join(dmg, "Contents", "MacOS", "Dmg")}
+	if err := f.a.recheck(ctx, group); err == nil || !strings.Contains(err.Error(), "no leftover now") {
+		t.Errorf("recheck of a group an app started since is entitled to = %v, want a refusal", err)
+	}
+	calls := f.entCalls
+	if err := f.a.recheck(ctx, gone); err != nil {
+		t.Errorf("recheck of an offered folder: %v", err)
+	}
+	if f.entCalls != calls {
+		t.Errorf("a recheck read the entitlements of an app it had read")
+	}
+	locked := f.app("/Volumes/U/Locked.app", "com.locked.app")
+	widget := filepath.Join(locked, "Contents", "PlugIns", "W.appex", "Contents", "Info.plist")
+	f.plist(widget, "net.locked.widget")
+	chmod(t, widget, 0)
+	box := f.folder("Containers", "net.locked.widget")
+	f.procs = append(f.procs, filepath.Join(locked, "Contents", "MacOS", "Locked"))
+	if err := f.a.recheck(ctx, box); err == nil {
+		t.Errorf("the recheck passed %s with a plug-in of a running app unread", box)
+	}
+}
+
+// regrow's own open files are left out of lsof's answer, its working
+// folder and program kept; an answer without regrow is no answer.
+func TestOthersFiles(t *testing.T) {
+	out := "p7\nfcwd\nn/H/Library/Containers/com.a.b\nf3\nn/H/Library/Containers/com.c.d\nftxt\nn/H/bin/regrow\np8\nf4\nn/H/Library/Containers/com.e.f\n"
+	got, err := othersFiles(out, 7)
+	want := []string{"/H/Library/Containers/com.a.b", "/H/bin/regrow", "/H/Library/Containers/com.e.f"}
+	if err != nil || !slices.Equal(got, want) {
+		t.Errorf("othersFiles = %v, %v; want %v", got, err, want)
+	}
+	if got, err := othersFiles("p100\nfcwd\nn/H/x\n", 7); err == nil {
+		t.Errorf("othersFiles without regrow = %v, want an error", got)
+	}
+}
+
+// A change to a file of the maker beside its folders is use: a settings
+// file, reached through a link or kept per host, and a cookie store.
+func TestAppLeftoversMakersFilesShowUse(t *testing.T) {
+	f := newLeftoversFixture(t)
+	linked := f.folder("Containers", "com.linked.app")
+	f.write("~/Sync/com.linked.app.plist", "<plist/>")
+	f.touch(f.host.ExpandPath("~/Sync/com.linked.app.plist"), 2)
+	if err := os.MkdirAll(f.host.ExpandPath("~/Library/Preferences"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(f.host.ExpandPath("~/Sync/com.linked.app.plist"), f.host.ExpandPath("~/Library/Preferences/com.linked.app.plist")); err != nil {
+		t.Fatal(err)
+	}
+	byHost := f.folder("Containers", "com.byhost.app")
+	perHost := "~/Library/Preferences/ByHost/com.byhost.app.0A1B2C3D-0000-4000-8000-000000000000.plist"
+	f.write(perHost, "<plist/>")
+	f.touch(f.host.ExpandPath(perHost), 2)
+	cookies := f.folder("HTTPStorages", "dev.deploy.cli")
+	f.write("~/Library/HTTPStorages/dev.deploy.cli.binarycookies", "cookies")
+	f.touch(f.host.ExpandPath("~/Library/HTTPStorages/dev.deploy.cli.binarycookies"), 1)
+	free := f.folder("Containers", "com.free.app")
+
+	offered, kept := f.judge()
+	if got := paths(offered); !slices.Equal(got, []string{free}) {
+		t.Errorf("offered %v, want only %s", got, free)
+	}
+	for path, why := range map[string]string{
+		linked:  "Preferences/com.linked.app.plist",
+		byHost:  "ByHost/com.byhost.app.",
+		cookies: "HTTPStorages/dev.deploy.cli.binarycookies",
+	} {
+		if got := keptWhy(kept, path); !strings.Contains(got, why) {
+			t.Errorf("%s: kept for %q, want %q", path, got, why)
+		}
+	}
+}
+
+// A folder Spotlight calls an app but that holds no Info.plist (an
+// Eclipse plug-in folder) is not read: a folder in it that refuses is
+// no error.
+func TestAppLeftoversSkipFoldersNamedLikeApps(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root reads every folder")
+	}
+	f := newLeftoversFixture(t)
+	plain := f.host.ExpandPath("/Volumes/Eclipse/plugins/tool.app")
+	locked := filepath.Join(plain, "lib")
+	if err := os.MkdirAll(locked, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	chmod(t, locked, 0)
+	f.spot = []string{plain}
+	gone := f.folder("Containers", "org.gone.app")
+	if offered, _, err := f.a.judge(context.Background(), ""); err != nil || !slices.Contains(paths(offered), gone) {
+		t.Errorf("offered %v, %v; want %s and no error", paths(offered), err, gone)
 	}
 }

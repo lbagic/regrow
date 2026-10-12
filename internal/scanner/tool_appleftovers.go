@@ -81,6 +81,10 @@ var madeByMacOS = map[string]bool{
 // gives (Unity's is unity.<company>.<product>, whatever the app's id).
 var appSigns = []string{"Containers", "Group Containers", "Saved Application State", "Application Scripts"}
 
+// settingsLocations hold the settings files apps keep under ~/Library,
+// named by their ids: <id>.plist, and <id>.<host>.plist per host.
+var settingsLocations = []string{"Preferences", "Preferences/ByHost"}
+
 // appInstallRoots are where apps are installed.
 var appInstallRoots = []string{"/Applications", "~/Applications", "/System/Applications"}
 
@@ -145,8 +149,8 @@ type appLeftovers struct {
 	idle time.Duration
 	now  func() time.Time
 	// spotlight lists the app bundles Spotlight knows, wherever they
-	// are. It can only add owners: no answer is none from it.
-	spotlight func(ctx context.Context) []string
+	// are. It can only add owners.
+	spotlight func(ctx context.Context) ([]string, error)
 	// entitlements returns a bundle's entitlements as codesign prints
 	// them, nothing for a bundle that has none.
 	entitlements func(ctx context.Context, bundle string) ([]byte, error)
@@ -246,8 +250,12 @@ func (a *appLeftovers) owners(ctx context.Context, procs []string) (*installedAp
 	now := a.now()
 	if age := now.Sub(a.memo.at); a.memo.in != nil && a.memo.home == a.host.Home && age >= 0 && age < ownersReuse {
 		// An app started since may be one the reading missed.
+		running, err := a.appBundles(ctx, runningBundles(procs))
+		if err != nil {
+			return nil, err
+		}
 		var started []string
-		for _, b := range runningBundles(procs) {
+		for _, b := range running {
 			if !a.memo.in.bundles[b] {
 				started = append(started, b)
 			}
@@ -381,18 +389,19 @@ func (a *appLeftovers) judge(ctx context.Context, only string) (offered, kept []
 
 // judging is what every folder is judged against.
 type judging struct {
-	// names holds, per location and ~/Library/Preferences, the name of
-	// each entry by its folded name; unread the locations not read in
-	// full.
-	names  map[string]map[string]string
+	// unread holds the locations not read in full.
 	unread map[string]bool
 	// signed holds the coreIDs of the folders macOS made only for an
-	// app; settings, per maker, why its settings changed lately ("" when
-	// they did not), once asked.
-	signed   map[string]bool
-	settings map[string]string
-	in       *installedApps
-	ptrs     *pointers
+	// app.
+	signed map[string]bool
+	// marks holds, per maker, the files named by its ids beside the
+	// folders: settings in ~/Library/Preferences and its ByHost folder,
+	// cookie stores in HTTPStorages; marked, per maker, why one of them
+	// changed lately ("" when none did), once asked.
+	marks  map[string][]string
+	marked map[string]string
+	in     *installedApps
+	ptrs   *pointers
 	// system holds the nameKeys of macOS's own programs and frameworks;
 	// nil in a recheck, which judges no product names.
 	system map[string]bool
@@ -422,17 +431,17 @@ func (a *appLeftovers) sameUser(ctx context.Context) error {
 
 // folders lists the leftover locations: every folder that could be a
 // leftover (not macOS's own, not one whose name says nothing), or, for
-// only, it and the other folders of its maker; the names in each
-// location and in ~/Library/Preferences; the ids macOS made app folders
-// for; and a marker for each location that could not be read in full.
+// only, it and the other folders of its maker; the files of each
+// maker beside them; the ids macOS made app folders for; and a marker
+// for each location that could not be read in full.
 func (a *appLeftovers) folders(ctx context.Context, only string) ([]leftoverFolder, *judging, []engine.Item, error) {
-	j := &judging{names: map[string]map[string]string{}, unread: map[string]bool{}, signed: map[string]bool{}, settings: map[string]string{}}
+	j := &judging{unread: map[string]bool{}, signed: map[string]bool{}, marks: map[string][]string{}, marked: map[string]string{}}
 	var folders []leftoverFolder
 	var blocked []engine.Item
 	library := filepath.Join(a.host.Home, "Library")
-	for _, loc := range append([]string{"Preferences"}, leftoverLocations...) {
+	for _, loc := range append(slices.Clone(settingsLocations), leftoverLocations...) {
 		dir := filepath.Join(library, loc)
-		j.names[loc] = map[string]string{}
+		settings := slices.Contains(settingsLocations, loc)
 		if _, err := a.w.lstat(ctx, dir); absent(err) {
 			continue
 		}
@@ -441,15 +450,24 @@ func (a *appLeftovers) folders(ctx context.Context, only string) ([]leftoverFold
 			return nil, nil, nil, err
 		}
 		if partial {
-			if loc == "Preferences" {
+			if settings {
 				return nil, nil, nil, fmt.Errorf("%s could not be read in full, so when an app last changed its settings is unknown", dir)
 			}
 			blocked = append(blocked, unreadableMarker("~/Library/"+loc))
 			j.unread[loc] = true
 		}
 		for _, e := range entries {
-			j.names[loc][foldName(e.Name())] = e.Name()
-			if loc == "Preferences" || !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+			if strings.HasPrefix(e.Name(), ".") {
+				continue
+			}
+			if !e.IsDir() {
+				if idShaped(e.Name()) {
+					maker := vendorOf(e.Name())
+					j.marks[maker] = append(j.marks[maker], filepath.Join(dir, e.Name()))
+				}
+				continue
+			}
+			if settings {
 				continue
 			}
 			f := leftoverFolder{loc: loc, name: e.Name(), path: filepath.Join(dir, e.Name()), id: leftoverID(loc, e.Name())}
@@ -661,9 +679,17 @@ func (a *appLeftovers) installed(ctx context.Context, procs []string) (*installe
 	}
 	var extra []string
 	if a.spotlight != nil {
-		extra = append(extra, a.spotlight(ctx)...)
+		apps, err := a.spotlight(ctx)
+		if err != nil {
+			return nil, err
+		}
+		extra = append(extra, apps...)
 	}
-	more, err := a.readBundles(ctx, in, a.outerBundles(append(extra, runningBundles(procs)...)))
+	apps, err := a.appBundles(ctx, append(extra, runningBundles(procs)...))
+	if err != nil {
+		return nil, err
+	}
+	more, err := a.readBundles(ctx, in, apps)
 	if err != nil {
 		return nil, err
 	}
@@ -677,40 +703,69 @@ func (a *appLeftovers) installed(ctx context.Context, procs []string) (*installe
 	return in, nil
 }
 
-// outerBundles drops from bundles each one inside an app root, which
-// the roots' walk read, or inside another of them.
-func (a *appLeftovers) outerBundles(bundles []string) []string {
+// appBundles turns the bundles Spotlight knows or that run into the
+// apps to read, sorted: each one's outermost app that has an Info.plist
+// (a login item's app), or itself, less those without an Info.plist
+// (Spotlight lists apps deleted and folders named like apps; a checkout
+// named site.app is no app), those inside an app root, which the
+// roots' walk read, and those inside another of them.
+func (a *appLeftovers) appBundles(ctx context.Context, bundles []string) ([]string, error) {
+	var apps []string
+	for _, b := range bundles {
+		app, err := a.outermost(ctx, b)
+		if err != nil {
+			return nil, err
+		}
+		ok, err := a.describes(ctx, app)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			apps = append(apps, app)
+		}
+	}
 	var roots []string
 	for _, r := range appInstallRoots {
 		roots = append(roots, a.host.ExpandPath(r))
 	}
-	slices.Sort(bundles)
+	slices.Sort(apps)
 	var outer []string
-	for _, b := range slices.Compact(bundles) {
+	for _, b := range slices.Compact(apps) {
 		inside := func(dir string) bool { return strings.HasPrefix(b, dir+string(filepath.Separator)) }
 		if !slices.ContainsFunc(roots, inside) && !slices.ContainsFunc(outer, inside) {
 			outer = append(outer, b)
 		}
 	}
-	return outer
+	return outer, nil
 }
 
-// readBundles reads the apps Spotlight knows and the running apps, each
-// whole, into in, and returns the code bundles read. A bundle without
-// an Info.plist is no owner: Spotlight lists apps deleted or on a disk
-// not mounted now, and folders named like apps. One whose Info.plist
-// cannot be read or does not parse, or with a folder that cannot be
-// read, is an error: it is there, and what it owns is unknown.
-func (a *appLeftovers) readBundles(ctx context.Context, in *installedApps, bundles []string) ([]string, error) {
-	var code []string
-	for _, b := range bundles {
-		ok, err := a.describes(ctx, b)
-		if err != nil {
-			return nil, err
-		}
-		if !ok {
+// outermost is the first app on a bundle's path that has an Info.plist,
+// or the bundle itself when none has.
+func (a *appLeftovers) outermost(ctx context.Context, bundle string) (string, error) {
+	parts := strings.Split(bundle, string(filepath.Separator))
+	for i, p := range parts {
+		if !strings.EqualFold(filepath.Ext(p), ".app") {
 			continue
 		}
+		app := strings.Join(parts[:i+1], string(filepath.Separator))
+		ok, err := a.describes(ctx, app)
+		if err != nil {
+			return "", err
+		}
+		if ok {
+			return app, nil
+		}
+	}
+	return bundle, nil
+}
+
+// readBundles reads each app whole into in, and returns the code
+// bundles read. One with a folder that cannot be read, or an Info.plist
+// that cannot be read or does not parse, is an error: it is there, and
+// what it owns is unknown.
+func (a *appLeftovers) readBundles(ctx context.Context, in *installedApps, apps []string) ([]string, error) {
+	var code []string
+	for _, b := range apps {
 		nested, err := a.bundlePlists(ctx, b)
 		if err != nil {
 			return nil, err
@@ -873,10 +928,9 @@ func hasExt(path string, exts []string) bool {
 	return slices.Contains(exts, ext)
 }
 
-// runningBundle is the app a running executable belongs to: the
-// outermost app on its path (/Applications/Foo.app for
-// Foo.app/Contents/Library/LoginItems/Helper.app/Contents/MacOS/Helper),
-// or the code bundle it sits in outside one; "" for any other path.
+// runningBundle is the code bundle a running executable sits in
+// (/Applications/Foo.app for /Applications/Foo.app/Contents/MacOS/Foo),
+// "" for any other path.
 func runningBundle(path string) string {
 	dir := filepath.Dir(path)
 	if filepath.Base(dir) != "MacOS" || filepath.Base(filepath.Dir(dir)) != "Contents" {
@@ -886,10 +940,11 @@ func runningBundle(path string) string {
 	if !hasExt(bundle, codeBundleExts) {
 		return ""
 	}
-	return outermostApp(filepath.Join(bundle, "Contents"))
+	return bundle
 }
 
-// runningBundles are the apps of the running executables, sorted.
+// runningBundles are the code bundles of the running executables,
+// sorted.
 func runningBundles(procs []string) []string {
 	var out []string
 	for _, p := range procs {
@@ -973,12 +1028,15 @@ func lastLine(s string) string {
 	return s[strings.LastIndexByte(s, '\n')+1:]
 }
 
-// mdfindApps lists the app bundles Spotlight knows. Spotlight off, or
-// mdfind missing, finds none.
-func mdfindApps(ctx context.Context) []string {
+// mdfindApps lists the app bundles Spotlight knows. mdfind missing
+// finds none; mdfind failing is an error.
+func mdfindApps(ctx context.Context) ([]string, error) {
 	out, ok, err := runTool(ctx, "mdfind", "kMDItemContentTypeTree == 'com.apple.application-bundle'")
-	if !ok || err != nil {
-		return nil
+	if err != nil {
+		return nil, fmt.Errorf("mdfind could not list the apps Spotlight knows, so an app outside the Applications folders cannot be ruled out as an owner: %w", err)
+	}
+	if !ok {
+		return nil, nil
 	}
 	var paths []string
 	for line := range strings.SplitSeq(string(out), "\n") {
@@ -986,7 +1044,7 @@ func mdfindApps(ctx context.Context) []string {
 			paths = append(paths, line)
 		}
 	}
-	return paths
+	return paths, nil
 }
 
 // lsofCwdAndMapped lists the working folders, executables, mapped and
@@ -1250,7 +1308,7 @@ func (a *appLeftovers) look(ctx context.Context, f leftoverFolder, j *judging) (
 	case idleFor < a.idle:
 		l.use = fmt.Sprintf("changed %s; offered after %d days without a change", daysAgo(idleFor), int(a.idle.Hours()/24))
 	default:
-		if l.use, err = a.settingsChanged(ctx, f, j); err != nil {
+		if l.use, err = a.marksChanged(ctx, f, j); err != nil {
 			return look{}, false, err
 		}
 	}
@@ -1264,38 +1322,34 @@ func (a *appLeftovers) look(ctx context.Context, f leftoverFolder, j *judging) (
 	return l, true, nil
 }
 
-// settingsChanged says when a settings file of the folder's maker
-// changed, if inside the idle window: ~/Library/Preferences/<id>.plist
-// of any id of the maker.
-func (a *appLeftovers) settingsChanged(ctx context.Context, f leftoverFolder, j *judging) (string, error) {
+// marksChanged says when a file of the folder's maker beside the
+// folders changed, if inside the idle window: a settings file or a
+// cookie store named by any id of the maker. A link counts by what it
+// leads to: settings kept in a synced folder.
+func (a *appLeftovers) marksChanged(ctx context.Context, f leftoverFolder, j *judging) (string, error) {
 	maker := f.maker()
 	if maker == "" {
 		return "", nil
 	}
-	if why, ok := j.settings[maker]; ok {
+	if why, ok := j.marked[maker]; ok {
 		return why, nil
 	}
 	var why string
 	var newest time.Time
-	for _, name := range j.names["Preferences"] {
-		id, ok := strings.CutSuffix(name, ".plist")
-		if !ok || !idShaped(id) || vendorOf(id) != maker {
-			continue
-		}
-		p := filepath.Join(a.host.Home, "Library", "Preferences", name)
-		fi, err := a.w.lstat(ctx, p)
+	for _, p := range j.marks[maker] {
+		fi, err := a.w.stat(ctx, p)
 		switch {
 		case absent(err):
 			continue
 		case err != nil:
-			return "", fmt.Errorf("%s cannot be read, so when the app last changed its settings is unknown: %w", p, err)
+			return "", fmt.Errorf("%s cannot be read, so when the app last changed it is unknown: %w", p, err)
 		}
 		if idleFor := a.now().Sub(fi.ModTime()); idleFor < a.idle && fi.ModTime().After(newest) {
 			newest = fi.ModTime()
-			why = fmt.Sprintf("its maker's settings, %s, changed %s", tilde(a.host, p), daysAgo(idleFor))
+			why = fmt.Sprintf("%s, of the same maker, changed %s", tilde(a.host, p), daysAgo(idleFor))
 		}
 	}
-	j.settings[maker] = why
+	j.marked[maker] = why
 	return why, nil
 }
 
