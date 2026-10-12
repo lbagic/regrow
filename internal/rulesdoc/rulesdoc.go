@@ -346,10 +346,11 @@ func versionText(min, max string) string {
 // macOSMax names the last release an os_max admits. A missing part
 // compares as 0, so "26" admits 26.0.0 but not 26.0.1, and is written
 // out to three parts; a bound in the release gap, such as "25", admits
-// all of 15.
+// every 15.x and is written so: a bare "15" would make an os_min of
+// "15.5" read "macOS 15.5 to 15".
 func macOSMax(max string) string {
 	if inReleaseGap(max) {
-		return "15"
+		return "15.x"
 	}
 	for strings.Count(max, ".") < 2 {
 		max += ".0"

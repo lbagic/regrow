@@ -117,8 +117,8 @@ func TestCommandQuotesAsAShellReads(t *testing.T) {
 func TestVersionBoundsNameWhatTheyAdmit(t *testing.T) {
 	cases := []struct{ min, max, want string }{
 		{"", "", ""},
-		{"", "25", " (macOS 15 and earlier)"},
-		{"", "25.9", " (macOS 15 and earlier)"},
+		{"", "25", " (macOS 15.x and earlier)"},
+		{"", "25.9", " (macOS 15.x and earlier)"},
 		{"", "26", " (macOS 26.0.0 and earlier)"},
 		{"", "15", " (macOS 15.0.0 and earlier)"},
 		{"", "14.4", " (macOS 14.4.0 and earlier)"},
@@ -128,6 +128,8 @@ func TestVersionBoundsNameWhatTheyAdmit(t *testing.T) {
 		{"14.4", "", " (macOS 14.4 and later)"},
 		{"14", "15.7", " (macOS 14 to 15.7.0)"},
 		{"16", "26.1", " (macOS 26 to 26.1.0)"},
+		{"15.5", "25", " (macOS 15.5 to 15.x)"},
+		{"14", "25.9", " (macOS 14 to 15.x)"},
 		{"16", "25", " (no macOS release)"},
 		{"26", "15", " (no macOS release)"},
 	}
