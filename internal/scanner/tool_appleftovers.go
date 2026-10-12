@@ -85,6 +85,20 @@ var appSigns = []string{"Containers", "Group Containers", "Saved Application Sta
 // named by their ids: <id>.plist, and <id>.<host>.plist per host.
 var settingsLocations = []string{"Preferences", "Preferences/ByHost"}
 
+// markID is the id a file beside the folders is named by, less its
+// extension (<id>.plist, <id>.binarycookies) and, per host, its host
+// label; "" for a name that is no id.
+func markID(loc, name string) string {
+	id := strings.TrimSuffix(name, filepath.Ext(name))
+	if loc == "Preferences/ByHost" {
+		id = strings.TrimSuffix(id, filepath.Ext(id))
+	}
+	if !idShaped(id) {
+		return ""
+	}
+	return id
+}
+
 // appInstallRoots are where apps are installed.
 var appInstallRoots = []string{"/Applications", "~/Applications", "/System/Applications"}
 
@@ -229,15 +243,29 @@ func RecheckAppLeftover(ctx context.Context, path string) error {
 	return a.recheck(ctx, path)
 }
 
-// ownersMemo is the installed apps one reading found, and when.
+// ownersMemo is the installed apps one reading found, the code bundles
+// running then, and when.
 type ownersMemo struct {
-	mu   sync.Mutex
-	home string
-	at   time.Time
-	in   *installedApps
+	mu      sync.Mutex
+	home    string
+	at      time.Time
+	in      *installedApps
+	running []string
 }
 
 var recheckOwners = &ownersMemo{}
+
+// saw reports that the reading read, or saw running, every code bundle
+// running now. An app installed and started since, anywhere, it did
+// not: the apps are read again.
+func (m *ownersMemo) saw(running []string) bool {
+	for _, b := range running {
+		if _, read := m.in.bundles[b]; !read && !slices.Contains(m.running, b) {
+			return false
+		}
+	}
+	return true
+}
 
 // owners reads the installed apps, or takes them from the memo while
 // its reading is younger than ownersReuse.
@@ -248,37 +276,15 @@ func (a *appLeftovers) owners(ctx context.Context, procs []string) (*installedAp
 	a.memo.mu.Lock()
 	defer a.memo.mu.Unlock()
 	now := a.now()
-	if age := now.Sub(a.memo.at); a.memo.in != nil && a.memo.home == a.host.Home && age >= 0 && age < ownersReuse {
-		// An app started since may be one the reading missed.
-		running, err := a.appBundles(ctx, runningBundles(procs))
-		if err != nil {
-			return nil, err
-		}
-		var started []string
-		for _, b := range running {
-			if !a.memo.in.bundles[b] {
-				started = append(started, b)
-			}
-		}
-		if len(started) == 0 {
-			return a.memo.in, nil
-		}
-		in := a.memo.in.clone()
-		code, err := a.readBundles(ctx, in, started)
-		if err != nil {
-			return nil, err
-		}
-		if err := a.readEntitlements(ctx, code, in.entitled); err != nil {
-			return nil, err
-		}
-		a.memo.in = in
-		return in, nil
+	running := runningBundles(procs)
+	if age := now.Sub(a.memo.at); a.memo.in != nil && a.memo.home == a.host.Home && age >= 0 && age < ownersReuse && a.memo.saw(running) {
+		return a.memo.in, nil
 	}
 	in, err := a.installed(ctx, procs)
 	if err != nil {
 		return nil, err
 	}
-	a.memo.home, a.memo.at, a.memo.in = a.host.Home, now, in
+	a.memo.home, a.memo.at, a.memo.in, a.memo.running = a.host.Home, now, in, running
 	return in, nil
 }
 
@@ -461,8 +467,8 @@ func (a *appLeftovers) folders(ctx context.Context, only string) ([]leftoverFold
 				continue
 			}
 			if !e.IsDir() {
-				if idShaped(e.Name()) {
-					maker := vendorOf(e.Name())
+				if id := markID(loc, e.Name()); id != "" {
+					maker := vendorOf(id)
 					j.marks[maker] = append(j.marks[maker], filepath.Join(dir, e.Name()))
 				}
 				continue
@@ -591,8 +597,8 @@ type installedApps struct {
 	// entitled are the strings of every code bundle's entitlements,
 	// folded: app groups, keychain groups, the application identifier.
 	entitled map[string]string
-	// bundles are the code bundles read.
-	bundles map[string]bool
+	// bundles are the code bundles read, each with the app a row names.
+	bundles map[string]string
 }
 
 type appName struct {
@@ -601,11 +607,7 @@ type appName struct {
 }
 
 func newInstalledApps() *installedApps {
-	return &installedApps{ids: map[string]string{}, vendors: map[string]string{}, names: map[string]appName{}, products: map[string]string{}, entitled: map[string]string{}, bundles: map[string]bool{}}
-}
-
-func (in *installedApps) clone() *installedApps {
-	return &installedApps{ids: maps.Clone(in.ids), vendors: maps.Clone(in.vendors), names: maps.Clone(in.names), products: maps.Clone(in.products), entitled: maps.Clone(in.entitled), bundles: maps.Clone(in.bundles)}
+	return &installedApps{ids: map[string]string{}, vendors: map[string]string{}, names: map[string]appName{}, products: map[string]string{}, entitled: map[string]string{}, bundles: map[string]string{}}
 }
 
 func setOnce[V any](m map[string]V, k string, v V) {
@@ -615,19 +617,20 @@ func setOnce[V any](m map[string]V, k string, v V) {
 }
 
 // add records what an Info.plist says, and returns the code bundle it
-// describes, "" for none.
-func (in *installedApps) add(plist string, info map[string]string) string {
+// describes, "" for none. described holds the bundles the plists read
+// with it describe, for the app a row names.
+func (in *installedApps) add(plist string, info map[string]string, described map[string]bool) string {
 	id := info["CFBundleIdentifier"]
 	if id == "" {
 		return ""
 	}
-	app := outermostApp(plist)
+	app := appOf(plist, described)
 	setOnce(in.ids, foldName(id), app)
 	bundle := bundleOf(plist)
 	if bundle == "" {
 		return ""
 	}
-	in.bundles[bundle] = true
+	in.bundles[bundle] = app
 	if !strings.EqualFold(filepath.Ext(bundle), ".app") {
 		return bundle
 	}
@@ -647,7 +650,7 @@ func (in *installedApps) add(plist string, info map[string]string) string {
 
 // readInfo reads one Info.plist into in, and returns the code bundle it
 // describes, "" for none.
-func (a *appLeftovers) readInfo(ctx context.Context, in *installedApps, p string) (string, error) {
+func (a *appLeftovers) readInfo(ctx context.Context, in *installedApps, p string, described map[string]bool) (string, error) {
 	data, err := bounded(ctx, a.w, p, func() ([]byte, error) { return readLimited(p, maxLeftoverFile) })
 	if err != nil {
 		return "", fmt.Errorf("%s cannot be read, so the bundle it describes cannot be ruled out as an owner: %w", p, err)
@@ -656,7 +659,18 @@ func (a *appLeftovers) readInfo(ctx context.Context, in *installedApps, p string
 	if err != nil {
 		return "", fmt.Errorf("%s: %w", p, err)
 	}
-	return in.add(p, info), nil
+	return in.add(p, info, described), nil
+}
+
+// describedBy is the set of bundles some of plists describe.
+func describedBy(plists []string) map[string]bool {
+	described := map[string]bool{}
+	for _, p := range plists {
+		if b := bundleOf(p); b != "" {
+			described[b] = true
+		}
+	}
+	return described
 }
 
 // installed reads every bundle under the app roots, the apps Spotlight
@@ -668,8 +682,9 @@ func (a *appLeftovers) installed(ctx context.Context, procs []string) (*installe
 	}
 	in := newInstalledApps()
 	var code []string
+	described := describedBy(plists)
 	for _, p := range plists {
-		b, err := a.readInfo(ctx, in, p)
+		b, err := a.readInfo(ctx, in, p, described)
 		if err != nil {
 			return nil, err
 		}
@@ -710,13 +725,16 @@ func (a *appLeftovers) installed(ctx context.Context, procs []string) (*installe
 // named site.app is no app), those inside an app root, which the
 // roots' walk read, and those inside another of them.
 func (a *appLeftovers) appBundles(ctx context.Context, bundles []string) ([]string, error) {
+	var roots []string
+	for _, r := range appInstallRoots {
+		roots = append(roots, a.host.ExpandPath(r))
+	}
 	var apps []string
 	for _, b := range bundles {
-		app, err := a.outermost(ctx, b)
-		if err != nil {
-			return nil, err
+		if slices.ContainsFunc(roots, func(root string) bool { return strings.HasPrefix(b, root+string(filepath.Separator)) }) {
+			continue
 		}
-		ok, err := a.describes(ctx, app)
+		app, ok, err := a.outermost(ctx, b)
 		if err != nil {
 			return nil, err
 		}
@@ -724,15 +742,10 @@ func (a *appLeftovers) appBundles(ctx context.Context, bundles []string) ([]stri
 			apps = append(apps, app)
 		}
 	}
-	var roots []string
-	for _, r := range appInstallRoots {
-		roots = append(roots, a.host.ExpandPath(r))
-	}
 	slices.Sort(apps)
 	var outer []string
 	for _, b := range slices.Compact(apps) {
-		inside := func(dir string) bool { return strings.HasPrefix(b, dir+string(filepath.Separator)) }
-		if !slices.ContainsFunc(roots, inside) && !slices.ContainsFunc(outer, inside) {
+		if !slices.ContainsFunc(outer, func(dir string) bool { return strings.HasPrefix(b, dir+string(filepath.Separator)) }) {
 			outer = append(outer, b)
 		}
 	}
@@ -740,23 +753,24 @@ func (a *appLeftovers) appBundles(ctx context.Context, bundles []string) ([]stri
 }
 
 // outermost is the first app on a bundle's path that has an Info.plist,
-// or the bundle itself when none has.
-func (a *appLeftovers) outermost(ctx context.Context, bundle string) (string, error) {
+// or the bundle itself when none has; ok is false when the bundle has
+// none either.
+func (a *appLeftovers) outermost(ctx context.Context, bundle string) (app string, ok bool, err error) {
 	parts := strings.Split(bundle, string(filepath.Separator))
 	for i, p := range parts {
 		if !strings.EqualFold(filepath.Ext(p), ".app") {
 			continue
 		}
 		app := strings.Join(parts[:i+1], string(filepath.Separator))
-		ok, err := a.describes(ctx, app)
-		if err != nil {
-			return "", err
-		}
-		if ok {
-			return app, nil
+		if ok, err := a.describes(ctx, app); err != nil || ok {
+			return app, ok, err
 		}
 	}
-	return bundle, nil
+	if strings.EqualFold(filepath.Ext(bundle), ".app") {
+		return bundle, false, nil
+	}
+	ok, err = a.describes(ctx, bundle)
+	return bundle, ok, err
 }
 
 // readBundles reads each app whole into in, and returns the code
@@ -770,8 +784,9 @@ func (a *appLeftovers) readBundles(ctx context.Context, in *installedApps, apps 
 		if err != nil {
 			return nil, err
 		}
+		described := describedBy(nested)
 		for _, p := range nested {
-			c, err := a.readInfo(ctx, in, p)
+			c, err := a.readInfo(ctx, in, p, described)
 			if err != nil {
 				return nil, err
 			}
@@ -846,13 +861,15 @@ func bundleOf(plist string) string {
 	return dir
 }
 
-// outermostApp is the first app on a path (/Applications/X.app for
-// anything inside it), or the folder holding an Info.plist outside one.
-func outermostApp(plist string) string {
+// appOf is the app an Info.plist belongs to, which a row names: the
+// first app on its path that one of described is (/Applications/X.app
+// for anything inside it; not a checkout named site.app above it), or
+// the folder holding the Info.plist outside one.
+func appOf(plist string, described map[string]bool) string {
 	parts := strings.Split(plist, string(filepath.Separator))
 	for i, p := range parts {
-		if strings.EqualFold(filepath.Ext(p), ".app") {
-			return strings.Join(parts[:i+1], string(filepath.Separator))
+		if app := strings.Join(parts[:i+1], string(filepath.Separator)); strings.EqualFold(filepath.Ext(p), ".app") && described[app] {
+			return app
 		}
 	}
 	return filepath.Dir(plist)
@@ -1028,8 +1045,8 @@ func lastLine(s string) string {
 	return s[strings.LastIndexByte(s, '\n')+1:]
 }
 
-// mdfindApps lists the app bundles Spotlight knows. mdfind missing
-// finds none; mdfind failing is an error.
+// mdfindApps lists the app bundles Spotlight knows. Spotlight off, or
+// mdfind missing, finds none; mdfind failing is an error.
 func mdfindApps(ctx context.Context) ([]string, error) {
 	out, ok, err := runTool(ctx, "mdfind", "kMDItemContentTypeTree == 'com.apple.application-bundle'")
 	if err != nil {
@@ -1160,7 +1177,7 @@ func (a *appLeftovers) pointers(ctx context.Context, procs []string, in *install
 		ptrs.add(p, "a running process")
 	}
 	for _, s := range slices.Sorted(maps.Keys(in.entitled)) {
-		ptrs.add(s, "an entitlement of "+filepath.Base(outermostApp(in.entitled[s])))
+		ptrs.add(s, "an entitlement of "+filepath.Base(in.bundles[in.entitled[s]]))
 	}
 	read := func(dir, ext, kind string, parse func([]byte) ([]string, error)) error {
 		entries, partial, err := a.w.list(ctx, dir)
@@ -1285,7 +1302,7 @@ type look struct {
 // look judges one folder; ok is false for one owned, or gone. A fuzzy
 // match is listed once read in full and unchanged for 90 days: one that
 // changed lately is most likely a live program's. Its only errors are
-// ctx's and a settings file that cannot be read.
+// ctx's and a file of the maker beside the folders that cannot be read.
 func (a *appLeftovers) look(ctx context.Context, f leftoverFolder, j *judging) (l look, ok bool, err error) {
 	exact, fuzzy := a.match(f, j)
 	if !exact && fuzzy == "" {
@@ -1340,6 +1357,11 @@ func (a *appLeftovers) marksChanged(ctx context.Context, f leftoverFolder, j *ju
 		fi, err := a.w.stat(ctx, p)
 		switch {
 		case absent(err):
+			if li, err := a.w.lstat(ctx, p); err == nil && li.Mode()&fs.ModeSymlink != 0 {
+				why = tilde(a.host, p) + " leads to nothing, so when the app last changed it is unknown"
+				j.marked[maker] = why
+				return why, nil
+			}
 			continue
 		case err != nil:
 			return "", fmt.Errorf("%s cannot be read, so when the app last changed it is unknown: %w", p, err)

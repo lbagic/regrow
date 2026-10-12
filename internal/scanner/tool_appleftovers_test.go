@@ -1003,6 +1003,18 @@ func TestAppLeftoversSayWhatCouldNotBeRead(t *testing.T) {
 			t.Errorf("offered %v, want an error", paths(offered))
 		}
 	})
+	t.Run("per-host settings", func(t *testing.T) {
+		f := newLeftoversFixture(t)
+		f.folder("Containers", "org.gone.app")
+		byHost := f.host.ExpandPath("~/Library/Preferences/ByHost")
+		if err := os.MkdirAll(byHost, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		chmod(t, byHost, 0)
+		if offered, _, err := f.a.judge(context.Background(), ""); err == nil {
+			t.Errorf("offered %v, want an error", paths(offered))
+		}
+	})
 	t.Run("macOS's names", func(t *testing.T) {
 		f := newLeftoversFixture(t)
 		f.folder("Application Support", "Old Game")
@@ -1112,6 +1124,18 @@ func TestAppLeftoversAppInsideAFolderNamedLikeOne(t *testing.T) {
 		"Spotlight knows the folder and it": func(f *leftoversFixture, real string) {
 			f.spot = []string{f.host.ExpandPath("/Volumes/code/site.app"), real}
 		},
+	}
+	for _, root := range []string{"/Applications", "/Volumes/code"} {
+		t.Run("product name under "+root, func(t *testing.T) {
+			f := newLeftoversFixture(t)
+			notely := f.app(root+"/site.app/build/Notely.app", "com.notelyinc.mac")
+			f.spot = []string{notely}
+			old := f.folder("Containers", "com.oldvendor.notely")
+			_, kept := f.judge()
+			if why := keptWhy(kept, old); !strings.Contains(why, "may belong to Notely.app") {
+				t.Errorf("kept for %q, want Notely.app named", why)
+			}
+		})
 	}
 	for name, setup := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -1224,6 +1248,17 @@ func TestAppLeftoversMakersFilesShowUse(t *testing.T) {
 	cookies := f.folder("HTTPStorages", "dev.deploy.cli")
 	f.write("~/Library/HTTPStorages/dev.deploy.cli.binarycookies", "cookies")
 	f.touch(f.host.ExpandPath("~/Library/HTTPStorages/dev.deploy.cli.binarycookies"), 1)
+	solo := f.folder("Group Containers", "ABCDE12345.group.solo")
+	f.write("~/Library/Preferences/ABCDE12345.group.solo.plist", "<plist/>")
+	f.touch(f.host.ExpandPath("~/Library/Preferences/ABCDE12345.group.solo.plist"), 2)
+	duo := f.folder("Group Containers", "ABCDE12345.group.duo")
+	duoHost := "~/Library/Preferences/ByHost/ABCDE12345.group.duo.0A1B2C3D-0000-4000-8000-000000000000.plist"
+	f.write(duoHost, "<plist/>")
+	f.touch(f.host.ExpandPath(duoHost), 2)
+	dangling := f.folder("Containers", "com.dangle.app")
+	if err := os.Symlink(f.host.ExpandPath("/Volumes/Sync/com.dangle.app.plist"), f.host.ExpandPath("~/Library/Preferences/com.dangle.app.plist")); err != nil {
+		t.Fatal(err)
+	}
 	free := f.folder("Containers", "com.free.app")
 
 	offered, kept := f.judge()
@@ -1231,9 +1266,12 @@ func TestAppLeftoversMakersFilesShowUse(t *testing.T) {
 		t.Errorf("offered %v, want only %s", got, free)
 	}
 	for path, why := range map[string]string{
-		linked:  "Preferences/com.linked.app.plist",
-		byHost:  "ByHost/com.byhost.app.",
-		cookies: "HTTPStorages/dev.deploy.cli.binarycookies",
+		solo:     "Preferences/ABCDE12345.group.solo.plist",
+		duo:      "ByHost/ABCDE12345.group.duo.",
+		dangling: "Preferences/com.dangle.app.plist leads to nothing",
+		linked:   "Preferences/com.linked.app.plist",
+		byHost:   "ByHost/com.byhost.app.",
+		cookies:  "HTTPStorages/dev.deploy.cli.binarycookies",
 	} {
 		if got := keptWhy(kept, path); !strings.Contains(got, why) {
 			t.Errorf("%s: kept for %q, want %q", path, got, why)
@@ -1259,5 +1297,34 @@ func TestAppLeftoversSkipFoldersNamedLikeApps(t *testing.T) {
 	gone := f.folder("Containers", "org.gone.app")
 	if offered, _, err := f.a.judge(context.Background(), ""); err != nil || !slices.Contains(paths(offered), gone) {
 		t.Errorf("offered %v, %v; want %s and no error", paths(offered), err, gone)
+	}
+}
+
+// Within the memo's minute, a recheck reads the installed apps again
+// when an app runs that the reading did not see, wherever it is
+// installed; a running bundle the reading saw and could not read is
+// not cause to read again.
+func TestRecheckReadsAppsInstalledAndStartedSince(t *testing.T) {
+	f := newLeftoversFixture(t)
+	box := f.folder("Containers", "com.fresh.app")
+	plain := f.host.ExpandPath("/Volumes/P/Plain.app")
+	if err := os.MkdirAll(filepath.Join(plain, "Contents", "MacOS"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f.procs = []string{filepath.Join(plain, "Contents", "MacOS", "plain")}
+	f.app("/Applications/Alpha.app", "com.alpha.app")
+	f.a.memo = &ownersMemo{}
+	ctx := context.Background()
+	if err := f.a.recheck(ctx, box); err != nil {
+		t.Fatalf("recheck of an offered folder: %v", err)
+	}
+	calls := f.entCalls
+	if err := f.a.recheck(ctx, box); err != nil || f.entCalls != calls {
+		t.Errorf("a second recheck = %v, read the apps again: %v", err, f.entCalls != calls)
+	}
+	app := f.app("/Applications/Fresh.app", "com.fresh.app")
+	f.procs = append(f.procs, filepath.Join(app, "Contents", "MacOS", "Fresh"))
+	if err := f.a.recheck(ctx, box); err == nil || !strings.Contains(err.Error(), "no leftover now") {
+		t.Errorf("recheck of an app's folder after it was installed and started = %v, want a refusal", err)
 	}
 }
