@@ -1,0 +1,28 @@
+# Every app leftover app-leftovers does not offer, with the reason in
+# the row: a folder named by an id something still points into (a
+# launchd job, a native messaging host, a running process), one that
+# could not be read in full, one that changed in the last 90 days; and,
+# once unchanged for 90 days, the fuzzy matches: a folder in Application
+# Support named for a product rather than an id, an id of a maker one
+# of whose apps is installed, an id macOS made nothing else for.
+# Surface-only: the names alone cannot tell such a folder from a live
+# app's.
+id: app-leftovers-kept
+title: App leftovers (kept)
+category: macos
+risk: surface-only
+tool_query: app-leftovers-kept
+note: Each row says why it is not offered. A folder in use, or one that changed recently, moves to "App leftovers (no app has their id)" once nothing points into it and nothing in it changed for 90 days.
+regen:
+  story: n/a — regrow never deletes these; check the row's reason, then delete a folder yourself if its app is gone.
+  cost: n/a
+sudo: false
+beta: true
+fixture:
+  items:
+    - label: Old Game · Application Support — named for a product, not an app id; no installed app has that name
+      path: ~/Library/Application Support/Old Game
+      bytes: 800000000
+    - label: com.example.helper · Containers — the launchd job ~/Library/LaunchAgents/com.example.helper.plist points into it
+      path: ~/Library/Containers/com.example.helper
+      bytes: 5000000

@@ -89,3 +89,70 @@ func TestPlistTextsUnknownObjects(t *testing.T) {
 		}
 	}
 }
+
+// The two fixtures are one Info.plist, as XML and as plutil's binary:
+// a non-ASCII value (UTF-16 in the binary), one of 15 bytes or more
+// (its length an integer object), an array of dictionaries whose
+// strings are not the top level's.
+func TestPlistTopStrings(t *testing.T) {
+	var maps []map[string]string
+	for _, name := range []string{"info.xml.plist", "info.bplist"} {
+		data, err := os.ReadFile(filepath.Join("testdata", "plist", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := plistTopStrings(data)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		maps = append(maps, got)
+		for key, want := range map[string]string{
+			"CFBundleIdentifier":  "dev.example.app",
+			"CFBundleDisplayName": "Example Café",
+			"CFBundleExecutable":  "Example",
+		} {
+			if got[key] != want {
+				t.Errorf("%s: %s = %q, want %q", name, key, got[key], want)
+			}
+		}
+		if _, ok := got["CFBundleTypeName"]; ok {
+			t.Errorf("%s: a nested dictionary's key read as the top level's", name)
+		}
+		if !strings.HasPrefix(got["NSHumanReadableCopyright"], "A string longer") {
+			t.Errorf("%s: the long value is %q", name, got["NSHumanReadableCopyright"])
+		}
+	}
+	if len(maps[0]) != len(maps[1]) {
+		t.Errorf("XML and binary read differently:\n%q\n%q", maps[0], maps[1])
+	}
+	for k, v := range maps[0] {
+		if maps[1][k] != v {
+			t.Errorf("%s: XML %q, binary %q", k, v, maps[1][k])
+		}
+	}
+}
+
+func TestPlistTopStringsRefusesWhatIsNoDictionary(t *testing.T) {
+	bin, err := os.ReadFile(filepath.Join("testdata", "plist", "info.bplist"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bad := map[string][]byte{
+		"a string at the top": onePlistObject([]byte{0x51, 'x'}),
+		"an empty file":       nil,
+		"binary cut short":    bin[:len(bin)-10],
+		"no reference size": func() []byte {
+			b := slices.Clone(bin)
+			b[len(b)-32+7] = 0
+			return b
+		}(),
+		// A one-entry dictionary whose key is the dictionary itself.
+		"a key that is no string": onePlistObject([]byte{0xd1, 0x00, 0x00}),
+		"an XML array at the top": []byte(`<?xml version="1.0"?><plist><array><string>x</string></array></plist>`),
+	}
+	for name, data := range bad {
+		if got, err := plistTopStrings(data); err == nil {
+			t.Errorf("%s: read as %q, want an error", name, got)
+		}
+	}
+}

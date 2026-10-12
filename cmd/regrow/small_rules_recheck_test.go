@@ -136,3 +136,21 @@ func TestDownloadedInstallerRecheckStopsTheTrashMove(t *testing.T) {
 		t.Fatalf("journaled error = %q, want it to name the download and say it is kept", msg)
 	}
 }
+
+// A folder of macOS's own is never moved, whatever a plan names.
+func TestAppLeftoverRecheckStopsTheTrashMove(t *testing.T) {
+	host, run := recheckRun(t)
+	rule := engine.Rule{ID: "app-leftovers", Title: "App leftovers", Category: "fixture", Risk: engine.RiskCaution, PreAction: engine.PreActionAppLeftoverRecheck}
+	dir := filepath.Join(host.Home, "Library", "Containers", "com.apple.Safari")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	done, failed, moved, msg := run(trashPlan(t, host, rule, dir))
+	if done != 0 || failed != 1 || len(moved) != 0 {
+		t.Fatalf("done %d, failed %d, moved %v; want the folder kept", done, failed, moved)
+	}
+	if !strings.Contains(msg, "no leftover now") || !strings.Contains(msg, dir) {
+		t.Fatalf("journaled error = %q, want it to name the folder and say it is no leftover", msg)
+	}
+}

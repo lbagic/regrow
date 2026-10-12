@@ -62,6 +62,10 @@ _Avoid_: cache, database
 **Kept tier**:
 Objects a provider deliberately withholds from deletion — in use, keep-listed, over a safety cap, or too recent. Docker volumes and agent sessions have one surface-only rule that lists them with the reason in each row; the other providers list what they keep nowhere.
 
+**App leftover**:
+A folder an app keeps under `~/Library` (Application Support, Caches, Containers and the like), named by its bundle or group id or by its product, that nothing installed owns: no installed bundle has the id and no installed app's entitlements name the group. Offered only by its exact id, once nothing points into it and nothing in it changed for 90 days; a product name or a maker's other id is a fuzzy match, shown and never offered.
+_Avoid_: orphan, residue
+
 **Idle project**:
 A project that nobody is working in: no file under its folder changed within the idle window, git's HEAD did not move, and no running process works in it. The project is a git work tree (a main checkout, a linked worktree or a nested clone, each on its own); a submodule belongs to the outermost project that holds it. Build output is offered only from an idle project.
 _Avoid_: stale build, old build output (the build folder's own age does not decide)

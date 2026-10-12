@@ -1,0 +1,32 @@
+# Folders a deleted app left under ~/Library (Application Support,
+# Caches, Containers, Group Containers, HTTPStorages, WebKit, Saved
+# Application State, Application Scripts), one item per folder. The
+# app-leftovers query (internal/scanner/tool_appleftovers.go) offers a
+# folder named exactly by a bundle or group id that nothing installed
+# has (an app in /Applications, ~/Applications or /System/Applications,
+# one of its plug-ins or helpers, an app Spotlight knows, a running app,
+# an app group an installed app's entitlements name), that no launchd
+# job, native messaging host or running process points into, and in
+# which nothing changed for 90 days. Every other leftover it finds is
+# under app-leftovers-kept, with the reason.
+id: app-leftovers
+title: App leftovers (no app has their id)
+category: macos
+risk: caution
+tool_query: app-leftovers
+# The folder is judged again right before each Trash move.
+pre_action: app-leftover-recheck
+note: An app reinstalled later starts without its settings, data or login. A folder that could not be read in full is never offered; with Full Disk Access granted to regrow's app, Containers and Group Containers can be read.
+regen:
+  story: Not regenerated while the app is gone; an app installed again makes new folders and starts as on first launch. Undo puts a folder back from the Trash.
+  cost: the deleted app's settings, data and caches
+sudo: false
+beta: true
+fixture:
+  items:
+    - label: com.example.oldapp · Application Support
+      path: ~/Library/Application Support/com.example.oldapp
+      bytes: 300000000
+    - label: com.example.oldapp · Containers
+      path: ~/Library/Containers/com.example.oldapp
+      bytes: 1200000000

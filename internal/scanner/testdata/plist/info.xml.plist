@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>not the id</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>dev.example.document</string>
+			</array>
+		</dict>
+	</array>
+	<key>CFBundleDisplayName</key>
+	<string>Example Café</string>
+	<key>CFBundleExecutable</key>
+	<string>Example</string>
+	<key>CFBundleIdentifier</key>
+	<string>dev.example.app</string>
+	<key>CFBundleName</key>
+	<string>Example</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>13.0</string>
+	<key>LSRequiresNativeExecution</key>
+	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>A string longer than fifteen characters, so its length is an integer object.</string>
+</dict>
+</plist>

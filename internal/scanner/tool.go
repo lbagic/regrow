@@ -32,6 +32,9 @@ func DefaultQueries() map[string]ToolQuery {
 	sessions := &agentSessions{}
 	queries["agent-scratch"] = sessions.Ended
 	queries["agent-scratch-kept"] = sessions.Kept
+	leftovers := &appLeftovers{}
+	queries["app-leftovers"] = leftovers.Offered
+	queries["app-leftovers-kept"] = leftovers.Kept
 	android := &androidSDK{}
 	queries["android-ndk"] = android.NDKs
 	queries["android-sdk"] = android.SDK

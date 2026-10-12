@@ -1,0 +1,2 @@
+[trash] app-leftovers: osascript -e tell application "Finder" to return POSIX path of ((delete POSIX file "~/Library/Application Support/com.example.oldapp") as alias)  (pre: app-leftover-recheck)
+[trash] app-leftovers: osascript -e tell application "Finder" to return POSIX path of ((delete POSIX file "~/Library/Containers/com.example.oldapp") as alias)  (pre: app-leftover-recheck)

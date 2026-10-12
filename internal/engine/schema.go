@@ -341,6 +341,9 @@ func (r Rule) PerItemActionable() bool {
 // before it goes to the Trash and refuses when it is kept now.
 // PreActionFnmVersionRecheck reads what names a Node version again
 // right before `fnm uninstall` and refuses when something does now.
+// PreActionAppLeftoverRecheck judges an app's leftover folder again
+// right before it goes to the Trash and refuses unless it is still
+// offered.
 // A hook failure leaves the target in place. The registry of hook names
 // lives here so a typo'd pre_action fails at load, like a typo'd
 // placeholder; the implementations are registered on the executor.
@@ -352,11 +355,13 @@ const (
 	PreActionNpxRecheck                 = "npx-recheck"
 	PreActionDownloadedInstallerRecheck = "downloaded-installer-recheck"
 	PreActionFnmVersionRecheck          = "fnm-version-recheck"
+	PreActionAppLeftoverRecheck         = "app-leftover-recheck"
 )
 
 var knownPreActions = map[string]bool{
 	PreActionVolumeExport: true, PreActionAgentScratchRecheck: true, PreActionWorktreeRecheck: true, PreActionBuildOutputRecheck: true,
 	PreActionNpxRecheck: true, PreActionDownloadedInstallerRecheck: true, PreActionFnmVersionRecheck: true,
+	PreActionAppLeftoverRecheck: true,
 }
 
 // KnownPreActions lists every hook name a rule may declare, sorted. An
