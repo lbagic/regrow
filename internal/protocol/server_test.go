@@ -306,7 +306,7 @@ func TestPlanSelection(t *testing.T) {
 	p.expect("hello")
 	scanID := p.scanned("s", 3)
 
-	const sudoReason = "needs administrator rights — run `regrow clean fixture-sudo` in Terminal"
+	const sudoReason = "needs administrator rights — run it in Terminal: `regrow clean fixture-sudo`"
 	tests := []struct {
 		name          string
 		selectJSON    string
@@ -394,7 +394,7 @@ func TestPlanSkipsNameThisEngineAndMissingPrograms(t *testing.T) {
 		t.Errorf("actions = %q, want the Trash move and the command whose program was found", got)
 	}
 	want := []engine.Skip{
-		{RuleID: "fixture-sudo", Reason: "needs administrator rights — run `'/Users/dev/Applications/Fixture App.app/Contents/MacOS/regrow-engine' clean --beta-rules fixture-sudo` in Terminal"},
+		{RuleID: "fixture-sudo", Reason: "needs administrator rights — run it in Terminal: `'/Users/dev/Applications/Fixture App.app/Contents/MacOS/regrow-engine' clean --beta-rules fixture-sudo`"},
 		{RuleID: "fixture-gone", Reason: "`gone-tool` is not on the PATH regrow was started with"},
 	}
 	if !sameJSON(t, e.Plan.Skipped, want) {

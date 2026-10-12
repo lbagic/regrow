@@ -257,7 +257,7 @@ func pageRows() []pageRow {
 		{
 			rule: engine.Rule{ID: "apfs-purgeable", Title: "APFS purgeable space", Category: engine.CategoryPhantomSpace, Risk: engine.RiskSurfaceOnly,
 				ToolQuery: "apfs-purgeable",
-				Note:      "Finder counts purgeable space as free, df does not. macOS frees it by itself when the disk fills; `tmutil listlocalsnapshots /` lists the snapshots that hold most of it.",
+				Note:      "Finder counts purgeable space as free, df does not. macOS frees it by itself when the disk fills. To list the snapshots that hold most of it: `tmutil listlocalsnapshots /`.",
 				Regen:     engine.Regen{Story: "Nothing to regenerate: macOS frees purgeable space on its own under pressure.", Cost: "none"}},
 			items: []engine.Item{{Label: "Purgeable space on Macintosh HD", Bytes: gb(21.4)}},
 			took:  41 * time.Millisecond,
@@ -935,7 +935,7 @@ func checkPageTranscript(t *testing.T, lines []string) {
 		strings.Join(def.Select, " ") == "brew-cache go-build-cache npm-cache pip-cache pnpm-store sim-runtimes xcode-derived-data yarn-cache")
 	need("plan-default", "an expiry ten minutes after the plan was made", def.ExpiresAt.Equal(pageScanAt.Add(25*time.Second+10*time.Minute)))
 	need("plan-default", "the administrator-rights skip naming this engine",
-		skipped(def.Plan, "needs administrator rights — run `"+pageSelf+" clean sim-runtimes` in Terminal") == 1)
+		skipped(def.Plan, "needs administrator rights — run it in Terminal: `"+pageSelf+" clean sim-runtimes`") == 1)
 	need("plan-default", "the skip for a program that is not on the PATH", skipped(def.Plan, "`pnpm` is not on the PATH regrow was started with") == 1)
 	need("plan-all", "every atom the scan handed out, sorted", strings.Join(all.Select, "\n") == strings.Join(offered, "\n"))
 	need("plan-all", "both engine skips and an item inside another selected one",

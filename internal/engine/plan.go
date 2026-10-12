@@ -333,7 +333,7 @@ func (o PlanOptions) refusal(r Rule) func(selector string) string {
 				words = append(words, shellQuote(a))
 			}
 			words = append(words, shellQuote(selector))
-			return "needs administrator rights — run `" + strings.Join(words, " ") + "` in Terminal"
+			return "needs administrator rights — run it in Terminal: `" + strings.Join(words, " ") + "`"
 		}
 	}
 	return nil

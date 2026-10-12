@@ -68,8 +68,10 @@ final class Shell: ObservableObject {
 
     // MARK: Launch
 
-    func start() {
-        log("launched from \(Bundle.main.bundlePath), pid \(getpid())")
+    /// A launch at login opens no window; any other is the owner opening
+    /// the app.
+    func start(atLogin: Bool) {
+        log("launched from \(Bundle.main.bundlePath), pid \(getpid())\(atLogin ? ", at login" : "")")
         if Config.installed {
             notifier.askPermission()
             registerLoginItem()
@@ -92,7 +94,7 @@ final class Shell: ObservableObject {
                 }
             }
         }
-        if config.openScan {
+        if config.openScan || !atLogin {
             openScan()
         }
     }
@@ -341,6 +343,12 @@ final class Shell: ObservableObject {
     }
 
     // MARK: The page
+
+    /// The owner opened the app while it runs.
+    func reopened() {
+        log("opened again: showing the window")
+        openScan()
+    }
 
     func openScan() {
         if let window {

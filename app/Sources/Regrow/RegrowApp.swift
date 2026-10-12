@@ -2,8 +2,8 @@ import AppKit
 import RegrowKit
 import SwiftUI
 
-/// The menu bar item is the app's only scene, so nothing opens at
-/// launch.
+/// The menu bar item is the app's only scene; the scan window is the
+/// shell's, opened from the menu or by opening the app.
 struct RegrowApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
     @ObservedObject private var shell = Shell.shared
@@ -99,7 +99,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ) { _ in
             MainActor.assumeIsolated { Shell.shared.woke() }
         }
-        Shell.shared.start()
+        Shell.shared.start(atLogin: Self.launchedAtLogin())
+    }
+
+    /// Read while the launch's open-application event is the current one.
+    private static func launchedAtLogin() -> Bool {
+        guard let event = NSAppleEventManager.shared().currentAppleEvent, event.eventID == kAEOpenApplication else {
+            return false
+        }
+        return event.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue == keyAELaunchedAsLogInItem
+    }
+
+    /// Opening the app while it runs, from Finder, Spotlight or `open`.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        Shell.shared.reopened()
+        return false
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {

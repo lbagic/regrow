@@ -149,8 +149,9 @@ func TestAerialCauseFixText(t *testing.T) {
 	if rule.Risk != RiskSurfaceOnly || len(rule.NativeCommand) != 0 || rule.Sudo {
 		t.Errorf("risk %q, command %q, sudo %v; want surface-only with nothing to run", rule.Risk, rule.NativeCommand, rule.Sudo)
 	}
-	// Quoted, so a face sets each in mono with a way to copy it.
-	for _, want := range []string{"`" + removeOld + "` (macOS 15 and earlier)", "`" + removeNew + "` (macOS 26 and later)"} {
+	// Quoted after a colon, so a face sets each on a line of its own with
+	// a way to copy it.
+	for _, want := range []string{"on macOS 15 and earlier: `" + removeOld + "`", "On macOS 26 and later: `" + removeNew + "`"} {
 		if !strings.Contains(rule.Regen.Story, want) {
 			t.Errorf("the row's story does not name %q:\n%s", want, rule.Regen.Story)
 		}

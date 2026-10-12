@@ -791,9 +791,14 @@ struct Scenario {
             await r.click("[data-rule=\(rule.str("id"))] .cost .copy")
             r.same(r.pasted.last ?? "", shellJoin(rule.strs("native_command")), "what Copy beside a finding's command put on the pasteboard")
             r.same(await r.js("return document.querySelector('[data-rule=\(rule.str("id"))] .cost .copy').textContent") as? String ?? "", "Copied", "a command's Copy once clicked")
-            // A surface-only rule's how, quoted in its note.
+            // A surface-only rule's how, quoted in its note after a colon: a line of its own, which ends the
+            // sentence without the stop the note writes after it.
+            await drawn(r, [("[data-rule=apfs-purgeable] .cost .cmd", "display", "block")])
+            r.same(await r.text("[data-rule=apfs-purgeable] .cost .cmd"), "tmutil listlocalsnapshots /", "a shown-only rule's command on its own line")
+            r.has(await r.text("[data-rule=apfs-purgeable] .cost") + "|", "most of it: tmutil listlocalsnapshots /|", "a shown-only rule's note, its stop after the command not drawn")
             await r.click("[data-rule=apfs-purgeable] .cost .copy")
             r.same(r.pasted.last ?? "", "tmutil listlocalsnapshots /", "what Copy beside a shown-only rule's command put on the pasteboard")
+            await r.shoot("-command", top: "[data-rule=apfs-purgeable]")
             // An item's path, whole, where it is drawn with ~.
             let backups = t.events("scan", "finding").first { $0.obj("finding").obj("rule").str("id") == "ios-backups" }?.obj("finding").objs("items") ?? []
             let largest = backups.max { $0.int("bytes") < $1.int("bytes") }?.str("path") ?? ""
@@ -915,6 +920,16 @@ struct Scenario {
             let commands = quoted.filter { $0.contains(" ") || $0.contains("/") }
             r.expect(!commands.isEmpty && commands.count < quoted.count, "the skips quote no command, or no bare name")
             r.same(await r.count(".act.skip p .copy"), commands.count, "Copy controls in the skips' reasons")
+            // The command a skip leaves you to run in Terminal comes after a colon: a line of its own.
+            let own = plan.objs("skipped").map { $0.str("reason").components(separatedBy: "`") }
+                .flatMap { parts in
+                    parts.indices.filter { i in
+                        i % 2 == 1 && i < parts.count - 1 && parts[i].contains(" ")
+                            && parts[i - 1].trimmingCharacters(in: .whitespaces).hasSuffix(":")
+                    }
+                }
+            r.expect(!own.isEmpty, "no skip brings in its command with a colon")
+            r.same(await r.count(".act.skip p .cmd"), own.count, "skips' commands on a line of their own")
             await r.click(".act.skip p .copy")
             r.same(r.pasted.last ?? "", commands.first ?? "", "what Copy beside a skip's command put on the pasteboard")
             r.same(r.sent("execute").count, 0, "executes from copying")

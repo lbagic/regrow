@@ -433,7 +433,7 @@ func TestBuildPlanMarksSudoActions(t *testing.T) {
 }
 
 func TestBuildPlanWithNoSudo(t *testing.T) {
-	const reason = "needs administrator rights — run `regrow clean %s` in Terminal"
+	const reason = "needs administrator rights — run it in Terminal: `regrow clean %s`"
 	whole := Finding{
 		Rule: Rule{ID: "whole-sudo", Risk: RiskCaution, NativeCommand: Argv{"mdutil", "-E", "/"}, Sudo: true},
 		Items: []Item{
@@ -724,12 +724,12 @@ func TestSudoSkipNamesTheEngineItself(t *testing.T) {
 		want string
 	}{
 		{"without Self it is regrow on PATH", PlanOptions{NoSudo: true},
-			"needs administrator rights — run `regrow clean whole-sudo` in Terminal"},
+			"needs administrator rights — run it in Terminal: `regrow clean whole-sudo`"},
 		{"Self is quoted for the shell and comes before the flags",
 			PlanOptions{NoSudo: true, Self: "/Users/t/Applications/My Regrow.app/Contents/MacOS/regrow-engine", CleanFlags: []string{"--beta-rules"}},
-			"needs administrator rights — run `'/Users/t/Applications/My Regrow.app/Contents/MacOS/regrow-engine' clean --beta-rules whole-sudo` in Terminal"},
+			"needs administrator rights — run it in Terminal: `'/Users/t/Applications/My Regrow.app/Contents/MacOS/regrow-engine' clean --beta-rules whole-sudo`"},
 		{"a plain path stays bare", PlanOptions{NoSudo: true, Self: "/opt/regrow/bin/regrow"},
-			"needs administrator rights — run `/opt/regrow/bin/regrow clean whole-sudo` in Terminal"},
+			"needs administrator rights — run it in Terminal: `/opt/regrow/bin/regrow clean whole-sudo`"},
 	}
 	for _, tt := range tests {
 		plan := BuildPlanWith(testHost, []Finding{f}, selectRules(f), tt.opts)

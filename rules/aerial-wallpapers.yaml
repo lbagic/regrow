@@ -16,7 +16,7 @@ paths:
       os_min: "26"
 note: The videos come back whenever System Settings ▸ Wallpaper is opened, even with a still wallpaper; `regrow doctor` prints how to stop the downloads.
 regen:
-  story: 'macOS downloads the aerial catalogue again when System Settings ▸ Wallpaper is opened, and any aerial selected as wallpaper or screensaver. To remove the videos yourself: `sudo find "/Library/Application Support/com.apple.idleassetsd/Customer" -type f -name ''*.mov'' -delete` (macOS 15 and earlier), or `sudo find ~/Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches -type f -name ''*.mov'' -delete` (macOS 26 and later).'
+  story: 'macOS downloads the aerial catalogue again when System Settings ▸ Wallpaper is opened, and any aerial selected as wallpaper or screensaver. To remove the videos yourself on macOS 15 and earlier: `sudo find "/Library/Application Support/com.apple.idleassetsd/Customer" -type f -name ''*.mov'' -delete`. On macOS 26 and later: `sudo find ~/Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches -type f -name ''*.mov'' -delete`.'
   cost: n/a — regrow never deletes here; roughly 0.5 GB of download per video macOS fetches again
 sudo: false
 # Seen on macOS 15.7, where idleassetsd is the downloader; the row

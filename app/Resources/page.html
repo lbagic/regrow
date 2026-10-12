@@ -55,6 +55,8 @@ input[type="checkbox"] { accent-color: var(--accent); margin: 0; width: 15px; he
 .page { -webkit-user-select: text; }
 .page button, .page input, .page label, .page svg { -webkit-user-select: none; }
 .page .link.copy { margin: 0 0 0 8px; font-family: var(--sans); vertical-align: 1px; }
+.cmd { display: block; margin: 4px 0; }
+.cmd .mono { color: var(--ink); }
 .nb { white-space: nowrap; }
 .unit { font-weight: 400; color: var(--ink-2); }
 .err { color: var(--danger); overflow-wrap: anywhere; white-space: pre-wrap; }
@@ -596,8 +598,18 @@ const unbroken = (s) => new Markup(String(s).split(' ').map((word) => word.split
 // (a path drawn with ~ is copied in full).
 const copy = (text, what) => h`<button class="link copy" data-do="copy" data-text="${text}" aria-label="Copy the ${what}">${S.copied === text ? 'Copied' : 'Copy'}</button>`;
 // A sentence of the engine's or a rule's, with what it quotes in backticks set in mono. A quote that holds a
-// space or a slash, a command with its arguments or a path, has its copy control; a bare name has none.
-const sentence = (s) => new Markup(String(s).split('`').map((part, i) => (i % 2 ? '<span class="mono">' + unbroken(part).s + '</span>' + (/[ /]/.test(part) ? copy(part, 'command').s : '') : esc(part))).join(''));
+// space or a slash, a command with its arguments or a path, has its copy control; a bare name has none. A
+// command the sentence brings in with a colon is one to run yourself: it gets a line of its own, which ends
+// its clause, so the stop written after it is not drawn.
+const ownLine = (parts, i) => i % 2 === 1 && i < parts.length - 1 && parts[i].includes(' ') && /:\s*$/.test(parts[i - 1]);
+const sentence = (s) => {
+  const parts = String(s).split('`');
+  return new Markup(parts.map((part, i) => {
+    if (i % 2 === 0) return esc(ownLine(parts, i - 1) ? part.replace(/^[.,;]/, '') : part);
+    const quote = '<span class="mono">' + unbroken(part).s + '</span>' + (/[ /]/.test(part) ? copy(part, 'command').s : '');
+    return ownLine(parts, i) ? '<span class="cmd">' + quote + '</span>' : quote;
+  }).join(''));
+};
 
 function bar(bytes, bucket, scale) {
   return h`<span class="bar" aria-hidden="true">${bytes > 0 ? h`<i class="${bucket}" style="width:${Math.min(100, bytes / scale * 100).toFixed(2)}%"></i>` : ''}</span>`;
