@@ -206,15 +206,16 @@ struct CallerTests {
         let installed = URL(fileURLWithPath: "/Users/owner/Applications/Regrow.app")
         let pair = try BundleSwap.check(staged: staged, destination: installed, running: staged, home: home)
         #expect(pair.staged.path == staged.path && pair.destination.path == installed.path)
-        for (one, other) in [(URL(fileURLWithPath: "/Users/owner/Library/Messages"), installed),
-                             (staged, URL(fileURLWithPath: "/Users/owner/Library/Messages"))] {
+        let messages = URL(fileURLWithPath: "/Users/owner/Library/Messages")
+        let elsewhere = URL(fileURLWithPath: "/Users/owner/Applications/Other.app")
+        for (one, other, running) in [
+            (messages, installed, staged), (staged, messages, staged),
+            (staged, installed, URL(fileURLWithPath: "/tmp/Regrow.app")),
+            (elsewhere, installed, elsewhere),
+        ] {
             #expect(throws: BundleSwap.Failure.self) {
-                _ = try BundleSwap.check(staged: one, destination: other, running: staged, home: home)
+                _ = try BundleSwap.check(staged: one, destination: other, running: running, home: home)
             }
-        }
-        #expect(throws: BundleSwap.Failure.self) {
-            _ = try BundleSwap.check(
-                staged: staged, destination: installed, running: URL(fileURLWithPath: "/tmp/Regrow.app"), home: home)
         }
     }
 
@@ -279,7 +280,7 @@ struct CallerTests {
         }
     }
 
-    @Test("a running bundle's path re-pointed at a protected folder after launch moves nothing")
+    @Test("a running bundle's path re-pointed at a protected folder after launch moves only the two entries, never the folder")
     func runningPathRepointed() async throws {
         try await withTemporaryDirectory { directory in
             let home = directory.appendingPathComponent("home")
