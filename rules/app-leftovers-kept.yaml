@@ -1,18 +1,20 @@
 # Every app leftover app-leftovers does not offer, with the reason in
-# the row: a folder named by an id something still points into (a
-# launchd job, a native messaging host, a running process), one that
-# could not be read in full, one that changed in the last 90 days; and,
-# once unchanged for 90 days, the fuzzy matches: a folder in Application
-# Support named for a product rather than an id, an id of a maker one
-# of whose apps is installed, an id macOS made nothing else for.
-# Surface-only: the names alone cannot tell such a folder from a live
-# app's.
+# the row: a folder of an app one of whose folders something still
+# points into (a launchd job, a native messaging host, an installed
+# app's entitlements, a running process), could not be read in full or
+# changed in the last 90 days; and, once unchanged for 90 days, the
+# fuzzy matches: a folder in Application Support named for a product
+# rather than an id (macOS's own aside), an id of a maker one of whose
+# apps is installed or whose product names one, an id macOS made no
+# app folder for. Surface-only: the names alone cannot tell such a
+# folder from a live app's.
 id: app-leftovers-kept
 title: App leftovers (kept)
 category: macos
 risk: surface-only
 tool_query: app-leftovers-kept
-note: Each row says why it is not offered. A folder in use, or one that changed recently, moves to "App leftovers (no app has their id)" once nothing points into it and nothing in it changed for 90 days.
+note: Each row says why it is not offered. A folder in use, or one that changed recently, moves to "App leftovers (no app has their id)" once nothing points into any folder of its app and none of them changed for 90 days.
+scans: "the folders `app-leftovers` reads, in the same pass, and the names of macOS's own frameworks and programs (in `/System/Library/Frameworks`, `/System/Library/PrivateFrameworks`, `/System/Library/CoreServices`, `/usr/libexec`, `/usr/sbin` and `/usr/bin`, and the programs of the launchd jobs in `/System/Library/LaunchAgents` and `/System/Library/LaunchDaemons`), whose folders in Application Support are not listed; each row says why it is not offered"
 regen:
   story: n/a — regrow never deletes these; check the row's reason, then delete a folder yourself if its app is gone.
   cost: n/a

@@ -4,10 +4,12 @@
 # app-leftovers query (internal/scanner/tool_appleftovers.go) offers a
 # folder named exactly by a bundle or group id that nothing installed
 # has (an app in /Applications, ~/Applications or /System/Applications,
-# one of its plug-ins or helpers, an app Spotlight knows, a running app,
-# an app group an installed app's entitlements name), that no launchd
-# job, native messaging host or running process points into, and in
-# which nothing changed for 90 days. Every other leftover it finds is
+# one of its plug-ins or helpers, an app Spotlight knows or a running
+# app and what is inside it, an app group an installed app's
+# entitlements name), once no folder of the same app changed for 90
+# days, could not be read in full or has anything pointing into it (a
+# launchd job, a native messaging host, an installed app's
+# entitlements, a running process). Every other leftover it finds is
 # under app-leftovers-kept, with the reason.
 id: app-leftovers
 title: App leftovers (no app has their id)
@@ -17,6 +19,17 @@ tool_query: app-leftovers
 # The folder is judged again right before each Trash move.
 pre_action: app-leftover-recheck
 note: An app reinstalled later starts without its settings, data or login. A folder that could not be read in full is never offered; with Full Disk Access granted to regrow's app, Containers and Group Containers can be read.
+scans: "the folders in `~/Library`'s Application Support, Caches, Containers, Group Containers, HTTPStorages, WebKit, Saved Application State and Application Scripts, each walked for its size and newest change, and the files in `~/Library/Preferences`; every `Info.plist` under `/Applications`, `~/Applications` and `/System/Applications`, and in each app Spotlight knows (`mdfind`) or one of your processes runs from; the entitlements of every app, plug-in and service among them (`codesign -d --entitlements`); the launchd jobs in `~/Library/LaunchAgents`, `/Library/LaunchAgents` and `/Library/LaunchDaemons` and the native messaging manifests of Chrome, Chromium, Arc, Edge, Brave, Vivaldi, Opera and Firefox; and the files your processes work in, run, map or hold open (`lsof`)"
+keeps:
+  - "a folder whose name is the bundle id of any app, plug-in, helper or service installed there, or a string of an installed bundle's entitlements (its app groups)"
+  - "a folder whose name is not an id (an id has three or more dotted labels), and one whose id holds `com.apple`, which is macOS's own"
+  - "an id that shares its maker (its first two labels) with an installed app, or whose product, the label after them, is an installed app's name"
+  - "a folder in Application Support or Caches whose id has no folder in Containers, Group Containers, Saved Application State or Application Scripts, the places macOS makes folders only for an app: tools and libraries name folders like ids too"
+  - "every folder of an app (`com.example.app`, `ABCDE12345.com.example.app` and `group.com.example.app` are one) when any of them, or its settings file in `~/Library/Preferences`, changed in the last 90 days, could not be read in full, or has something pointing into it: a launchd job or native messaging manifest (its text, or where it links to), an installed app's entitlements, or a running process's working folder, program, mapped or open file"
+  - "a folder whose path lsof would print escaped, so a process in it could not be matched"
+  - "the folders of a location regrow cannot read in full, which is a row saying so (Full Disk Access may be needed)"
+  - "everything, when an app folder, a bundle, an `Info.plist`, entitlements, a launchd job, a manifest folder or `~/Library/Preferences` cannot be read, when `lsof` fails, or when `~/Library` belongs to another user than the one regrow runs as (a run under `sudo`): the rule then shows an error and offers nothing"
+  - "Kept folders are listed, with the reason, under `app-leftovers-kept`."
 regen:
   story: Not regenerated while the app is gone; an app installed again makes new folders and starts as on first launch. Undo puts a folder back from the Trash.
   cost: the deleted app's settings, data and caches

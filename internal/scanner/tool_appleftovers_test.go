@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -189,6 +190,7 @@ func TestAppLeftoversOwnedByInstalledBundles(t *testing.T) {
 	f.plist(filepath.Join(app, "Contents", "PlugIns", "Share.appex", "Contents", "Info.plist"), "net.share.ext")
 	f.plist(filepath.Join(app, "Contents", "Library", "LoginItems", "Login.app", "Contents", "Info.plist"), "org.login.helper")
 	f.plist(filepath.Join(app, "Contents", "Frameworks", "Kit.framework", "Versions", "A", "XPCServices", "Svc.xpc", "Contents", "Info.plist"), "io.svc.xpc")
+	f.plist(filepath.Join(app, "Contents", "Library", "LoginItems", "Lower.app", "Contents", "info.plist"), "org.helper.lower")
 	f.app("/Applications/Utilities/Beta.app", "com.beta.app")
 	f.app("~/Applications/Gamma.app", "com.gamma.app")
 	f.app("/System/Applications/Delta.app", "com.delta.app")
@@ -200,7 +202,7 @@ func TestAppLeftoversOwnedByInstalledBundles(t *testing.T) {
 	f.write("/Applications/Example.app/Contents/Info.plist", string(bin))
 
 	var owned []string
-	for _, id := range []string{"com.alpha.app", "net.share.ext", "org.login.helper", "io.svc.xpc", "com.beta.app", "com.gamma.app", "com.delta.app", "com.phone.app", "dev.example.app"} {
+	for _, id := range []string{"com.alpha.app", "net.share.ext", "org.login.helper", "io.svc.xpc", "org.helper.lower", "com.beta.app", "com.gamma.app", "com.delta.app", "com.phone.app", "dev.example.app"} {
 		owned = append(owned, f.folder("Containers", id))
 	}
 	owned = append(owned, f.folder("HTTPStorages", "COM.ALPHA.APP"))
@@ -284,6 +286,15 @@ func TestAppLeftoversUnreadableOwnersAreAnError(t *testing.T) {
 		"an Info.plist that is no plist": func(_ *testing.T, f *leftoversFixture) {
 			f.write("/Applications/Odd.app/Contents/Info.plist", "CFBundleIdentifier=com.odd.app")
 		},
+		"a folder that refuses in an app Spotlight knows": func(t *testing.T, f *leftoversFixture) {
+			spotted := f.app("/Volumes/X/Spotted.app", "com.spotted.app")
+			plugins := filepath.Join(spotted, "Contents", "PlugIns")
+			if err := os.MkdirAll(plugins, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			chmod(t, plugins, 0)
+			f.spot = []string{spotted}
+		},
 	}
 	for name, setup := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -332,18 +343,23 @@ func TestAppLeftoversKeepLaunchdTargets(t *testing.T) {
 	byPath := f.folder("Application Support", "com.gone.agent")
 	byTilde := f.folder("Containers", "com.gone.tilde")
 	byShell := f.folder("Caches", "com.gone.shell")
-	f.folder("HTTPStorages", "com.gone.shell")
+	f.folder("Containers", "com.gone.shell")
 	byLabel := f.folder("Containers", "com.gone.daemon")
+	quoted := f.folder("Containers", "com.gone.quoted")
+	escaped := f.folder("Application Support", "com.gone.escaped")
+	f.folder("Containers", "com.gone.escaped")
 	free := f.folder("Containers", "com.gone.free")
 	f.folder("Containers", "com.gone.agent")
 	f.write("~/Library/LaunchAgents/com.gone.agent.plist", launchdJob("job.one", byPath+"/bin/run", "--flag"))
 	f.write("~/Library/LaunchAgents/tilde.plist", launchdJob("job.two", "~/Library/Containers/com.gone.tilde/Data/run"))
 	f.write("/Library/LaunchAgents/shell.plist", launchdJob("job.three", "/bin/sh", "-c", `cd $HOME/Library/Caches/com.gone.shell &amp;&amp; ./run`))
 	f.write("/Library/LaunchDaemons/com.gone.daemon.plist", launchdJob("com.gone.daemon", "/usr/local/bin/daemon"))
+	f.write("~/Library/LaunchAgents/quoted.plist", launchdJob("job.five", "/bin/sh", "-c", `cd "$HOME/Library/Containers"/com.gone.quoted &amp;&amp; ./run`))
+	f.write("~/Library/LaunchAgents/escaped.plist", launchdJob("job.six", `~/Library/Application\ Support/com.gone.escaped/run`))
 	f.write("~/Library/LaunchAgents/near.plist", launchdJob("job.four", "~/Library/Containers/com.gone.free2/run"))
 
 	offered, kept := f.judge()
-	for _, p := range []string{byPath, byTilde, byShell, byLabel} {
+	for _, p := range []string{byPath, byTilde, byShell, byLabel, quoted, escaped} {
 		if slices.Contains(paths(offered), p) {
 			t.Errorf("offered %s, which a launchd job points into", p)
 		}
@@ -370,7 +386,10 @@ func TestAppLeftoversKeepNativeMessagingTargets(t *testing.T) {
 		"~/Library/Application Support/Vivaldi/NativeMessagingHosts",
 		"~/Library/Application Support/Mozilla/NativeMessagingHosts",
 		"/Library/Google/Chrome/NativeMessagingHosts",
+		"~/Library/Application Support/com.operasoftware.Opera/NativeMessagingHosts",
 		"/Library/Microsoft/Edge/NativeMessagingHosts",
+		"/Library/Application Support/Chromium/NativeMessagingHosts",
+		"/Library/BraveSoftware/Brave-Browser/NativeMessagingHosts",
 		"/Library/Application Support/Mozilla/NativeMessagingHosts",
 	} {
 		t.Run(dir, func(t *testing.T) {
@@ -393,7 +412,7 @@ func TestAppLeftoversKeepNativeMessagingTargets(t *testing.T) {
 func TestAppLeftoversKeepRunningProcessFolders(t *testing.T) {
 	f := newLeftoversFixture(t)
 	exe := f.folder("Application Support", "com.gone.daemon")
-	f.write("~/Library/Preferences/com.gone.daemon.plist", "<plist/>")
+	f.folder("Saved Application State", "com.gone.daemon.savedState")
 	cwd := f.folder("Containers", "com.gone.worker")
 	f.procs = []string{exe + "/bin/daemon", cwd, "/usr/lib/dyld"}
 	offered, kept := f.judge()
@@ -439,7 +458,7 @@ func TestAppLeftoversOfferOnlyIdleExactIDs(t *testing.T) {
 	f.app("/Applications/Maker.app", "com.maker.app")
 	idle := f.folder("Containers", "org.gone.app")
 	evidenced := f.folder("Application Support", "net.gone.tool")
-	f.write("~/Library/Preferences/net.gone.tool.plist", "<plist/>")
+	contained := f.folder("Containers", "net.gone.tool")
 	saved := f.folder("Saved Application State", "io.gone.app.savedState")
 	recent := f.folder("Containers", "org.recent.app")
 	f.touch(filepath.Join(recent, "data.bin"), 10)
@@ -453,7 +472,7 @@ func TestAppLeftoversOfferOnlyIdleExactIDs(t *testing.T) {
 	f.folder("Caches", "Some Tool")
 
 	offered, kept := f.judge()
-	want := []string{evidenced, idle, saved}
+	want := []string{evidenced, contained, idle, saved}
 	slices.Sort(want)
 	if got := paths(offered); !slices.Equal(got, want) {
 		t.Errorf("offered %v, want %v", got, want)
@@ -564,6 +583,24 @@ func TestRecheckAppLeftover(t *testing.T) {
 	if f.entCalls != calls {
 		t.Errorf("the second recheck within a minute read entitlements again")
 	}
+	later := f.unchanged.Add(2 * ownersReuse)
+	f.a.now = func() time.Time { return later }
+	if err := f.a.recheck(ctx, gone); err != nil || f.entCalls == calls {
+		t.Errorf("a recheck past the memo's minute = %v, read entitlements again: %v", err, f.entCalls != calls)
+	}
+	calls = f.entCalls
+	f.a.memo.home = "/elsewhere"
+	if err := f.a.recheck(ctx, gone); err != nil || f.entCalls == calls {
+		t.Errorf("a recheck for another home = %v, read entitlements again: %v", err, f.entCalls != calls)
+	}
+	scripted := f.folder("Application Support", "com.gone.scripted")
+	scripts := f.folder("Application Scripts", "com.gone.scripted")
+	if err := os.RemoveAll(scripts); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.a.recheck(ctx, scripted); err != nil {
+		t.Errorf("recheck after the run moved the folder that showed an app = %v, want it passed", err)
+	}
 	f.app("/Applications/Gone.app", "org.gone.app")
 	f.a.memo = &ownersMemo{}
 	if err := f.a.recheck(ctx, gone); err == nil || !strings.Contains(err.Error(), "no leftover now") {
@@ -638,5 +675,299 @@ func TestAppLeftoversNeverListAnotherRulesFolder(t *testing.T) {
 				t.Errorf("%s names %s, a folder the app leftover rules can list", r.ID, e.Path)
 			}
 		}
+	}
+}
+
+// A settings file, web data or a cookie store is no sign that an app of
+// the id ran: a tool, a library or a game engine names them as it
+// likes. So a folder in Application Support named like an id beside
+// only those is kept, while one beside saved state is offered; and an
+// id whose product an installed app has the name of may be that app's.
+func TestAppLeftoversAppSignsAreAnAppsOwn(t *testing.T) {
+	f := newLeftoversFixture(t)
+	f.app("/Applications/Overcooked 2.app", "com.team17.overcooked2")
+	unity := f.folder("Application Support", "unity.Team17.Overcooked2")
+	f.write("~/Library/Preferences/unity.Team17.Overcooked2.plist", "<plist/>")
+	renamed := f.folder("Containers", "com.oldmaker.overcooked2")
+	cli := f.folder("Application Support", "dev.deploy.cli")
+	f.folder("HTTPStorages", "dev.deploy.cli")
+	prefs := f.folder("Application Support", "io.tool.cli")
+	f.write("~/Library/Preferences/io.tool.cli.plist", "<plist/>")
+	web := f.folder("Application Support", "io.web.cli")
+	f.folder("WebKit", "io.web.cli")
+	saved := f.folder("Application Support", "com.gone.app")
+	f.folder("Saved Application State", "com.gone.app.savedState")
+	browser := f.app("/Applications/Browser.app", "com.browser.app")
+	f.plist(filepath.Join(browser, "Contents", "Frameworks", "Browser Helper.app", "Contents", "Info.plist"), "com.browser.app.helper")
+	helped := f.folder("Containers", "com.vault.browser-helper")
+
+	offered, kept := f.judge()
+	for _, p := range []string{saved, helped} {
+		if !slices.Contains(paths(offered), p) {
+			t.Errorf("offered %v, want %s: macOS made it for an app nothing installed has", paths(offered), p)
+		}
+	}
+	for _, p := range []string{unity, renamed, cli, prefs, web} {
+		if slices.Contains(paths(offered), p) {
+			t.Errorf("offered %s, which no sign of an app backs", p)
+		}
+	}
+	for path, why := range map[string]string{
+		unity:   "may belong to Overcooked 2.app",
+		renamed: "may belong to Overcooked 2.app",
+		cli:     "macOS keeps no container",
+		prefs:   "macOS keeps no container",
+		web:     "macOS keeps no container",
+	} {
+		if got := keptWhy(kept, path); !strings.Contains(got, why) {
+			t.Errorf("%s: kept for %q, want %q", path, got, why)
+		}
+	}
+}
+
+// One app's folders go together: a change, a pointer or a read in part
+// in any folder of the id, or in its settings file, keeps every folder
+// of it, in the scan and in the recheck.
+func TestAppLeftoversOneAppsFoldersGoTogether(t *testing.T) {
+	f := newLeftoversFixture(t)
+	dmg := f.folder("Application Support", "com.dmg.app")
+	used := f.folder("Containers", "com.dmg.app")
+	f.touch(filepath.Join(used, "data.bin"), 3)
+	jobDir := f.folder("Application Support", "com.gone.app")
+	f.folder("Containers", "com.gone.app")
+	jobWeb := f.folder("HTTPStorages", "com.gone.app")
+	f.write("~/Library/LaunchAgents/updater.plist", launchdJob("com.gone.updater", "~/Library/Application Support/com.gone.app/Updater"))
+	grouped := f.folder("Containers", "com.grp.app")
+	group := f.folder("Group Containers", "ABCDE12345.com.grp.app")
+	f.touch(filepath.Join(group, "data.bin"), 5)
+	settled := f.folder("Containers", "com.pref.app")
+	f.write("~/Library/Preferences/com.pref.app.plist", "<plist/>")
+	f.touch(f.host.ExpandPath("~/Library/Preferences/com.pref.app.plist"), 5)
+	free := f.folder("Containers", "com.free.app")
+
+	offered, kept := f.judge()
+	if got := paths(offered); !slices.Equal(got, []string{free}) {
+		t.Errorf("offered %v, want only %s", got, free)
+	}
+	for path, why := range map[string]string{
+		dmg:     "Containers/com.dmg.app",
+		jobDir:  "the launchd job",
+		jobWeb:  "the launchd job",
+		grouped: "ABCDE12345.com.grp.app",
+		settled: "Preferences/com.pref.app.plist",
+	} {
+		if got := keptWhy(kept, path); !strings.Contains(got, why) {
+			t.Errorf("%s: kept for %q, want %q", path, got, why)
+		}
+	}
+	f.a.memo = &ownersMemo{}
+	if err := f.a.recheck(context.Background(), dmg); err == nil || !strings.Contains(err.Error(), "is kept now") {
+		t.Errorf("recheck of %s = %v, want it kept for its container", dmg, err)
+	}
+}
+
+// A launchd job or a native messaging manifest that is a link into a
+// folder keeps it: launchd and the browser read the file there.
+func TestAppLeftoversKeepLinkedJobTargets(t *testing.T) {
+	f := newLeftoversFixture(t)
+	dir := f.folder("Application Support", "com.gone.app")
+	f.folder("Saved Application State", "com.gone.app.savedState")
+	f.write("~/Library/Application Support/com.gone.app/agent.plist", launchdJob("com.other.agent", "/usr/bin/python3", "-m", "gone"))
+	if err := os.MkdirAll(f.host.ExpandPath("~/Library/LaunchAgents"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(dir, "agent.plist"), f.host.ExpandPath("~/Library/LaunchAgents/com.other.agent.plist")); err != nil {
+		t.Fatal(err)
+	}
+	offered, kept := f.judge()
+	if slices.Contains(paths(offered), dir) {
+		t.Errorf("offered %s, which a launchd job is a link into", dir)
+	}
+	if why := keptWhy(kept, dir); !strings.Contains(why, "the launchd job") {
+		t.Errorf("kept for %q, want the launchd job named", why)
+	}
+}
+
+// An app found only by Spotlight or because it runs owns what its
+// plug-ins and services own, as an app in /Applications does.
+func TestAppLeftoversNestedBundlesOutsideTheRoots(t *testing.T) {
+	f := newLeftoversFixture(t)
+	spotted := f.app("/Volumes/X/Spotted.app", "com.spotted.app")
+	widget := filepath.Join(spotted, "Contents", "PlugIns", "W.appex")
+	f.plist(filepath.Join(widget, "Contents", "Info.plist"), "net.other.widget")
+	f.ents[widget] = entitlementsXML("group.io.other.shared")
+	running := f.app("/Volumes/Y/Running.app", "com.running.app")
+	f.plist(filepath.Join(running, "Contents", "XPCServices", "S.xpc", "Contents", "Info.plist"), "org.third.service")
+	f.spot = []string{spotted}
+	f.procs = []string{filepath.Join(running, "Contents", "MacOS", "Running")}
+	f.folder("Containers", "net.other.widget")
+	f.folder("Group Containers", "group.io.other.shared")
+	f.folder("Containers", "org.third.service")
+
+	offered, kept := f.judge()
+	for _, p := range append(paths(offered), paths(kept)...) {
+		t.Errorf("listed %s, which a bundle inside an installed app owns", p)
+	}
+}
+
+// Run for another user's home (sudo keeps HOME), lsof would list the
+// wrong user's processes, so the rule refuses.
+func TestAppLeftoversRefuseAnotherUsersHome(t *testing.T) {
+	f := newLeftoversFixture(t)
+	f.folder("Containers", "org.gone.app")
+	f.a.getuid = func() int { return os.Getuid() + 1 }
+	if offered, _, err := f.a.judge(context.Background(), ""); err == nil || !strings.Contains(err.Error(), "another user") {
+		t.Errorf("offered %v with err %v, want a refusal", paths(offered), err)
+	}
+}
+
+// A process holding a file open in a folder keeps it.
+func TestAppLeftoversKeepFoldersWithOpenFiles(t *testing.T) {
+	if _, err := exec.LookPath("lsof"); err != nil {
+		t.Skip("no lsof")
+	}
+	f := newLeftoversFixture(t)
+	dir := f.folder("Containers", "com.gone.sync")
+	cmd := exec.Command("/bin/sh", "-c", `exec 3<"$1"; exec /bin/sleep 60`, "sh", filepath.Join(dir, "data.bin"))
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+	f.a.procs = lsofCwdAndMapped
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		names, err := lsofCwdAndMapped(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if slices.Contains(names, filepath.Join(dir, "data.bin")) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("lsof never listed the open file")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	offered, kept := f.judge()
+	if slices.Contains(paths(offered), dir) {
+		t.Errorf("offered %s, in which a process holds a file open", dir)
+	}
+	if why := keptWhy(kept, dir); !strings.Contains(why, "a running process") {
+		t.Errorf("kept for %q, want the running process named", why)
+	}
+}
+
+// macOS's own folders in Application Support are named for a program
+// or a framework of macOS, or are its iPhone backups; they are no app's
+// leftovers and are not listed.
+func TestAppLeftoversLeaveMacOSProductFoldersAlone(t *testing.T) {
+	f := newLeftoversFixture(t)
+	for _, d := range []string{"/System/Library/PrivateFrameworks/CallHistory.framework", "/System/Library/Frameworks/AddressBook.framework", "/System/Library/CoreServices/Dock.app"} {
+		if err := os.MkdirAll(f.host.ExpandPath(d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.write("/usr/libexec/knowledge-agent", "")
+	f.write("/System/Library/LaunchAgents/com.apple.homeenergyd.plist", launchdJob("com.apple.homeenergyd", "/System/Library/PrivateFrameworks/HomeEnergy.framework/Support/homeenergyd"))
+	for _, n := range []string{"AddressBook", "CallHistoryTransactions", "Knowledge", "homeenergyd", "Dock"} {
+		f.folder("Application Support", n)
+	}
+	writeFile(t, filepath.Join(f.host.Home, "Library", "Application Support", "MobileSync", "Backup", "0000-0000", "Manifest.db"), 64)
+	game := f.folder("Application Support", "Old Game")
+
+	_, kept := f.judge()
+	if got := paths(kept); !slices.Equal(got, []string{game}) {
+		t.Errorf("kept rows %v, want only %s", got, game)
+	}
+}
+
+// A folder an installed app's sandbox exceptions name is in use.
+func TestAppLeftoversEntitledPathsKeepFolders(t *testing.T) {
+	f := newLeftoversFixture(t)
+	app := f.app("/Applications/Alpha.app", "com.alpha.app")
+	f.ents[app] = `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>com.apple.security.temporary-exception.files.home-relative-path.read-write</key><array><string>/Library/Application Support/org.shared.data/</string></array></dict></plist>`
+	shared := f.folder("Application Support", "org.shared.data")
+	f.folder("Containers", "org.shared.data")
+	offered, kept := f.judge()
+	if slices.Contains(paths(offered), shared) {
+		t.Errorf("offered %s, which Alpha's entitlements name", shared)
+	}
+	if why := keptWhy(kept, shared); !strings.Contains(why, "Alpha.app") {
+		t.Errorf("kept for %q, want Alpha's entitlements named", why)
+	}
+}
+
+// What could not be read is never claimed absent: an unreadable
+// ~/Library/Preferences is an error, and a location read in part is
+// named where it might have held a sign of the app.
+func TestAppLeftoversSayWhatCouldNotBeRead(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root reads every folder")
+	}
+	t.Run("preferences", func(t *testing.T) {
+		f := newLeftoversFixture(t)
+		f.folder("Containers", "org.gone.app")
+		f.write("~/Library/Preferences/org.gone.app.plist", "<plist/>")
+		chmod(t, f.host.ExpandPath("~/Library/Preferences"), 0)
+		if offered, _, err := f.a.judge(context.Background(), ""); err == nil {
+			t.Errorf("offered %v, want an error", paths(offered))
+		}
+	})
+	t.Run("macOS's names", func(t *testing.T) {
+		f := newLeftoversFixture(t)
+		f.folder("Application Support", "Old Game")
+		jobs := f.host.ExpandPath("/System/Library/LaunchAgents")
+		if err := os.MkdirAll(jobs, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		chmod(t, jobs, 0)
+		if _, kept, err := f.a.judge(context.Background(), ""); err == nil {
+			t.Errorf("kept %v, want an error", paths(kept))
+		}
+	})
+	t.Run("a sign's location", func(t *testing.T) {
+		f := newLeftoversFixture(t)
+		dir := f.folder("Application Support", "com.gone.app")
+		f.folder("Containers", "com.gone.app")
+		w, _ := blockingWalker(t, filepath.Join(f.host.Home, "Library", "Containers"))
+		f.a.w = w
+		_, kept := f.judge()
+		if why := keptWhy(kept, dir); !strings.Contains(why, "Containers could not be read") {
+			t.Errorf("kept for %q, want the unread location named", why)
+		}
+	})
+}
+
+// With no home folder there is nothing to judge, and that is an error.
+func TestAppLeftoversNeedAHome(t *testing.T) {
+	t.Setenv("HOME", "")
+	if items, err := (&appLeftovers{}).Offered(context.Background()); err == nil {
+		t.Errorf("offered %v, want an error", paths(items))
+	}
+}
+
+// A path lsof would print escaped cannot be matched to a process's.
+func TestAppLeftoversKeepPathsLsofEscapes(t *testing.T) {
+	f := newLeftoversFixture(t)
+	f.host.Home = filepath.Join(filepath.Dir(f.host.Home), "de\u200dv")
+	f.a.host = f.host
+	dir := f.folder("Containers", "org.gone.app")
+	offered, kept := f.judge()
+	if len(offered) > 0 {
+		t.Errorf("offered %v, want none", paths(offered))
+	}
+	if why := keptWhy(kept, dir); !strings.Contains(why, "lsof would not print") {
+		t.Errorf("kept for %q, want lsof's escaping named", why)
+	}
+}
+
+// Entitlements that do not parse leave the groups unknown: an error.
+func TestAppLeftoversUnparsableEntitlementsAreAnError(t *testing.T) {
+	f := newLeftoversFixture(t)
+	app := f.app("/Applications/Alpha.app", "com.alpha.app")
+	f.ents[app] = "<?xml version=\"1.0\"?><plist><dict><key>x</key><array><string>y"
+	f.folder("Containers", "org.gone.app")
+	if offered, _, err := f.a.judge(context.Background(), ""); err == nil {
+		t.Errorf("offered %v, want an error", paths(offered))
 	}
 }
