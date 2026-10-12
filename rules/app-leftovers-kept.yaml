@@ -1,5 +1,5 @@
 # Every app leftover app-leftovers does not offer, with the reason in
-# the row: a folder of an app one of whose folders something still
+# the row: a folder of a maker one of whose folders something still
 # points into (a launchd job, a native messaging host, an installed
 # app's entitlements, a running process), could not be read in full or
 # changed in the last 90 days; and, once unchanged for 90 days, the
@@ -13,8 +13,8 @@ title: App leftovers (kept)
 category: macos
 risk: surface-only
 tool_query: app-leftovers-kept
-note: Each row says why it is not offered. A folder in use, or one that changed recently, moves to "App leftovers (no app has their id)" once nothing points into any folder of its app and none of them changed for 90 days.
-scans: "the folders `app-leftovers` reads, in the same pass, and the names of macOS's own frameworks and programs (in `/System/Library/Frameworks`, `/System/Library/PrivateFrameworks`, `/System/Library/CoreServices`, `/usr/libexec`, `/usr/sbin` and `/usr/bin`, and the files the launchd jobs in `/System/Library/LaunchAgents` and `/System/Library/LaunchDaemons` name, their programs among them), whose folders in Application Support are not listed; each row says why it is not offered"
+note: Each row says why it is not offered. A folder in use, or one that changed recently, moves to "App leftovers (no app has their id)" once nothing points into any folder of its maker and none of them changed for 90 days.
+scans: "the folders `app-leftovers` reads, in the same pass, and the names of macOS's own frameworks and programs (in `/System/Library/Frameworks`, `/System/Library/PrivateFrameworks`, `/System/Library/CoreServices`, `/usr/libexec` and `/usr/sbin`, and the files the launchd jobs in `/System/Library/LaunchAgents` and `/System/Library/LaunchDaemons` name, their programs among them), whose folders in Application Support are not listed; each row says why it is not offered"
 regen:
   story: n/a — regrow never deletes these; check the row's reason, then delete a folder yourself if its app is gone.
   cost: n/a
