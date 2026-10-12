@@ -1,0 +1,1 @@
+[trash] cursor-agent-versions: osascript -e tell application "Finder" to return POSIX path of ((delete POSIX file "~/.local/share/cursor-agent/versions/2026.07.23-e383d2b") as alias)  (pre: superseded-build-recheck)

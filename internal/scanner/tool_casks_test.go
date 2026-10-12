@@ -1,0 +1,208 @@
+package scanner
+
+import (
+	"context"
+	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+
+	"github.com/lbagic/regrow/internal/engine"
+)
+
+// casksJSON is `brew info --cask --json=v2 --installed`, cut to the
+// fields read. App names are made up so no real app in /Applications
+// can match one.
+const casksJSON = `{"formulae":[],"casks":[
+ {"token":"gone-plain","installed":"1.0","artifacts":[{"uninstall":[{"quit":"dev.example.gone"}]},{"app":["Regrow Test Gone.app"]},{"zap":[{"trash":["~/Library/x"]}]}]},
+ {"token":"gone-bare","installed":"2.0","artifacts":[{"app":["Regrow Test Bare.app"]},{"binary":["/x/bin/bare"]}]},
+ {"token":"gone-launchctl","installed":"3.0","artifacts":[{"uninstall":[{"launchctl":"dev.example.helper","quit":"dev.example.l"}]},{"app":["Regrow Test Launchctl.app"]}]},
+ {"token":"gone-pkg","installed":"4.0","artifacts":[{"app":["Regrow Test Pkg.app"]},{"pkg":["Pkg.pkg"]}]},
+ {"token":"gone-postflight","installed":"5.0","artifacts":[{"app":["Regrow Test Post.app"]},{"uninstall_postflight":null}]},
+ {"token":"present-appdir","installed":"6.0","artifacts":[{"app":["Regrow Test Here.app"]}]},
+ {"token":"present-home","installed":"7.0","artifacts":[{"app":["Regrow Test Home.app"]}]},
+ {"token":"renamed","installed":"8.0","artifacts":[{"app":["regrow test renamed.app",{"target":"Regrow Test Renamed.app"}]}]},
+ {"token":"no-app","installed":"9.0","artifacts":[{"binary":["/x/bin/tool"]}]},
+ {"token":"appdir-gone","installed":"10.0","artifacts":[{"app":["Regrow Test Elsewhere.app"]}]},
+ {"token":"bad-config","installed":"11.0","artifacts":[{"app":["Regrow Test Bad.app"]}]}
+]}`
+
+func caskFixture(t *testing.T) (*caskRecords, string) {
+	t.Helper()
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	caskroom := filepath.Join(root, "Caskroom")
+	apps := filepath.Join(root, "Apps")
+	tokens := []string{"gone-plain", "gone-bare", "gone-launchctl", "gone-pkg", "gone-postflight", "present-appdir", "present-home", "renamed", "no-app", "appdir-gone", "bad-config"}
+	for _, tok := range tokens {
+		writeFile(t, filepath.Join(caskroom, tok, "1.0", "marker"), 2048)
+		cfg := `{"default":{"appdir":"` + apps + `"},"env":null,"explicit":null}`
+		switch tok {
+		case "appdir-gone":
+			cfg = `{"default":{"appdir":"/Applications"},"env":null,"explicit":{"appdir":"` + filepath.Join(root, "NotMounted") + `"}}`
+		case "bad-config":
+			cfg = `{"default":`
+		}
+		writeText(t, filepath.Join(caskroom, tok, ".metadata", "config.json"), cfg)
+	}
+	writeFile(t, filepath.Join(apps, "Regrow Test Here.app", "Contents", "Info.plist"), 10)
+	writeFile(t, filepath.Join(home, "Applications", "Regrow Test Home.app", "Contents", "Info.plist"), 10)
+	c := &caskRecords{
+		Home: home,
+		w:    testWalker(),
+		Brew: func(_ context.Context, args ...string) ([]byte, bool, error) {
+			switch strings.Join(args, " ") {
+			case "info --cask --json=v2 --installed":
+				return []byte(casksJSON), true, nil
+			case "--caskroom":
+				return []byte(caskroom + "\n"), true, nil
+			}
+			return nil, false, errors.New("unexpected brew " + strings.Join(args, " "))
+		},
+	}
+	return c, caskroom
+}
+
+func caskTokens(items []engine.Item) []string {
+	out := make([]string, len(items))
+	for i, it := range items {
+		out[i] = it.Arg
+	}
+	slices.Sort(out)
+	return out
+}
+
+func TestCaskRecords(t *testing.T) {
+	c, caskroom := caskFixture(t)
+	plain, err := c.Plain(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sudo, err := c.NeedsPassword(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := caskTokens(plain), []string{"gone-bare", "gone-plain", "renamed"}; !slices.Equal(got, want) {
+		t.Errorf("plain %q, want %q", got, want)
+	}
+	if got, want := caskTokens(sudo), []string{"gone-launchctl", "gone-pkg", "gone-postflight"}; !slices.Equal(got, want) {
+		t.Errorf("needs a password %q, want %q", got, want)
+	}
+	for _, it := range append(plain, sudo...) {
+		if it.Path != filepath.Join(caskroom, it.Arg) || it.Bytes <= 0 || !strings.HasPrefix(it.Label, it.Arg+" ") {
+			t.Errorf("item %+v: want its Caskroom folder, size and token", it)
+		}
+	}
+	if i := slices.IndexFunc(plain, func(it engine.Item) bool { return it.Arg == "renamed" }); i < 0 || !strings.Contains(plain[i].Label, "Regrow Test Renamed.app gone") {
+		t.Errorf("the renamed cask is not labelled by its target: %+v", plain)
+	}
+
+	if err := c.recheck(context.Background(), filepath.Join(caskroom, "gone-plain")); err != nil {
+		t.Errorf("recheck of a plain record: %v", err)
+	}
+	for _, tok := range []string{"gone-launchctl", "present-appdir", "nothing-here"} {
+		if err := c.recheck(context.Background(), filepath.Join(caskroom, tok)); err == nil {
+			t.Errorf("recheck of %s passed", tok)
+		}
+	}
+}
+
+func TestCaskRecordsBrew(t *testing.T) {
+	c := &caskRecords{w: testWalker(), Brew: func(context.Context, ...string) ([]byte, bool, error) { return nil, false, nil }}
+	if items, err := c.Plain(context.Background()); err != nil || len(items) != 0 {
+		t.Errorf("without brew: items %v, err %v; want nothing", items, err)
+	}
+	c = &caskRecords{w: testWalker(), Brew: func(context.Context, ...string) ([]byte, bool, error) {
+		return nil, false, errors.New("exit status 1")
+	}}
+	if _, err := c.NeedsPassword(context.Background()); err == nil {
+		t.Error("a failing brew is no error")
+	}
+}
+
+// The uninstall counts as done only once brew no longer lists the cask:
+// brew has returned 0 and kept the record (microsoft-edge, purging
+// another version's folder).
+func TestCaskUninstallChecksTheRecord(t *testing.T) {
+	r := catalogRule(t, "brew-cask-records")
+	argv, err := r.NativeCommand.ExpandItem(engine.Item{Arg: "gone-plain"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.ContainsFunc(argv, func(a string) bool { return strings.Contains(a, "--zap") }) {
+		t.Fatalf("command %q zaps: that deletes the app's data with no Trash", argv)
+	}
+	fake := `#!/bin/sh
+d=$(dirname "$0")
+echo "$*" >> "$d/calls"
+case "$1" in
+uninstall) exit "$UNINSTALL_EXIT";;
+list) [ "$LIST_EXIT" = 0 ] || exit "$LIST_EXIT"; printf 'other\n%s\n' "$LISTED"; exit 0;;
+esac
+exit 2
+`
+	cases := []struct {
+		name                    string
+		uninstallExit, listExit string
+		listed                  string
+		ok                      bool
+		stderr                  string
+	}{
+		{"gone", "0", "0", "", true, ""},
+		{"brew kept the record", "0", "0", "gone-plain", false, "still lists cask gone-plain"},
+		{"a cask whose name it ends with", "0", "0", "x-gone-plain", true, ""},
+		{"the uninstall fails", "1", "0", "", false, ""},
+		{"the listing fails", "0", "1", "", false, "brew list failed"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			bin := t.TempDir()
+			writeText(t, filepath.Join(bin, "brew"), fake)
+			if err := os.Chmod(filepath.Join(bin, "brew"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command(argv[0], argv[1:]...)
+			cmd.Env = []string{"PATH=" + bin + ":/usr/bin:/bin", "UNINSTALL_EXIT=" + tc.uninstallExit, "LIST_EXIT=" + tc.listExit, "LISTED=" + tc.listed}
+			var stderr strings.Builder
+			cmd.Stderr = &stderr
+			err := cmd.Run()
+			if (err == nil) != tc.ok {
+				t.Fatalf("err = %v (stderr %q), want ok %v", err, stderr.String(), tc.ok)
+			}
+			if tc.stderr != "" && !strings.Contains(stderr.String(), tc.stderr) {
+				t.Errorf("stderr %q does not say %q", stderr.String(), tc.stderr)
+			}
+			calls, err := os.ReadFile(filepath.Join(bin, "calls"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.HasPrefix(string(calls), "uninstall --cask gone-plain\n") {
+				t.Errorf("calls %q, want the uninstall first", calls)
+			}
+		})
+	}
+}
+
+func TestCaskRecordRules(t *testing.T) {
+	r := catalogRule(t, "brew-cask-records")
+	if r.Risk != engine.RiskCaution || r.PreAction != engine.PreActionCaskRecordRecheck || r.Sudo || !r.Beta || !r.NativeCommand.PerItem() {
+		t.Errorf("brew-cask-records: risk %q, pre_action %q, sudo %v, beta %v, command %q; want beta caution, per item, with the recheck", r.Risk, r.PreAction, r.Sudo, r.Beta, r.NativeCommand)
+	}
+	s := catalogRule(t, "brew-cask-records-sudo")
+	if s.Risk != engine.RiskSurfaceOnly || !s.Beta {
+		t.Errorf("brew-cask-records-sudo: risk %q, beta %v; want beta surface-only", s.Risk, s.Beta)
+	}
+	for _, want := range []string{"`brew uninstall --cask <token>`", "password", "`brew uninstall --cask --force <token>`"} {
+		if !strings.Contains(s.Note, want) {
+			t.Errorf("brew-cask-records-sudo note %q does not say %q", s.Note, want)
+		}
+	}
+	for _, id := range []string{"brew-cask-records", "brew-cask-records-sudo"} {
+		if q := catalogRule(t, id).ToolQuery; DefaultQueries(engine.Host{})[q] == nil {
+			t.Errorf("%s: query %q is not registered", id, q)
+		}
+	}
+}

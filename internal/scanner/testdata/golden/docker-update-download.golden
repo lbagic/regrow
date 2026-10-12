@@ -1,0 +1,1 @@
+[trash] docker-update-download: osascript -e tell application "Finder" to return POSIX path of ((delete POSIX file "~/Library/Application Support/com.docker.install/in_progress") as alias)  (pre: docker-update-recheck)

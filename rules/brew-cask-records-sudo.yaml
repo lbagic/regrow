@@ -1,0 +1,24 @@
+# Homebrew cask records whose app is gone and whose uninstall steps
+# (launchctl, pkgutil, a delete, a script) make brew ask for a password,
+# which regrow cannot answer from the app. The brew-cask-records query
+# lists them for this rule; the note gives the command to run in a
+# terminal. Two such records on one machine.
+id: brew-cask-records-sudo
+title: Homebrew casks whose app is gone (asks for a password)
+category: toolchains
+risk: surface-only
+tool_query: brew-cask-records-sudo
+note: "Each of these casks' uninstall steps make brew ask for your password. To remove one, in a terminal: `brew uninstall --cask <token>`. Then check it is gone: `brew list --cask`. If brew still lists it, run: `brew uninstall --cask --force <token>`."
+scans: "the casks `brew-cask-records` reads, in the same pass"
+keeps:
+  - "every cask `brew-cask-records` keeps, and every one it offers"
+regen:
+  story: "Reinstall the app with brew if you want it back: `brew install --cask <token>`."
+  cost: n/a — regrow never runs the uninstall here
+sudo: false
+beta: true
+fixture:
+  items:
+    - label: "gone-launchctl 3.0: Launchctl.app gone"
+      arg: gone-launchctl
+      bytes: 40000

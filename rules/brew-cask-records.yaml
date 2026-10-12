@@ -1,0 +1,41 @@
+# Homebrew cask records whose app is gone: the app was deleted by hand
+# or replaced under another name, and brew still lists the cask. The
+# brew-cask-records query (internal/scanner/tool_casks.go) lists a cask
+# whose every app is gone from the folder brew installed it into,
+# /Applications and ~/Applications, when its uninstall steps ask for no
+# password; brew-cask-records-sudo shows the others. Seven such records
+# on one machine.
+#
+# brew has returned 0 from an uninstall and kept the record, so the
+# command checks `brew list --cask` afterwards and fails while the cask
+# is still there. Never --zap: that deletes the app's data with no
+# Trash.
+id: brew-cask-records
+title: Homebrew casks whose app is gone
+category: toolchains
+risk: caution
+tool_query: brew-cask-records
+native_command:
+  - /bin/sh
+  - -c
+  - 'brew uninstall --cask "$1" || exit; list=$(brew list --cask -1) || { echo "brew list failed after the uninstall" >&2; exit 1; }; if printf "%s\n" "$list" | grep -qxF -- "$1"; then echo "brew still lists cask $1 after its uninstall" >&2; exit 1; fi'
+  - sh
+  - "{arg}"
+# brew is asked about the cask again right before its uninstall.
+pre_action: cask-record-recheck
+scans: "`brew info --cask --json=v2 --installed` and `brew --caskroom` (with `HOMEBREW_NO_AUTO_UPDATE=1`); each cask's install record, `<Caskroom>/<token>/.metadata/config.json`, for the folder it put its apps in; whether each app is in that folder, `/Applications` or `~/Applications`; the size of each listed cask's Caskroom folder"
+keeps:
+  - "a cask with any of its apps in its app folder, `/Applications` or `~/Applications`, or one that cannot be checked there"
+  - "a cask that installs no app: command-line tools, fonts, installer packages"
+  - "a cask whose install record cannot be read, or whose app folder is not there (a disk not mounted)"
+  - "a cask whose uninstall asks for a password: `brew-cask-records-sudo` shows it"
+regen:
+  story: "Reinstall the app with brew if you want it back: `brew install --cask <token>`."
+  cost: nothing; the app is already gone, and its data stays (no --zap)
+sudo: false
+beta: true
+fixture:
+  items:
+    - label: "gone-plain 1.0: Gone.app gone"
+      arg: gone-plain
+      bytes: 40000

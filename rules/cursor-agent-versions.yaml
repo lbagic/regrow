@@ -1,0 +1,33 @@
+# Old builds of the cursor-agent CLI, which keeps every build in
+# ~/.local/share/cursor-agent/versions and runs the one its
+# ~/.local/bin/cursor-agent and agent links lead into. The
+# cursor-agent-versions query (internal/scanner/tool_superseded.go)
+# lists every other build, unless a running process uses it, it is
+# newer than the live one, or it changed in the last day. 0.41 GiB in
+# two builds on one machine.
+id: cursor-agent-versions
+title: Old cursor-agent builds
+category: toolchains
+risk: safe
+tool_query: cursor-agent-versions
+# The build in use and running processes are read again right before
+# each Trash move.
+pre_action: superseded-build-recheck
+scans: "the folders in `~/.local/share/cursor-agent/versions`, with each one's newest modification time; where `~/.local/bin/cursor-agent` and `~/.local/bin/agent` lead; and your processes' working folders, command lines and the files they execute or map (`lsof`, `ps`)"
+keeps:
+  - "every build either link leads into"
+  - "a build a running process executes or maps a file from, works in, or names on its command line"
+  - "a build newer than the one in use, or one whose version cannot be compared with it: an update may be waiting"
+  - "a build with anything in it changed in the last day, and one that cannot all be read"
+  - "every build when neither link is there, or one leads nowhere or outside the folder, since the build in use cannot be told"
+  - "everything, when `lsof` or `ps` fails: the rule then shows an error and offers nothing"
+regen:
+  story: The cursor-agent installer downloads the build it needs; an old one is never run again.
+  cost: nothing unless you roll cursor-agent back; then a reinstall
+sudo: false
+beta: true
+fixture:
+  items:
+    - label: cursor-agent 2026.07.23-e383d2b
+      path: ~/.local/share/cursor-agent/versions/2026.07.23-e383d2b
+      bytes: 210000000

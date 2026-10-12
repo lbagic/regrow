@@ -341,6 +341,13 @@ func (r Rule) PerItemActionable() bool {
 // before it goes to the Trash and refuses when it is kept now.
 // PreActionFnmVersionRecheck reads what names a Node version again
 // right before `fnm uninstall` and refuses when something does now.
+// PreActionSupersededBuildRecheck judges a tool's old build again right
+// before it goes to the Trash and refuses when it is kept now or the
+// build in use cannot be told. PreActionDockerUpdateRecheck does the
+// same for Docker Desktop's unfinished update download.
+// PreActionCaskRecordRecheck asks brew about a cask again right before
+// `brew uninstall --cask` and refuses unless its app is still gone and
+// its uninstall still asks for no password.
 // A hook failure leaves the target in place. The registry of hook names
 // lives here so a typo'd pre_action fails at load, like a typo'd
 // placeholder; the implementations are registered on the executor.
@@ -352,11 +359,15 @@ const (
 	PreActionNpxRecheck                 = "npx-recheck"
 	PreActionDownloadedInstallerRecheck = "downloaded-installer-recheck"
 	PreActionFnmVersionRecheck          = "fnm-version-recheck"
+	PreActionSupersededBuildRecheck     = "superseded-build-recheck"
+	PreActionDockerUpdateRecheck        = "docker-update-recheck"
+	PreActionCaskRecordRecheck          = "cask-record-recheck"
 )
 
 var knownPreActions = map[string]bool{
 	PreActionVolumeExport: true, PreActionAgentScratchRecheck: true, PreActionWorktreeRecheck: true, PreActionBuildOutputRecheck: true,
 	PreActionNpxRecheck: true, PreActionDownloadedInstallerRecheck: true, PreActionFnmVersionRecheck: true,
+	PreActionSupersededBuildRecheck: true, PreActionDockerUpdateRecheck: true, PreActionCaskRecordRecheck: true,
 }
 
 // KnownPreActions lists every hook name a rule may declare, sorted. An

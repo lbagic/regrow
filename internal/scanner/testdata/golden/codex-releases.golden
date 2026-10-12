@@ -1,0 +1,1 @@
+[trash] codex-releases: osascript -e tell application "Finder" to return POSIX path of ((delete POSIX file "~/.codex/packages/app-server-daemon/releases/0.160.1-aarch64-apple-darwin") as alias)  (pre: superseded-build-recheck)

@@ -154,6 +154,15 @@ func newRunExecutor(host engine.Host, runID string, stream func(context.Context,
 			engine.PreActionFnmVersionRecheck: func(ctx context.Context, a engine.Action) (*trash.Receipt, error) {
 				return nil, scanner.RecheckFnmVersion(ctx, a.Path)
 			},
+			engine.PreActionSupersededBuildRecheck: func(ctx context.Context, a engine.Action) (*trash.Receipt, error) {
+				return nil, scanner.RecheckSupersededBuild(ctx, a.Path)
+			},
+			engine.PreActionDockerUpdateRecheck: func(ctx context.Context, a engine.Action) (*trash.Receipt, error) {
+				return nil, scanner.RecheckDockerUpdate(ctx, a.Path)
+			},
+			engine.PreActionCaskRecordRecheck: func(ctx context.Context, a engine.Action) (*trash.Receipt, error) {
+				return nil, scanner.RecheckCaskRecord(ctx, a.Path)
+			},
 		},
 		RunID: runID,
 	}

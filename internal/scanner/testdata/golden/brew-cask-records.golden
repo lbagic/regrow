@@ -1,0 +1,1 @@
+[native] brew-cask-records: /bin/sh -c brew uninstall --cask "$1" || exit; list=$(brew list --cask -1) || { echo "brew list failed after the uninstall" >&2; exit 1; }; if printf "%s\n" "$list" | grep -qxF -- "$1"; then echo "brew still lists cask $1 after its uninstall" >&2; exit 1; fi sh gone-plain  (pre: cask-record-recheck)
