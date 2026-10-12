@@ -11,7 +11,7 @@ How to read an entry:
 - **surface-only**: shown with its size, never deleted. regrow refuses it even when you name it, and refuses anything that holds it.
 - **beta**: in a scan only with `--beta-rules`.
 - **Looks at**: the folders the rule measures, or what its scan walks and runs.
-- **Removed by**: a move to the Trash, which `regrow undo` puts back (into regrow staging when Finder fails); or the command the entry names, mostly the tool's own cleanup command, which deletes for good; or never. Nothing is removed until you confirm a plan (`--yes` confirms it in advance), except by the Go build cache prune: `regrow prune go-build --yes` deletes without showing a plan first, and autotrim, which runs that prune by itself, stays off until you turn it on.
+- **Removed by**: a move to the Trash, which `regrow undo` puts back (into regrow staging when Finder fails); or the command the entry names, mostly the tool's own cleanup command, which deletes for good; or never. Nothing is removed until you confirm a plan (`--yes` confirms it in advance), except by the Go build cache prune: `regrow prune go-build --yes` deletes without showing a plan first, and autotrim, which deletes the same kind of entries by itself when free space is low, stays off until you turn it on.
 - **Keeps**: what the rule leaves alone, where that is not plain from what it looks at. The list names the main reasons; the code has narrower ones, mostly an item it cannot read or judge, and each of them keeps more, never less.
 - **Comes back**: what recreates it, and what that costs.
 
@@ -364,7 +364,7 @@ Installed SDKs and tool versions.
 - **Removed by:** a move to the Trash, one per item; `regrow undo` puts it back.
 - **Keeps:**
   - Every NDK while an Android Studio is installed in any of those places.
-  - Every NDK when an Applications folder or JetBrains Toolbox's apps folder cannot be read in full, or a link in an Applications folder cannot be followed: the rule then shows an error. A Toolbox folder that is a link leading nowhere, and Spotlight not answering, count as no Android Studio.
+  - Every NDK when an Applications folder or JetBrains Toolbox's apps folder cannot be read in full, or a link in an Applications folder cannot be followed: the rule then shows an error. A Toolbox folder that is a link leading nowhere, and `mdfind` missing, failing or finding nothing, count as no Android Studio; `mdfind` hanging ends in the query's 2-minute error.
   - An NDK reached through a symlink, and an SDK anywhere but `~/Library/Android/sdk` or reached through a symlink.
 - **Comes back:** sdkmanager "ndk;&lt;version&gt;" (or the Gradle build that names it) downloads it again. Cost: a 1–2 GB download per NDK; needs the network.
 - **Note:** Command-line Android builds (Gradle, React Native, Flutter) use the SDK without Studio; a build that needs this NDK fails until it is installed again. The android-sdk row says when ANDROID_HOME points at the SDK.
@@ -377,7 +377,7 @@ Installed SDKs and tool versions.
 - **Removed by:** a move to the Trash, one per item; `regrow undo` puts it back.
 - **Keeps:**
   - The SDK while an Android Studio is installed in any of those places.
-  - The SDK when an Applications folder or JetBrains Toolbox's apps folder cannot be read in full, or a link in an Applications folder cannot be followed: the rule then shows an error. A Toolbox folder that is a link leading nowhere, and Spotlight not answering, count as no Android Studio.
+  - The SDK when an Applications folder or JetBrains Toolbox's apps folder cannot be read in full, or a link in an Applications folder cannot be followed: the rule then shows an error. A Toolbox folder that is a link leading nowhere, and `mdfind` missing, failing or finding nothing, count as no Android Studio; `mdfind` hanging ends in the query's 2-minute error.
   - An SDK anywhere but `~/Library/Android/sdk`, or reached through a symlink.
 - **Comes back:** Installing Android Studio, or sdkmanager from the command-line tools, downloads the SDK packages a build needs again. Cost: several GB of downloads; needs the network.
 - **Note:** Command-line Android builds (Gradle, React Native, Flutter) use the SDK without Studio, and emulators need its system images; the row says when ANDROID_HOME points here. Undo restores it from the Trash.
@@ -391,7 +391,7 @@ Installed SDKs and tool versions.
 - **Keeps:**
   - A version an fnm alias points at, the default included.
   - A version a `.nvmrc` or `.node-version` there resolves to, the way fnm resolves one (`20` is the newest installed 20.x).
-  - A version a launchd job's plist names an absolute path into, runs through fnm (`fnm exec --using=18`), or leads fnm to through a version file.
+  - A version a launchd job's plist names (any string holding its `/node-versions/<version>` folder, or an absolute path that leads into it through links), runs through fnm (`fnm exec --using=18`), or leads fnm to through a version file.
   - A version a running process of yours executes or maps a file from.
   - A folder in `node-versions` not named like a release (`vX.Y.Z`).
   - Every version, when any of those cannot be read or understood, when fnm has more than one folder and `FNM_DIR` names none, when a folder belongs to another user (a run under `sudo`), or when `fnm` is not on your `PATH`: the rule then shows an error and offers nothing.

@@ -23,7 +23,7 @@ scans: "fnm's folder (`$FNM_DIR`, or whichever exists of `fnm` in `$XDG_DATA_HOM
 keeps:
   - "a version an fnm alias points at, the default included"
   - "a version a `.nvmrc` or `.node-version` there resolves to, the way fnm resolves one (`20` is the newest installed 20.x)"
-  - "a version a launchd job's plist names an absolute path into, runs through fnm (`fnm exec --using=18`), or leads fnm to through a version file"
+  - "a version a launchd job's plist names (any string holding its `/node-versions/<version>` folder, or an absolute path that leads into it through links), runs through fnm (`fnm exec --using=18`), or leads fnm to through a version file"
   - "a version a running process of yours executes or maps a file from"
   - "a folder in `node-versions` not named like a release (`vX.Y.Z`)"
   - "every version, when any of those cannot be read or understood, when fnm has more than one folder and `FNM_DIR` names none, when a folder belongs to another user (a run under `sudo`), or when `fnm` is not on your `PATH`: the rule then shows an error and offers nothing"
