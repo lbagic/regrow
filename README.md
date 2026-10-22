@@ -33,10 +33,10 @@ The menubar app, `Regrow.app`, builds from a clone with the Command Line Tools; 
 
 ```sh
 scripts/signing-cert.sh   # once: a local code-signing identity in your login keychain
-just app                  # build, sign, install into ~/Applications and launch
+just app                  # build, sign, install into ~/Applications, launch, then run the smoke checks
 ```
 
-On its first launch from `~/Applications` the app adds itself to your Login Items, once: removed in System Settings, it stays removed. It scans without the beta rules. [docs/APP.md](docs/APP.md) covers what the app asks macOS for and what it runs.
+On its first launch from `~/Applications` the app adds itself to your Login Items, once: removed in System Settings, it stays removed. It scans without the beta rules. The smoke checks raise one notification and move a folder, `~/regrow-smoke-<pid>`, to the Trash and back; on a first install they wait for you to allow Finder control and notifications, and `just app` exits 1 when one fails. `just app --no-check` installs without them. [docs/APP.md](docs/APP.md) covers what the app asks macOS for and what it runs.
 
 ### Full Disk Access
 
