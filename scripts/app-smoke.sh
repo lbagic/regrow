@@ -69,7 +69,11 @@ if [ "$mode" = all ]; then
 		echo "RESULT ok: trash, alert and doors"
 		exit 0
 	fi
-	echo "RESULT failed:$failed${skipped:+; skipped:$skipped}"
+	if [ -n "$failed" ]; then
+		echo "RESULT failed:$failed${skipped:+; skipped:$skipped}"
+	else
+		echo "RESULT skipped:$skipped"
+	fi
 	exit 1
 fi
 if [ ! -d "$APP" ]; then
