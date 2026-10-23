@@ -182,7 +182,7 @@ func TestNpxCacheRule(t *testing.T) {
 	if !r.Beta {
 		t.Error("npx-cache is not beta")
 	}
-	if _, ok := DefaultQueries()[r.ToolQuery]; !ok || r.ToolQuery != "npx-cache" {
+	if _, ok := DefaultQueries(engine.Host{})[r.ToolQuery]; !ok || r.ToolQuery != "npx-cache" {
 		t.Errorf("tool_query %q is not the registered npx-cache query", r.ToolQuery)
 	}
 }

@@ -146,12 +146,13 @@ func TestAerialCauseFixText(t *testing.T) {
 	}
 	const removeOld = `sudo find "/Library/Application Support/com.apple.idleassetsd/Customer" -type f -name '*.mov' -delete`
 	const removeNew = `sudo find ~/Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches -type f -name '*.mov' -delete`
+	const removeTemp = `sudo find /private/var/folders/zz -path '*/T/com.apple.idleassetsd/CFNetworkDownload_*.tmp' -delete`
 	if rule.Risk != RiskSurfaceOnly || len(rule.NativeCommand) != 0 || rule.Sudo {
 		t.Errorf("risk %q, command %q, sudo %v; want surface-only with nothing to run", rule.Risk, rule.NativeCommand, rule.Sudo)
 	}
 	// Quoted after a colon, so a face sets each on a line of its own with
 	// a way to copy it.
-	for _, want := range []string{"on macOS 15 and earlier: `" + removeOld + "`", "On macOS 26 and later: `" + removeNew + "`"} {
+	for _, want := range []string{"on macOS 15 and earlier: `" + removeOld + "`", "On macOS 26 and later: `" + removeNew + "`", "frees nothing until that copy goes too", "(untested in this form): `" + removeTemp + "`"} {
 		if !strings.Contains(rule.Regen.Story, want) {
 			t.Errorf("the row's story does not name %q:\n%s", want, rule.Regen.Story)
 		}
@@ -166,16 +167,33 @@ func TestAerialCauseFixText(t *testing.T) {
 			return true
 		})
 	}
-	for _, want := range [][]string{
-		{"Quit System Settings", "Wallpaper"},
-		{"come back", "the pane is opened"},
-		// The disable is untested against SIP; the same line must say so.
-		{"sudo launchctl disable system/com.apple.idleassetsd", "untested", "System Integrity Protection"},
-		{"sudo killall idleassetsd"},
+	// idleassetsd downloads for the aerials picked in its database, and
+	// a still wallpaper leaves them picked: clearing the picks, then
+	// restarting it, is what stopped the downloads on macOS 15.7.
+	const clearPicks = `sudo sqlite3 -cmd '.timeout 5000' "/Library/Application Support/com.apple.idleassetsd/Aerial.sqlite" 'BEGIN IMMEDIATE; DELETE FROM Z_2ACTIVEFORUSERS; DELETE FROM Z_3ACTIVEFORUSERS; DELETE FROM Z_1PINNEDFORUSERS; COMMIT;'`
+	for i, want := range [][]string{
+		{"still wallpaper", ": " + clearPicks},
+		{"Then stop the downloader", ": sudo killall idleassetsd"},
 		{"Then remove the videos: " + removeOld},
+		{"frees nothing until that copy goes too (untested in this form): " + removeTemp},
+		{"Picking an aerial", "System Settings ▸ Wallpaper", "again"},
 	} {
 		if !line(want...) {
 			t.Errorf("no fix line with %q in:\n%s", want, strings.Join(fix, "\n"))
+		} else if i < 3 && !strings.Contains(fix[i], want[0]) {
+			t.Errorf("fix line %d is not the one with %q: clear, stop, remove, in that order:\n%s", i+1, want[0], strings.Join(fix, "\n"))
+		}
+	}
+	// A command ends its line, so what follows the colon pastes.
+	for _, cmd := range []string{clearPicks, "sudo killall idleassetsd", removeOld, removeTemp} {
+		if i := slices.IndexFunc(fix, func(l string) bool { return strings.Contains(l, ": "+cmd) }); i < 0 || !strings.HasSuffix(fix[i], ": "+cmd) {
+			t.Errorf("the fix line of %q does not end with it, so a pasted line runs more:\n%s", cmd, strings.Join(fix, "\n"))
+		}
+	}
+	// launchd starts the downloader on demand while it is disabled.
+	for _, l := range fix {
+		if strings.Contains(l, "launchctl disable") && !strings.Contains(l, "does not stop") {
+			t.Errorf("a fix line offers launchctl disable, which does not stop the downloads: %s", l)
 		}
 	}
 	if line("regrow clean") {

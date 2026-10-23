@@ -1,0 +1,29 @@
+# What a macOS upgrade that never ran leaves on the Data volume: its
+# staged payload in /System/Volumes/Data/macOS Install Data/UpdateBundle,
+# about 10 GB. The macos-install-data query
+# (internal/scanner/tool_installdata.go) lists it only when its
+# Info.plist names an older macOS than the one running. Root-owned, and
+# only `sudo rm`, with no Trash and no undo, removes it: surface-only,
+# and the note gives the command. Software Update's own downloads are
+# macos-update-download's, /Library/Updates library-updates'.
+id: macos-install-data
+title: Abandoned macOS upgrade data
+category: macos
+risk: surface-only
+tool_query: macos-install-data
+note: 'An upgrade to an older macOS than this Mac runs is never applied. To remove it, in a terminal (it asks for your password): `sudo rm -rf "/System/Volumes/Data/macOS Install Data/UpdateBundle" "/System/Volumes/Data/macOS Install Data/index.sproduct" "/System/Volumes/Data/macOS Install Data/InstallAssistant.pkg.integrityDataV1"`. The folder itself and its Locked Files stay: System Integrity Protection keeps them.'
+scans: "the `OSVersion` in `/System/Volumes/Data/macOS Install Data/UpdateBundle/Info.plist`, against this Mac's version (`sw_vers -productVersion`); the bundle's size"
+keeps:
+  - "a bundle for this Mac's own macOS or a newer one: an upgrade may still be pending"
+  - "a bundle with no `Info.plist`, or one that names no version: it cannot be told from a pending upgrade"
+  - "everything when this Mac's version cannot be read"
+regen:
+  story: Never comes back by itself; a later upgrade stages its own bundle.
+  cost: n/a — regrow never deletes here
+sudo: false
+beta: true
+fixture:
+  items:
+    - label: macOS 13.5 update, never installed
+      path: /System/Volumes/Data/macOS Install Data/UpdateBundle
+      bytes: 11400000000

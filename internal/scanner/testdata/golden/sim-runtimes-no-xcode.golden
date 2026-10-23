@@ -1,1 +1,1 @@
-[skip] sim-runtimes-no-xcode: surface-only: report, never delete
+[native] sim-runtimes-no-xcode: /bin/sh -c "$1" runtime delete "$2" || exit; n=0; while out=$("$1" runtime list -j); do case $out in *"$2"*) ;; *) exit 0;; esac; n=$((n+1)); if [ "$n" -ge 600 ]; then echo "runtime $2 is still listed after 600 listings a second apart" >&2; exit 1; fi; sleep 1; done; echo "simctl runtime list failed after the delete" >&2; exit 1 sh /Library/Developer/PrivateFrameworks/CoreSimulator.framework/Versions/A/Resources/bin/simctl 11111111-2222

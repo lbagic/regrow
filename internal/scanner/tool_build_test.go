@@ -1127,7 +1127,7 @@ func TestBuildOutputRule(t *testing.T) {
 	}
 	// Registered, so the scanner runs it under the tool-query deadline
 	// like every query.
-	if _, ok := DefaultQueries()[r.ToolQuery]; !ok {
+	if _, ok := DefaultQueries(engine.Host{})[r.ToolQuery]; !ok {
 		t.Errorf("no query registered as %q", r.ToolQuery)
 	}
 	// The story says what brings each kind back: a build, or for a

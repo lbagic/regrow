@@ -122,20 +122,20 @@ func TestAerialDownloads(t *testing.T) {
 func TestAerialWallpapersAreShownOnly(t *testing.T) {
 	rule := embeddedRule(t, "aerial-wallpapers")
 	for _, tc := range []struct {
-		version, video string
+		version, folder, video string
 	}{
-		{"15.5", "/Library/Application Support/com.apple.idleassetsd/Customer/4KSDR240FPS/a.mov"},
-		{"26.0", "~/Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches/a.mov"},
+		{"15.5", "/Library/Application Support/com.apple.idleassetsd/Customer", "4KSDR240FPS/a.mov"},
+		{"26.0", "~/Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches", "a.mov"},
 	} {
 		t.Run(tc.version, func(t *testing.T) {
 			host := fixtureHost(t, rule)
 			host.Version = tc.version
-			writeFile(t, host.ExpandPath(tc.video), 1<<20)
-			s := New(host)
-			s.Queries = nil
-			findings := s.Scan(context.Background(), []engine.Rule{rule})
-			if f := findings[0]; f.Err != "" || len(f.Items) == 0 {
-				t.Fatalf("finding %+v, want the video's folder found", f)
+			folder := host.ExpandPath(tc.folder)
+			writeFile(t, filepath.Join(folder, tc.video), 1<<20)
+			// New binds the query to the host it scans.
+			findings := New(host).Scan(context.Background(), []engine.Rule{rule})
+			if f := findings[0]; f.Err != "" || len(f.Items) == 0 || f.Items[0].Path != folder {
+				t.Fatalf("finding %+v, want the fixture's folder %s found", f, folder)
 			}
 			if sel := engine.DefaultSelection(findings); len(sel) != 0 {
 				t.Errorf("default selection %v, want nothing", sel)
@@ -145,5 +145,168 @@ func TestAerialWallpapersAreShownOnly(t *testing.T) {
 				t.Errorf("plan by id: actions %+v, skipped %+v; want no action and one surface-only skip", plan.Actions, plan.Skipped)
 			}
 		})
+	}
+}
+
+// Deleting a video frees its bytes only when no link outside the folder
+// holds the file too. The row sizes the folder by what deleting frees,
+// and the files held elsewhere apart, so the two add up to the folder.
+func TestAerialVideosSplitByLinks(t *testing.T) {
+	host := engine.Host{OS: "darwin", Version: "15.7.7", Root: t.TempDir()}
+	host.Home = filepath.Join(host.Root, "Users/dev")
+	customer := filepath.Join(host.Root, "Library/Application Support/com.apple.idleassetsd/Customer")
+	single := filepath.Join(customer, "4KSDR240FPS", "a.mov")
+	heldOutside := filepath.Join(customer, "4KSDR240FPS", "b.mov")
+	twiceInside := filepath.Join(customer, "4KSDR", "c.mov")
+	writeFile(t, single, 1<<20)
+	writeFile(t, heldOutside, 3<<20)
+	writeFile(t, twiceInside, 2<<20)
+	temp := filepath.Join(host.Root, "private/var/folders/zz/x/T/com.apple.idleassetsd")
+	if err := os.MkdirAll(temp, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(heldOutside, filepath.Join(temp, "CFNetworkDownload_1.tmp")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(twiceInside, filepath.Join(customer, "4KSDR", "c-copy.mov")); err != nil {
+		t.Fatal(err)
+	}
+	size := func(path string) int64 {
+		fi, err := os.Lstat(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return physicalSize(fi)
+	}
+	// DirSize counts every link: c twice, b once.
+	whole, err := DirSize(context.Background(), customer)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	items, err := (&aerialVideos{w: testWalker(), host: host}).Items(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("items %+v, want the folder and the files held outside it", items)
+	}
+	folder, held := items[0], items[1]
+	if folder.Path != customer || folder.Bytes != whole.Bytes-size(heldOutside)-size(twiceInside) {
+		t.Errorf("folder item %+v, want %s with %d bytes", folder, customer, whole.Bytes-size(heldOutside)-size(twiceInside))
+	}
+	if held.Path != "" || held.Bytes != size(heldOutside) || !strings.HasPrefix(held.Label, "1 file a link outside the folder also holds") {
+		t.Errorf("held item %+v, want b.mov's %d bytes with no path", held, size(heldOutside))
+	}
+
+	// With no link outside, one item holds it all.
+	if err := os.Remove(filepath.Join(temp, "CFNetworkDownload_1.tmp")); err != nil {
+		t.Fatal(err)
+	}
+	items, err = (&aerialVideos{w: testWalker(), host: host}).Items(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || items[0].Bytes != whole.Bytes-size(twiceInside) {
+		t.Errorf("items %+v, want the folder alone with %d bytes", items, whole.Bytes-size(twiceInside))
+	}
+
+	// macOS 26 keeps them in the wallpaper agent's container.
+	host.Version = "26.0"
+	if items, err := (&aerialVideos{w: testWalker(), host: host}).Items(context.Background()); err != nil || len(items) != 0 {
+		t.Errorf("on 26 with only the 15 folder: items %+v, err %v; want nothing", items, err)
+	}
+	writeFile(t, filepath.Join(host.Home, "Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches/a.mov"), 1<<20)
+	if items, err := (&aerialVideos{w: testWalker(), host: host}).Items(context.Background()); err != nil || len(items) != 1 ||
+		items[0].Path != filepath.Join(host.Home, "Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches") {
+		t.Errorf("on 26: items %+v, err %v; want the container's folder", items, err)
+	}
+}
+
+// aerialConflicts mirrors the catalog's one-owner fence for the aerial
+// folders, which live in the aerial-videos query rather than in a
+// rule's paths: and so escape the fence. No rule may name one or reach
+// inside one, and a rule holding one spells the shared prefix the same.
+func aerialConflicts(catalog []engine.Rule) []string {
+	var conflicts []string
+	for _, r := range catalog {
+		for _, e := range r.Paths["darwin"] {
+			p := filepath.Clean(e.Path)
+			lp := strings.ToLower(p)
+			for _, a := range aerialPathEntries {
+				lf := strings.ToLower(a.Path)
+				matches := lp == lf || strings.HasPrefix(lp, lf+"/") ||
+					strings.HasPrefix(lf, lp+"/") && !strings.HasPrefix(a.Path, p+"/")
+				for dir := lf; !matches && strings.ContainsAny(p, "*?[") && dir != "/" && dir != "."; dir = filepath.Dir(dir) {
+					matches, _ = filepath.Match(lp, dir)
+				}
+				if matches {
+					conflicts = append(conflicts, r.ID+" names "+p+", against the aerial folder "+a.Path)
+				}
+			}
+		}
+	}
+	return conflicts
+}
+
+func TestNoRuleNamesAnAerialFolder(t *testing.T) {
+	catalog, err := engine.LoadEmbedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range aerialConflicts(catalog) {
+		t.Error(c)
+	}
+	rule := func(path string) []engine.Rule {
+		return []engine.Rule{{ID: "x", Paths: map[string][]engine.PathEntry{"darwin": {{Path: path}}}}}
+	}
+	for path, want := range map[string]bool{
+		"/Library/Application Support/com.apple.idleassetsd/Customer":             true,
+		"/library/application support/com.apple.idleassetsd/customer/4KSDR240FPS": true,
+		"~/Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches/x":    true,
+		"~/library/containers/com.apple.wallpaper.agent":                          true,
+		"~/Library/Containers/*/Data/Library/Caches":                              true,
+		"~/Library/Containers/com.apple.wallpaper.agent":                          false,
+		"~/Library/Caches": false,
+		"/Library/Application Support/com.apple.idleassetsd/snapshots": false,
+	} {
+		if got := len(aerialConflicts(rule(path))) > 0; got != want {
+			t.Errorf("a rule naming %s: conflict %v, want %v", path, got, want)
+		}
+	}
+}
+
+// With part of the folder unreadable, a file whose other link may sit
+// in the unread part is not called held outside.
+func TestAerialVideosPartialWalk(t *testing.T) {
+	host := engine.Host{OS: "darwin", Version: "15.7.7", Root: t.TempDir()}
+	customer := filepath.Join(host.Root, "Library/Application Support/com.apple.idleassetsd/Customer")
+	video := filepath.Join(customer, "4KSDR240FPS", "a.mov")
+	writeFile(t, video, 1<<20)
+	locked := filepath.Join(customer, "locked")
+	if err := os.MkdirAll(locked, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(video, filepath.Join(locked, "a.mov")); err != nil {
+		t.Fatal(err)
+	}
+	chmod(t, locked, 0)
+	items, err := (&aerialVideos{w: testWalker(), host: host}).Items(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || !items[0].Partial || items[0].Path != customer {
+		t.Fatalf("items %+v, want the folder alone, partial", items)
+	}
+	fi, err := os.Lstat(video)
+	if err != nil {
+		t.Fatal(err)
+	}
+	whole, err := DirSize(context.Background(), customer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := whole.Bytes - physicalSize(fi); items[0].Bytes != want {
+		t.Errorf("folder bytes %d, want %d: the file whose other link went unread counts nowhere", items[0].Bytes, want)
 	}
 }

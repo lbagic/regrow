@@ -17,10 +17,10 @@ import (
 // taking a few minutes.
 const aerialActive = 15 * time.Minute
 
-// aerialDownloads looks for aerial videos under the rule's own paths:
-// any .mov there was downloaded by macOS, and a recent one means a
-// batch is still coming in.
-func (c *causeChecks) aerialDownloads(ctx context.Context, r engine.Rule) (engine.Verdict, string) {
+// aerialDownloads looks for aerial videos in the folders the
+// aerial-videos query sizes: any .mov there was downloaded by macOS,
+// and a recent one means a batch is still coming in.
+func (c *causeChecks) aerialDownloads(ctx context.Context, _ engine.Rule) (engine.Verdict, string) {
 	w := c.walker()
 	var (
 		mu     sync.Mutex
@@ -30,7 +30,7 @@ func (c *causeChecks) aerialDownloads(ctx context.Context, r engine.Rule) (engin
 		newest time.Time
 	)
 	found, partial := false, false
-	for _, pattern := range c.host.ResolvePaths(r) {
+	for _, pattern := range aerialFolders(c.host) {
 		dirs, unlisted := w.glob(ctx, pattern)
 		partial = partial || unlisted
 		for _, dir := range dirs {

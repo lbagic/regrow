@@ -2,7 +2,7 @@
 
 # What regrow scans
 
-regrow's catalog holds 62 rules: 27 safe, 23 caution and 12 surface-only. 25 of them are beta, and a scan includes them only with `--beta-rules`. Every entry below is written from the rule's file in [`rules/`](../rules), the catalog `regrow rules --beta-rules` lists. Paths are the macOS ones; the rules also carry Linux paths, for a Linux build that has not shipped. [SCAN.md](SCAN.md) says what a scan reads, which programs it runs, and what regrow writes.
+regrow's catalog holds 63 rules: 27 safe, 24 caution and 12 surface-only. 26 of them are beta, and a scan includes them only with `--beta-rules`. Every entry below is written from the rule's file in [`rules/`](../rules), the catalog `regrow rules --beta-rules` lists. Paths are the macOS ones; the rules also carry Linux paths, for a Linux build that has not shipped. [SCAN.md](SCAN.md) says what a scan reads, which programs it runs, and what regrow writes.
 
 How to read an entry:
 
@@ -406,7 +406,7 @@ Installed SDKs and tool versions.
 | [iOS simulator devices](#sim-devices) | caution | `xcrun simctl delete {arg}` |
 | [Unavailable simulator devices](#sim-devices-unavailable) | safe | `xcrun simctl delete unavailable` |
 | [Simulator runtimes](#sim-runtimes) | caution | `xcrun simctl runtime delete {arg}` |
-| [Simulator runtimes (no Xcode)](#sim-runtimes-no-xcode) | surface-only, beta | never |
+| [Simulator runtimes (no Xcode)](#sim-runtimes-no-xcode) | caution, beta | `/bin/sh -c '"$1" runtime delete "$2" \|\| exit; n=0; while out=$("$1" runtime list -j); do case $out in *"$2"*) ;; *) exit 0;; esac; n=$((n+1)); if [ "$n" -ge 600 ]; then echo "runtime $2 is still listed after 600 listings a second apart" >&2; exit 1; fi; sleep 1; done; echo "simctl runtime list failed after the delete" >&2; exit 1' sh /Library/Developer/PrivateFrameworks/CoreSimulator.framework/Versions/A/Resources/bin/simctl {arg}` |
 | [Xcode Archives (released builds + dSYMs)](#xcode-archives) | caution | Trash |
 | [Xcode DerivedData](#xcode-derived-data) | safe | Trash |
 | [Xcode device support symbols](#xcode-device-support) | safe | Trash |
@@ -449,15 +449,15 @@ Installed SDKs and tool versions.
 
 ### sim-runtimes-no-xcode
 
-**Simulator runtimes (no Xcode)** · surface-only · beta · [`rules/sim-runtimes-no-xcode.yaml`](../rules/sim-runtimes-no-xcode.yaml)
+**Simulator runtimes (no Xcode)** · caution · beta · [`rules/sim-runtimes-no-xcode.yaml`](../rules/sim-runtimes-no-xcode.yaml)
 
-- **Looks at:** `xcrun --find simctl`; the apps named like Xcode in `/Applications` and `~/Applications` and one folder down, with their `Info.plist`; Spotlight (`mdfind` for Xcode's bundle identifier); and, only when none of these finds Xcode, `simctl runtime list -j` from CoreSimulator's own copy, `/Library/Developer/PrivateFrameworks/CoreSimulator.framework/Versions/A/Resources/bin/simctl`.
-- **Removed by:** never: surface-only.
+- **Looks at:** `xcrun --find simctl`; the apps named like Xcode in `/Applications` and `~/Applications` and one folder down, with their `Info.plist`; Spotlight (`mdfind` for Xcode's bundle identifier); only when none of these finds Xcode, `simctl runtime list -j` from CoreSimulator's own copy, `/Library/Developer/PrivateFrameworks/CoreSimulator.framework/Versions/A/Resources/bin/simctl`; and, only when that lists a runtime, whether Spotlight indexes the startup disk (`mdutil -s` of `/` and `/System/Volumes/Data`) and LaunchServices' register of bundles (`lsregister -dump Bundle`, a few seconds), for an Xcode anywhere else.
+- **Removed by:** `/bin/sh -c '"$1" runtime delete "$2" || exit; n=0; while out=$("$1" runtime list -j); do case $out in *"$2"*) ;; *) exit 0;; esac; n=$((n+1)); if [ "$n" -ge 600 ]; then echo "runtime $2 is still listed after 600 listings a second apart" >&2; exit 1; fi; sleep 1; done; echo "simctl runtime list failed after the delete" >&2; exit 1' sh /Library/Developer/PrivateFrameworks/CoreSimulator.framework/Versions/A/Resources/bin/simctl {arg}`, once per item; `{arg}` is the item as the tool names it. It deletes for good: `regrow undo` cannot bring it back.
 - **Keeps:**
-  - Every runtime while `xcrun` finds `simctl`, when `sim-runtimes` lists them, or an Xcode is installed; with an Xcode installed but `xcode-select` pointing at the Command Line Tools, neither rule lists them.
-  - Every runtime when an Xcode-named app, an Applications folder or a link there cannot be read or followed, since an Xcode there cannot be ruled out.
-- **Comes back:** Xcode downloads a runtime again when a simulator needs it (Settings ▸ Components). Cost: n/a — regrow never deletes these; a 5–10 GB download per runtime if one is needed again.
-- **Note:** Regrow does not delete these. With the simctl Xcode left behind, this names each runtime's identifier: `/Library/Developer/PrivateFrameworks/CoreSimulator.framework/Versions/A/Resources/bin/simctl runtime list`. This shows what would go: `/Library/Developer/PrivateFrameworks/CoreSimulator.framework/Versions/A/Resources/bin/simctl runtime delete <identifier> --dry-run`. Without `--dry-run` it is meant to delete it, which is untested without Xcode. Simulators of a deleted runtime stop booting until it is downloaded again.
+  - Every runtime while `xcrun` finds `simctl`, when `sim-runtimes` lists them, or an Xcode is found: in the Applications folders or one folder down, by Spotlight, or in LaunchServices' register, still on disk or on a disk not mounted now; with an Xcode installed but `xcode-select` pointing at the Command Line Tools, neither rule lists them.
+  - Every runtime when an Xcode-named app, an Applications folder or a link there cannot be read or followed, when Spotlight gives no answer or does not index the startup disk, or when LaunchServices' register cannot be read, since an Xcode cannot then be ruled out.
+- **Comes back:** Xcode downloads a runtime again when a simulator needs it (Settings ▸ Components). Cost: a 5–10 GB download per runtime if one is needed again.
+- **Note:** Deleted with the simctl Xcode left behind, which needs no password; the run waits until that simctl no longer lists the runtime. To see what it lists: `/Library/Developer/PrivateFrameworks/CoreSimulator.framework/Versions/A/Resources/bin/simctl runtime list`. Simulators of a deleted runtime stop booting until it is downloaded again.
 
 ### xcode-archives
 
@@ -597,6 +597,7 @@ System caches, logs, downloads and the Trash.
 | [Local iOS device backups](#ios-backups) | surface-only | never |
 | [App caches (~/Library/Caches)](#library-caches) | surface-only | never |
 | [Stuck update payloads (/Library/Updates)](#library-updates) | surface-only | never |
+| [Abandoned macOS upgrade data](#macos-install-data) | surface-only, beta | never |
 | [Stale macOS installers](#macos-installers) | safe | Trash |
 | [Downloaded macOS update](#macos-update-download) | surface-only, beta | never |
 | [mediaanalysisd cache](#media-analysis-cache) | safe | Trash |
@@ -608,11 +609,11 @@ System caches, logs, downloads and the Trash.
 
 **Aerial wallpaper videos** · surface-only · [`rules/aerial-wallpapers.yaml`](../rules/aerial-wallpapers.yaml)
 
-- **Looks at:** `/Library/Application Support/com.apple.idleassetsd/Customer` (macOS 15.x and earlier), `~/Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches` (macOS 26 and later).
+- **Looks at:** the files in `/Library/Application Support/com.apple.idleassetsd/Customer` (macOS 15 and earlier) or `~/Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches` (macOS 26 and later), with each file's link count; a file that has links outside the folder is counted apart, and a walk that misses part of the folder gives the folder alone, as a lower bound.
 - **Removed by:** never: surface-only.
-- **Comes back:** macOS downloads the aerial catalogue again when System Settings ▸ Wallpaper is opened, and any aerial selected as wallpaper or screensaver. To remove the videos yourself on macOS 15 and earlier: `sudo find "/Library/Application Support/com.apple.idleassetsd/Customer" -type f -name '*.mov' -delete`. On macOS 26 and later: `sudo find ~/Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches -type f -name '*.mov' -delete`. Cost: n/a — regrow never deletes here; roughly 0.5 GB of download per video macOS fetches again.
+- **Comes back:** macOS downloads videos again for each aerial category picked for the wallpaper or the screen saver (on macOS 15, at least 4 per category and more every day or two), and a still wallpaper chosen later leaves them picked. To remove the videos yourself on macOS 15 and earlier: `sudo find "/Library/Application Support/com.apple.idleassetsd/Customer" -type f -name '*.mov' -delete`. On macOS 26 and later: `sudo find ~/Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches -type f -name '*.mov' -delete`. A video the downloader's temp folder also holds frees nothing until that copy goes too, and macOS 15 keeps those copies in a folder only root can read. To remove them (untested in this form): `sudo find /private/var/folders/zz -path '*/T/com.apple.idleassetsd/CFNetworkDownload_*.tmp' -delete`. Cost: n/a — regrow never deletes here; roughly 0.5 GB of download per video macOS fetches again.
 - **Fix the cause:** Aerial video downloads (macOS 15.x and earlier). `regrow doctor` says whether it is in effect here and prints the fix; regrow changes nothing.
-- **Note:** The videos come back whenever System Settings ▸ Wallpaper is opened, even with a still wallpaper. To see how to stop the downloads: `regrow doctor`.
+- **Note:** The videos come back while an aerial is picked for the wallpaper or the screen saver, even after a still wallpaper replaced it. To see how to stop the downloads: `regrow doctor`.
 
 ### downloaded-installers
 
@@ -654,6 +655,19 @@ System caches, logs, downloads and the Trash.
 - **Looks at:** `/Library/Updates`.
 - **Removed by:** never: surface-only.
 - **Comes back:** Check what is pending first: `softwareupdate -l`. Payloads re-download if an update still needs them. Cost: n/a — regrow never deletes here.
+
+### macos-install-data
+
+**Abandoned macOS upgrade data** · surface-only · beta · [`rules/macos-install-data.yaml`](../rules/macos-install-data.yaml)
+
+- **Looks at:** the `OSVersion` in `/System/Volumes/Data/macOS Install Data/UpdateBundle/Info.plist`, against this Mac's version (`sw_vers -productVersion`); the bundle's size.
+- **Removed by:** never: surface-only.
+- **Keeps:**
+  - A bundle for this Mac's own macOS or a newer one: an upgrade may still be pending.
+  - A bundle with no `Info.plist`, or one that names no version: it cannot be told from a pending upgrade.
+  - Everything when this Mac's version cannot be read.
+- **Comes back:** Never comes back by itself; a later upgrade stages its own bundle. Cost: n/a — regrow never deletes here.
+- **Note:** An upgrade to an older macOS than this Mac runs is never applied. To remove it, in a terminal (it asks for your password): `sudo rm -rf "/System/Volumes/Data/macOS Install Data/UpdateBundle" "/System/Volumes/Data/macOS Install Data/index.sproduct" "/System/Volumes/Data/macOS Install Data/InstallAssistant.pkg.integrityDataV1"`. The folder itself and its Locked Files stay: System Integrity Protection keeps them.
 
 ### macos-installers
 

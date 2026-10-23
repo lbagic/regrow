@@ -99,7 +99,7 @@ func TestEmbeddedCatalogToolQueriesRegistered(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	queries := DefaultQueries()
+	queries := DefaultQueries(engine.Host{})
 	for _, r := range catalog {
 		if r.ToolQuery == "" {
 			continue

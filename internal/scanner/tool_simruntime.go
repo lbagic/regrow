@@ -2,10 +2,12 @@ package scanner
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -35,10 +37,17 @@ type simRuntimesNoXcode struct {
 	// List runs CoreSimulator's `simctl runtime list -j`; ok is false
 	// when that simctl is not there. nil runs it.
 	List func(ctx context.Context) (out []byte, ok bool, err error)
+	// Elsewhere reports an Xcode HasXcode cannot see, or a search that
+	// cannot rule one out. It takes seconds, so it runs only once there
+	// are runtimes to list; nil asks LaunchServices and Spotlight,
+	// through run and dump when set.
+	Elsewhere func(ctx context.Context) bool
+	run       func(ctx context.Context, name string, args ...string) ([]byte, bool, error)
+	dump      func(ctx context.Context) ([]byte, error)
 }
 
 func (s *simRuntimesNoXcode) Runtimes(ctx context.Context) ([]engine.Item, error) {
-	hasSimctl, hasXcode, list := s.HasSimctl, s.HasXcode, s.List
+	hasSimctl, hasXcode, list, elsewhere := s.HasSimctl, s.HasXcode, s.List, s.Elsewhere
 	if hasSimctl == nil {
 		hasSimctl = xcrunFindsSimctl
 	}
@@ -53,6 +62,18 @@ func (s *simRuntimesNoXcode) Runtimes(ctx context.Context) ([]engine.Item, error
 			return runTool(ctx, coreSimulatorSimctl, "runtime", "list", "-j")
 		}
 	}
+	if elsewhere == nil {
+		run, dump := s.run, s.dump
+		if run == nil {
+			run = runTool
+		}
+		if dump == nil {
+			dump = lsregisterBundles
+		}
+		elsewhere = func(ctx context.Context) bool {
+			return xcodeElsewhere(ctx, defaultWalker, run, dump)
+		}
+	}
 	if hasSimctl(ctx) || hasXcode(ctx) {
 		return nil, nil
 	}
@@ -63,7 +84,11 @@ func (s *simRuntimesNoXcode) Runtimes(ctx context.Context) ([]engine.Item, error
 	if !ok {
 		return nil, nil
 	}
-	return parseSimRuntimes(out)
+	items, err := parseSimRuntimes(out)
+	if err != nil || len(items) == 0 || elsewhere(ctx) {
+		return nil, err
+	}
+	return items, nil
 }
 
 func xcrunFindsSimctl(ctx context.Context) bool {
@@ -77,8 +102,8 @@ func xcrunFindsSimctl(ctx context.Context) bool {
 // Xcode are opened; the Xcodes version manager is named so and is not
 // Xcode. An Xcode-named app or a folder that cannot be read counts as
 // Xcode, and so does a link among them, or an Applications folder that
-// is a link, that cannot be followed.
-func xcodeInstalled(ctx context.Context, w *walker, root, home string, spotlight func(context.Context) []string) bool {
+// is a link, that cannot be followed, or a Spotlight with no answer.
+func xcodeInstalled(ctx context.Context, w *walker, root, home string, spotlight func(context.Context) ([]string, bool)) bool {
 	isXcode := func(app string) bool {
 		data, err := readSource(ctx, w, filepath.Join(app, "Contents", "Info.plist"))
 		if absent(err) {
@@ -131,8 +156,12 @@ func xcodeInstalled(ctx context.Context, w *walker, root, home string, spotlight
 			}
 		}
 	}
-	for _, p := range spotlight(ctx) {
-		if _, err := w.lstat(ctx, p); err == nil {
+	found, ok := spotlight(ctx)
+	if !ok {
+		return true
+	}
+	for _, p := range found {
+		if _, err := w.lstat(ctx, p); !absent(err) {
 			return true
 		}
 	}
@@ -169,18 +198,109 @@ func xcodeNamed(name string) bool {
 	return strings.HasPrefix(name, "xcode") && strings.HasSuffix(name, ".app")
 }
 
-// spotlightXcodes asks Spotlight for apps with Xcode's bundle id. It can
-// only add a finding: no answer is no Xcode from this source.
-func spotlightXcodes(ctx context.Context) []string {
+// spotlightXcodes asks Spotlight for apps with Xcode's bundle id; ok is
+// false when mdfind is missing or fails.
+func spotlightXcodes(ctx context.Context) (paths []string, ok bool) {
 	out, ok, err := runTool(ctx, "mdfind", "kMDItemCFBundleIdentifier == '"+xcodeBundleID+"'")
 	if !ok || err != nil {
-		return nil
+		return nil, false
 	}
-	var paths []string
 	for line := range strings.SplitSeq(string(out), "\n") {
 		if filepath.IsAbs(line) {
 			paths = append(paths, line)
 		}
 	}
-	return paths
+	return paths, true
+}
+
+// xcodeElsewhere is the default Elsewhere: Spotlight not indexing the
+// startup disk, or an Xcode in LaunchServices' register.
+func xcodeElsewhere(ctx context.Context, w *walker, run func(ctx context.Context, name string, args ...string) ([]byte, bool, error), dump func(context.Context) ([]byte, error)) bool {
+	return !spotlightIndexes(ctx, run) || xcodeRegistered(ctx, w, dump)
+}
+
+// spotlightIndexes reports Spotlight indexing both volumes of the
+// startup disk. Off for either, mdfind finds no Xcode outside the
+// Applications folders whether there is one or not.
+func spotlightIndexes(ctx context.Context, run func(ctx context.Context, name string, args ...string) ([]byte, bool, error)) bool {
+	for _, vol := range []string{"/", "/System/Volumes/Data"} {
+		out, ok, err := run(ctx, "mdutil", "-s", vol)
+		if !ok || err != nil || !strings.Contains(string(out), "Indexing enabled.") {
+			return false
+		}
+	}
+	return true
+}
+
+// lsregister prints LaunchServices' register: every bundle Finder, a
+// launch or an install has met, in any folder and on any disk, with
+// whether that disk is mounted.
+const lsregister = "/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister"
+
+func lsregisterBundles(ctx context.Context) ([]byte, error) {
+	out, ok, err := runTool(ctx, lsregister, "-dump", "Bundle")
+	if err == nil && !ok {
+		err = errors.New(lsregister + " not found")
+	}
+	return out, err
+}
+
+// lsPathRe takes the register's id off a path line's value.
+var lsPathRe = regexp.MustCompile(`^(.+) \(0x[0-9a-f]+\)$`)
+
+// xcodeRegistered reports a bundle with Xcode's id in LaunchServices'
+// register that is still on disk, or that sits on a disk not mounted
+// now. The register keeps a bundle deleted from a mounted disk for a
+// while, and that one is gone. A dump that fails, or holds no bundle
+// with a path and an id, cannot rule an Xcode out.
+func xcodeRegistered(ctx context.Context, w *walker, dump func(context.Context) ([]byte, error)) bool {
+	out, err := dump(ctx)
+	if err != nil {
+		return true
+	}
+	type bundle struct{ path, id, mount string }
+	var bundles []bundle
+	var b bundle
+	flush := func() {
+		if b.path != "" && b.id != "" {
+			bundles = append(bundles, b)
+		}
+		b = bundle{}
+	}
+	for line := range strings.SplitSeq(string(out), "\n") {
+		key, value, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		value = strings.TrimSpace(value)
+		switch key {
+		case "bundle id":
+			flush()
+		case "path":
+			if m := lsPathRe.FindStringSubmatch(value); m != nil {
+				value = m[1]
+			}
+			b.path = value
+		case "identifier":
+			b.id = value
+		case "mount state":
+			b.mount = value
+		}
+	}
+	flush()
+	if len(bundles) == 0 {
+		return true
+	}
+	for _, b := range bundles {
+		if !strings.EqualFold(b.id, xcodeBundleID) {
+			continue
+		}
+		if b.mount != "mounted" {
+			return true
+		}
+		if _, err := w.lstat(ctx, b.path); !absent(err) {
+			return true
+		}
+	}
+	return false
 }

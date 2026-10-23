@@ -559,7 +559,7 @@ func TestDownloadedInstallersRule(t *testing.T) {
 	if !r.Beta {
 		t.Error("downloaded-installers is not beta")
 	}
-	if _, ok := DefaultQueries()[r.ToolQuery]; !ok || r.ToolQuery != "downloaded-installers" {
+	if _, ok := DefaultQueries(engine.Host{})[r.ToolQuery]; !ok || r.ToolQuery != "downloaded-installers" {
 		t.Errorf("tool_query %q is not the registered downloaded-installers query", r.ToolQuery)
 	}
 }
