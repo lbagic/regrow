@@ -70,8 +70,6 @@ public struct MenuFigures: Equatable {
 }
 
 /// One line of the menu, top to bottom: the figures, then the actions.
-/// A line that does nothing is figures or a note, never a disabled
-/// item, which macOS greys out.
 public enum MenuRow: Equatable {
     case figures(MenuFigures)
     case separator
