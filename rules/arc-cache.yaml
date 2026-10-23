@@ -1,0 +1,19 @@
+# Arc's browser cache, which it rebuilds as you browse.
+id: arc-cache
+title: "Arc's cache"
+category: app-caches
+risk: safe
+paths:
+  darwin:
+    - "~/Library/Caches/Arc"
+unless_running:
+  apps: [company.thebrowser.Browser]
+pre_action: running-recheck
+regen:
+  story: "Arc fills it again as you browse."
+  cost: "pages load from the network again at first"
+sudo: false
+beta: true
+fixture:
+  files:
+    - "~/Library/Caches/Arc/User Data/Default/Cache/Cache_Data/data_0"

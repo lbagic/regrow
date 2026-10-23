@@ -1,0 +1,24 @@
+# VS Code's Electron caches and the extension packages it downloaded.
+id: vscode-caches
+title: "VS Code's caches"
+category: app-caches
+risk: safe
+paths:
+  darwin:
+    - "~/Library/Application Support/Code/Cache"
+    - "~/Library/Application Support/Code/CachedData"
+    - "~/Library/Application Support/Code/Code Cache"
+    - "~/Library/Application Support/Code/GPUCache"
+    - "~/Library/Application Support/Code/CachedExtensionVSIXs"
+unless_running:
+  apps: [com.microsoft.VSCode]
+pre_action: running-recheck
+regen:
+  story: "VS Code fills them again as it runs, and downloads an extension's package when it next installs or updates it."
+  cost: "a slower first start"
+sudo: false
+beta: true
+fixture:
+  files:
+    - "~/Library/Application Support/Code/CachedData/abc123/x.code"
+    - "~/Library/Application Support/Code/CachedExtensionVSIXs/ms-python.python-2025.1.0"

@@ -101,6 +101,7 @@ func TestGoldenPerRule(t *testing.T) {
 			host := fixtureHost(t, r)
 			s := New(host)
 			s.Queries = nil // never exec real tools in tests
+			s.running = nothingRunning
 			if r.ToolQuery != "" {
 				s.Queries = fakeQuery(host, r)
 			}
@@ -161,3 +162,6 @@ func TestGoldenNoStrays(t *testing.T) {
 		}
 	}
 }
+
+// nothingRunning is a process listing with no process in it.
+func nothingRunning(context.Context) (*runningSet, error) { return &runningSet{w: testWalker()}, nil }

@@ -338,7 +338,7 @@ func TestStagedBytesMeasuresTheStagingDirectory(t *testing.T) {
 		t.Fatalf("stagedBytes = %d with no staging directory, want 0", got)
 	}
 
-	ex, release, err := newRunExecutor(engine.Host{OS: "darwin", Home: t.TempDir()}, "fixture-run", nil)
+	ex, release, err := newRunExecutor(engine.Host{OS: "darwin", Home: t.TempDir()}, nil, "fixture-run", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -376,7 +376,7 @@ func TestRunExecutorRegistersEveryPreAction(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	host := engine.Host{OS: "darwin", Home: t.TempDir()}
 	for name, stream := range map[string]func(context.Context, []string, io.Writer) error{"clean": nil, "engine": dockerStream} {
-		ex, release, err := newRunExecutor(host, "fixture-run", stream)
+		ex, release, err := newRunExecutor(host, nil, "fixture-run", stream)
 		if err != nil {
 			t.Fatal(err)
 		}

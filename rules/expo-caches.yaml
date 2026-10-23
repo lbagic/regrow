@@ -1,0 +1,21 @@
+# Expo Go and the app builds the Expo CLI downloaded to install on devices and simulators.
+id: expo-caches
+title: "Expo's downloads"
+category: dev-caches
+risk: safe
+paths:
+  darwin:
+    - "~/.expo/expo-go"
+    - "~/.expo/android-apk-cache"
+    - "~/.expo/ios-simulator-app-cache"
+unless_running:
+  inside: true
+pre_action: running-recheck
+regen:
+  story: "The Expo CLI downloads them again when it next installs them on a device or simulator."
+  cost: "a download per build"
+sudo: false
+beta: true
+fixture:
+  files:
+    - "~/.expo/ios-simulator-app-cache/Exponent-2.31.app/x"

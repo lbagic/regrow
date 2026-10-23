@@ -1,0 +1,20 @@
+# The Battle.net launcher's browser caches.
+id: battlenet-caches
+title: "Battle.net's caches"
+category: app-caches
+risk: safe
+paths:
+  darwin:
+    - "~/Library/Application Support/Battle.net/BrowserCaches"
+    - "~/Library/Application Support/Battle.net/Cache"
+unless_running:
+  apps: [net.battle.app]
+pre_action: running-recheck
+regen:
+  story: "Battle.net fills them again as it runs."
+  cost: "the launcher loads its pages from the network again at first"
+sudo: false
+beta: true
+fixture:
+  files:
+    - "~/Library/Application Support/Battle.net/BrowserCaches/common/Cache/data_0"

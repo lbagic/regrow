@@ -1,0 +1,23 @@
+# Slack's Electron caches. Its Service Worker folder is left alone: it can hold Slack's offline data.
+id: slack-caches
+title: "Slack's caches"
+category: app-caches
+risk: safe
+paths:
+  darwin:
+    - "~/Library/Application Support/Slack/Cache"
+    - "~/Library/Application Support/Slack/Code Cache"
+    - "~/Library/Application Support/Slack/GPUCache"
+unless_running:
+  apps: [com.tinyspeck.slackmacgap]
+pre_action: running-recheck
+keeps:
+  - "`Service Worker`: it can hold Slack's offline data"
+regen:
+  story: "Slack fills them again as it runs."
+  cost: "Slack loads images and files from the network again at first"
+sudo: false
+beta: true
+fixture:
+  files:
+    - "~/Library/Application Support/Slack/Cache/Cache_Data/data_0"

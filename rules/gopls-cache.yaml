@@ -1,0 +1,19 @@
+# What gopls, the Go language server, has worked out about your packages.
+id: gopls-cache
+title: "gopls's cache"
+category: dev-caches
+risk: safe
+paths:
+  darwin:
+    - "~/Library/Caches/gopls"
+unless_running:
+  commands: [gopls]
+pre_action: running-recheck
+regen:
+  story: "gopls works it out again when an editor next starts it."
+  cost: "the editor is slower for the first minute or so"
+sudo: false
+beta: true
+fixture:
+  files:
+    - "~/Library/Caches/gopls/abc123/analysis/x"

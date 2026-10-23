@@ -26,6 +26,9 @@ type Scanner struct {
 	queryTimeout time.Duration
 	// CauseQueries are the fix-the-cause checks, by name.
 	CauseQueries map[string]CauseQuery
+	// running reads the owner's processes for unless_running; nil
+	// means readRunning.
+	running func(context.Context) (*runningSet, error)
 }
 
 // toolQueryTimeout bounds one tool query. A wedged Docker VM or
@@ -65,6 +68,13 @@ func (s *Scanner) ScanStream(ctx context.Context, rules []engine.Rule, emit func
 	sem := make(chan struct{}, runtime.NumCPU())
 	var mu sync.Mutex
 	var wg sync.WaitGroup
+	read := s.running
+	if read == nil {
+		read = readRunning
+	}
+	running := &runningOnce{read: func(ctx context.Context) (*runningSet, error) {
+		return withDeadline(ctx, s.timeout(), "the process listing", read)
+	}}
 	for i, r := range rules {
 		wg.Add(1)
 		go func() {
@@ -72,7 +82,7 @@ func (s *Scanner) ScanStream(ctx context.Context, rules []engine.Rule, emit func
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			start := time.Now()
-			f := s.scanRule(ctx, r)
+			f := s.scanRule(ctx, r, running)
 			mu.Lock()
 			emit(i, f, time.Since(start))
 			mu.Unlock()
@@ -81,7 +91,7 @@ func (s *Scanner) ScanStream(ctx context.Context, rules []engine.Rule, emit func
 	wg.Wait()
 }
 
-func (s *Scanner) scanRule(ctx context.Context, r engine.Rule) engine.Finding {
+func (s *Scanner) scanRule(ctx context.Context, r engine.Rule, running *runningOnce) engine.Finding {
 	f := engine.Finding{Rule: r}
 	w := s.walker()
 
@@ -118,6 +128,12 @@ func (s *Scanner) scanRule(ctx context.Context, r engine.Rule) engine.Finding {
 		} else {
 			f.Items = append(f.Items, items...)
 		}
+	}
+
+	if items, err := guard(ctx, r, f.Items, running); err != nil {
+		f.Items, f.Err = nil, joinErr(f.Err, err)
+	} else {
+		f.Items = items
 	}
 
 	// A cancelled scan's findings are incomplete: the error keeps

@@ -1,0 +1,1 @@
+[trash] yarn-berry-cache: osascript -e tell application "Finder" to return POSIX path of ((delete POSIX file "~/.yarn/berry/cache") as alias)  (pre: running-recheck)

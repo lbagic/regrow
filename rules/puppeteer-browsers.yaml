@@ -1,0 +1,20 @@
+# The browsers Puppeteer downloaded for its scripts.
+id: puppeteer-browsers
+title: "Puppeteer's browsers"
+category: dev-caches
+risk: caution
+paths:
+  darwin:
+    - "~/.cache/puppeteer"
+unless_running:
+  inside: true
+pre_action: running-recheck
+note: "A Puppeteer script cannot start its browser until it is installed again: `npx puppeteer browsers install chrome`, or an `npm install` of the project."
+regen:
+  story: "Installing a project that uses Puppeteer downloads its browser again."
+  cost: "about 150–300 MB per browser"
+sudo: false
+beta: true
+fixture:
+  files:
+    - "~/.cache/puppeteer/chrome/mac_arm-131.0.6778.204/chrome-mac-arm64/x"

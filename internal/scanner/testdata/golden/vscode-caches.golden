@@ -1,0 +1,2 @@
+[trash] vscode-caches: osascript -e tell application "Finder" to return POSIX path of ((delete POSIX file "~/Library/Application Support/Code/CachedData") as alias)  (pre: running-recheck)
+[trash] vscode-caches: osascript -e tell application "Finder" to return POSIX path of ((delete POSIX file "~/Library/Application Support/Code/CachedExtensionVSIXs") as alias)  (pre: running-recheck)

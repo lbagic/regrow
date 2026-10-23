@@ -1,0 +1,20 @@
+# The archives SDKMAN downloaded into its tmp folder, which `sdk flush tmp` would clear.
+id: sdkman-downloads
+title: "SDKMAN's downloads"
+category: dev-caches
+risk: safe
+paths:
+  darwin:
+    - "~/.sdkman/tmp/*.zip"
+    - "~/.sdkman/tmp/*.headers.tmp"
+unless_running:
+  inside: true
+pre_action: running-recheck
+regen:
+  story: "`sdk install` downloads an archive again when it needs one."
+  cost: "a download per SDK installed again"
+sudo: false
+beta: true
+fixture:
+  files:
+    - "~/.sdkman/tmp/java-21.0.2-tem.zip"

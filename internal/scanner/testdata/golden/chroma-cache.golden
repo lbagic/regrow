@@ -1,0 +1,1 @@
+[trash] chroma-cache: osascript -e tell application "Finder" to return POSIX path of ((delete POSIX file "~/.cache/chroma") as alias)  (pre: running-recheck)

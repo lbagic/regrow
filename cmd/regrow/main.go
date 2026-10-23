@@ -143,7 +143,7 @@ func run(args []string) error {
 			// Confirmed twice in the TUI (plan → x → confirm → y);
 			// execute here so native commands get real terminal stdio.
 			printPlanActions(plan)
-			return executePlan(host, plan)
+			return executePlan(host, catalog, plan)
 		}
 		findings := scanner.New(host).Scan(context.Background(), catalog)
 		writeFindings(os.Stdout, findings, engine.Account(findings))

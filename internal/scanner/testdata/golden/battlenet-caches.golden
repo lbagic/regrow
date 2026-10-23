@@ -1,0 +1,1 @@
+[trash] battlenet-caches: osascript -e tell application "Finder" to return POSIX path of ((delete POSIX file "~/Library/Application Support/Battle.net/BrowserCaches") as alias)  (pre: running-recheck)

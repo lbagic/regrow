@@ -1,0 +1,2 @@
+[trash] curseforge-caches: osascript -e tell application "Finder" to return POSIX path of ((delete POSIX file "~/Library/Caches/curseforge-updater") as alias)  (pre: running-recheck)
+[trash] curseforge-caches: osascript -e tell application "Finder" to return POSIX path of ((delete POSIX file "~/Library/Application Support/CurseForge/Cache") as alias)  (pre: running-recheck)

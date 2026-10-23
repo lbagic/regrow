@@ -1,0 +1,1 @@
+[trash] sdkman-downloads: osascript -e tell application "Finder" to return POSIX path of ((delete POSIX file "~/.sdkman/tmp/java-21.0.2-tem.zip") as alias)  (pre: running-recheck)

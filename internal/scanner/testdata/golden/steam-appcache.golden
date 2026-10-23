@@ -1,0 +1,1 @@
+[trash] steam-appcache: osascript -e tell application "Finder" to return POSIX path of ((delete POSIX file "~/Library/Application Support/Steam/appcache") as alias)  (pre: running-recheck)

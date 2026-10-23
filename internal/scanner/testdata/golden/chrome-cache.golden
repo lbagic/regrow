@@ -1,0 +1,1 @@
+[trash] chrome-cache: osascript -e tell application "Finder" to return POSIX path of ((delete POSIX file "~/Library/Caches/Google/Chrome") as alias)  (pre: running-recheck)

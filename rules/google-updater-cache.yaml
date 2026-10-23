@@ -1,0 +1,19 @@
+# Google Updater keeps each Chrome update it downloaded in crx_cache after it has applied it.
+id: google-updater-cache
+title: "Google Updater's downloaded updates"
+category: app-caches
+risk: safe
+paths:
+  darwin:
+    - "~/Library/Application Support/Google/GoogleUpdater/crx_cache"
+unless_running:
+  apps: [com.google.GoogleUpdater]
+pre_action: running-recheck
+regen:
+  story: "Google Updater downloads the next update into it when one comes out."
+  cost: "the next update downloads in full"
+sudo: false
+beta: true
+fixture:
+  files:
+    - "~/Library/Application Support/Google/GoogleUpdater/crx_cache/a.crx3"

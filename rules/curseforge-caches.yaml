@@ -1,0 +1,23 @@
+# CurseForge's downloaded app updates and its Electron caches.
+id: curseforge-caches
+title: "CurseForge's caches and update downloads"
+category: app-caches
+risk: safe
+paths:
+  darwin:
+    - "~/Library/Caches/curseforge-updater"
+    - "~/Library/Application Support/CurseForge/Cache"
+    - "~/Library/Application Support/CurseForge/Code Cache"
+    - "~/Library/Application Support/CurseForge/GPUCache"
+unless_running:
+  apps: [com.overwolf.curseforge]
+pre_action: running-recheck
+regen:
+  story: "CurseForge downloads its next update and fills its caches again as it runs."
+  cost: "the next update downloads in full"
+sudo: false
+beta: true
+fixture:
+  files:
+    - "~/Library/Caches/curseforge-updater/pending/update.zip"
+    - "~/Library/Application Support/CurseForge/Cache/Cache_Data/data_0"

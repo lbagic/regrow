@@ -314,8 +314,25 @@ type Rule struct {
 	// Keeps lists what the rule leaves out of its items although it
 	// looks there, one line each, for docs/RULES.md.
 	Keeps []string `yaml:"keeps" json:"keeps,omitempty"`
+	// UnlessRunning keeps the rule's items while what uses them runs.
+	// Its pre_action is PreActionRunningRecheck. Not serialized: the
+	// recheck reads it from the catalog, and the protocol's rule stays
+	// as it was.
+	UnlessRunning *UnlessRunning `yaml:"unless_running" json:"-"`
 	// Fixture is the rule's golden-test data; never serialized to JSON.
 	Fixture *Fixture `yaml:"fixture" json:"-"`
+}
+
+// UnlessRunning names what keeps a rule's items while it runs, as a
+// process of the owner's: an app, by bundle identifier, whose bundle a
+// process executes or maps a file from; a program, by the file name of
+// what a process executes or maps; and, with Inside, a process that
+// works in an item, names it on its command line, or executes or maps
+// a file from it, which keeps that item alone.
+type UnlessRunning struct {
+	Apps     []string `yaml:"apps"`
+	Commands []string `yaml:"commands"`
+	Inside   bool     `yaml:"inside"`
 }
 
 // PerItemActionable reports whether individual items of this rule can
@@ -348,6 +365,9 @@ func (r Rule) PerItemActionable() bool {
 // PreActionCaskRecordRecheck asks brew about a cask again right before
 // `brew uninstall --cask` and refuses unless its app is still gone and
 // its uninstall still asks for no password.
+// PreActionRunningRecheck reads the running processes again right
+// before a guarded rule's Trash move and refuses while its
+// unless_running holds or the processes cannot be read.
 // A hook failure leaves the target in place. The registry of hook names
 // lives here so a typo'd pre_action fails at load, like a typo'd
 // placeholder; the implementations are registered on the executor.
@@ -362,12 +382,14 @@ const (
 	PreActionSupersededBuildRecheck     = "superseded-build-recheck"
 	PreActionDockerUpdateRecheck        = "docker-update-recheck"
 	PreActionCaskRecordRecheck          = "cask-record-recheck"
+	PreActionRunningRecheck             = "running-recheck"
 )
 
 var knownPreActions = map[string]bool{
 	PreActionVolumeExport: true, PreActionAgentScratchRecheck: true, PreActionWorktreeRecheck: true, PreActionBuildOutputRecheck: true,
 	PreActionNpxRecheck: true, PreActionDownloadedInstallerRecheck: true, PreActionFnmVersionRecheck: true,
 	PreActionSupersededBuildRecheck: true, PreActionDockerUpdateRecheck: true, PreActionCaskRecordRecheck: true,
+	PreActionRunningRecheck: true,
 }
 
 // KnownPreActions lists every hook name a rule may declare, sorted. An
@@ -468,6 +490,22 @@ func (r Rule) Validate() error {
 	}
 	if slices.ContainsFunc(r.Keeps, func(k string) bool { return strings.TrimSpace(k) == "" }) {
 		errs = append(errs, "keeps must not contain empty lines")
+	}
+	if u := r.UnlessRunning; u != nil {
+		if len(u.Apps) == 0 && len(u.Commands) == 0 && !u.Inside {
+			errs = append(errs, "unless_running names no app, command or inside")
+		}
+		if slices.Contains(u.Apps, "") || slices.Contains(u.Commands, "") {
+			errs = append(errs, "unless_running must not contain empty names")
+		}
+		if r.PreAction != PreActionRunningRecheck {
+			errs = append(errs, "unless_running requires pre_action "+PreActionRunningRecheck+", which checks again right before each move")
+		}
+		if len(r.NativeCommand) > 0 {
+			errs = append(errs, "unless_running guards Trash moves only")
+		}
+	} else if r.PreAction == PreActionRunningRecheck {
+		errs = append(errs, "pre_action "+PreActionRunningRecheck+" requires unless_running, the guard it checks")
 	}
 	if r.PreAction != "" {
 		if !knownPreActions[r.PreAction] {

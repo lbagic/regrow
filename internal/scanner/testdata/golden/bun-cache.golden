@@ -1,0 +1,1 @@
+[trash] bun-cache: osascript -e tell application "Finder" to return POSIX path of ((delete POSIX file "~/.bun/install/cache") as alias)  (pre: running-recheck)

@@ -1,0 +1,19 @@
+# The embedding model Chroma downloads the first time it embeds without one of its own.
+id: chroma-cache
+title: "Chroma's embedding model"
+category: dev-caches
+risk: safe
+paths:
+  darwin:
+    - "~/.cache/chroma"
+unless_running:
+  inside: true
+pre_action: running-recheck
+regen:
+  story: "Chroma downloads it again the next time it embeds."
+  cost: "a download of the model"
+sudo: false
+beta: true
+fixture:
+  files:
+    - "~/.cache/chroma/onnx_models/all-MiniLM-L6-v2/onnx.tar.gz"
