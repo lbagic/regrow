@@ -236,10 +236,10 @@ Package caches, build caches and build output of developer tools, and what codin
 **bun's package cache** · safe · beta · [`rules/bun-cache.yaml`](../rules/bun-cache.yaml)
 
 - **Looks at:** `~/.bun/install/cache`.
-- **Removed by:** a move to the Trash, one per item; `regrow undo` puts it back. Right before each removal, regrow reads your running processes again, as the scan did, and leaves the item in place while what keeps it runs, your processes cannot be listed, a running app's `Info.plist` cannot be read, or the rule is not in the catalog regrow runs.
+- **Removed by:** a move to the Trash, one per item; `regrow undo` puts it back. Right before each removal, regrow reads your running processes again, as the scan did, and leaves the item in place while what keeps it runs, your processes cannot be listed, the rule is not in the catalog regrow runs, or, for a rule that names apps, a running app's `Info.plist` cannot be read.
 - **Keeps:**
   - Everything while `bun` or `bun.exe` runs; while it runs the rule shows nothing.
-  - Everything when your running processes cannot be listed (`lsof`, `ps`), or a running app's `Info.plist` cannot be read: the rule shows an error.
+  - Everything when your running processes cannot be listed (`lsof`, `ps`): the rule shows an error.
 - **Comes back:** bun downloads a package again on the next install that needs it. Cost: the next install downloads what it needs.
 
 ### chroma-cache
@@ -247,11 +247,11 @@ Package caches, build caches and build output of developer tools, and what codin
 **Chroma's embedding model** · safe · beta · [`rules/chroma-cache.yaml`](../rules/chroma-cache.yaml)
 
 - **Looks at:** `~/.cache/chroma`.
-- **Removed by:** a move to the Trash, one per item; `regrow undo` puts it back. Right before each removal, regrow reads your running processes again, as the scan did, and leaves the item in place while what keeps it runs, your processes cannot be listed, a running app's `Info.plist` cannot be read, or the rule is not in the catalog regrow runs.
+- **Removed by:** a move to the Trash, one per item; `regrow undo` puts it back. Right before each removal, regrow reads your running processes again, as the scan did, and leaves the item in place while what keeps it runs, your processes cannot be listed, the rule is not in the catalog regrow runs, or, for a rule that names apps, a running app's `Info.plist` cannot be read.
 - **Keeps:**
-  - An item one of your running processes works in, names on its command line, or executes or maps a file from, through a link as well.
+  - An item one of your running processes works in, names on its command line, or executes or maps a file from, the item spelled as the rule spells it or as links resolve it.
   - An item whose path `lsof` and `ps` would print escaped, or whose real path cannot be read.
-  - Everything when your running processes cannot be listed (`lsof`, `ps`), or a running app's `Info.plist` cannot be read: the rule shows an error.
+  - Everything when your running processes cannot be listed (`lsof`, `ps`): the rule shows an error.
 - **Comes back:** Chroma downloads it again the next time it embeds. Cost: a download of the model.
 
 ### claude-code-cache
@@ -269,11 +269,11 @@ Package caches, build caches and build output of developer tools, and what codin
 **Expo's downloads** · safe · beta · [`rules/expo-caches.yaml`](../rules/expo-caches.yaml)
 
 - **Looks at:** `~/.expo/expo-go`, `~/.expo/android-apk-cache`, `~/.expo/ios-simulator-app-cache`.
-- **Removed by:** a move to the Trash, one per item; `regrow undo` puts it back. Right before each removal, regrow reads your running processes again, as the scan did, and leaves the item in place while what keeps it runs, your processes cannot be listed, a running app's `Info.plist` cannot be read, or the rule is not in the catalog regrow runs.
+- **Removed by:** a move to the Trash, one per item; `regrow undo` puts it back. Right before each removal, regrow reads your running processes again, as the scan did, and leaves the item in place while what keeps it runs, your processes cannot be listed, the rule is not in the catalog regrow runs, or, for a rule that names apps, a running app's `Info.plist` cannot be read.
 - **Keeps:**
-  - An item one of your running processes works in, names on its command line, or executes or maps a file from, through a link as well.
+  - An item one of your running processes works in, names on its command line, or executes or maps a file from, the item spelled as the rule spells it or as links resolve it.
   - An item whose path `lsof` and `ps` would print escaped, or whose real path cannot be read.
-  - Everything when your running processes cannot be listed (`lsof`, `ps`), or a running app's `Info.plist` cannot be read: the rule shows an error.
+  - Everything when your running processes cannot be listed (`lsof`, `ps`): the rule shows an error.
 - **Comes back:** The Expo CLI downloads them again when it next installs them on a device or simulator. Cost: a download per build.
 
 ### git-worktrees
@@ -315,10 +315,10 @@ Package caches, build caches and build output of developer tools, and what codin
 **gopls's cache** · safe · beta · [`rules/gopls-cache.yaml`](../rules/gopls-cache.yaml)
 
 - **Looks at:** `~/Library/Caches/gopls`.
-- **Removed by:** a move to the Trash, one per item; `regrow undo` puts it back. Right before each removal, regrow reads your running processes again, as the scan did, and leaves the item in place while what keeps it runs, your processes cannot be listed, a running app's `Info.plist` cannot be read, or the rule is not in the catalog regrow runs.
+- **Removed by:** a move to the Trash, one per item; `regrow undo` puts it back. Right before each removal, regrow reads your running processes again, as the scan did, and leaves the item in place while what keeps it runs, your processes cannot be listed, the rule is not in the catalog regrow runs, or, for a rule that names apps, a running app's `Info.plist` cannot be read.
 - **Keeps:**
   - Everything while `gopls` runs; while it runs the rule shows nothing.
-  - Everything when your running processes cannot be listed (`lsof`, `ps`), or a running app's `Info.plist` cannot be read: the rule shows an error.
+  - Everything when your running processes cannot be listed (`lsof`, `ps`): the rule shows an error.
 - **Comes back:** gopls works it out again when an editor next starts it. Cost: the editor is slower for the first minute or so.
 
 ### node-modules-dirs
@@ -381,11 +381,11 @@ Package caches, build caches and build output of developer tools, and what codin
 **Prisma's downloaded engines** · safe · beta · [`rules/prisma-engines.yaml`](../rules/prisma-engines.yaml)
 
 - **Looks at:** `~/.cache/prisma`.
-- **Removed by:** a move to the Trash, one per item; `regrow undo` puts it back. Right before each removal, regrow reads your running processes again, as the scan did, and leaves the item in place while what keeps it runs, your processes cannot be listed, a running app's `Info.plist` cannot be read, or the rule is not in the catalog regrow runs.
+- **Removed by:** a move to the Trash, one per item; `regrow undo` puts it back. Right before each removal, regrow reads your running processes again, as the scan did, and leaves the item in place while what keeps it runs, your processes cannot be listed, the rule is not in the catalog regrow runs, or, for a rule that names apps, a running app's `Info.plist` cannot be read.
 - **Keeps:**
-  - An item one of your running processes works in, names on its command line, or executes or maps a file from, through a link as well.
+  - An item one of your running processes works in, names on its command line, or executes or maps a file from, the item spelled as the rule spells it or as links resolve it.
   - An item whose path `lsof` and `ps` would print escaped, or whose real path cannot be read.
-  - Everything when your running processes cannot be listed (`lsof`, `ps`), or a running app's `Info.plist` cannot be read: the rule shows an error.
+  - Everything when your running processes cannot be listed (`lsof`, `ps`): the rule shows an error.
 - **Comes back:** The Prisma CLI downloads them again the next time it needs them. Cost: a download of each engine.
 
 ### puppeteer-browsers
@@ -393,11 +393,11 @@ Package caches, build caches and build output of developer tools, and what codin
 **Puppeteer's browsers** · caution · beta · [`rules/puppeteer-browsers.yaml`](../rules/puppeteer-browsers.yaml)
 
 - **Looks at:** `~/.cache/puppeteer`.
-- **Removed by:** a move to the Trash, one per item; `regrow undo` puts it back. Right before each removal, regrow reads your running processes again, as the scan did, and leaves the item in place while what keeps it runs, your processes cannot be listed, a running app's `Info.plist` cannot be read, or the rule is not in the catalog regrow runs.
+- **Removed by:** a move to the Trash, one per item; `regrow undo` puts it back. Right before each removal, regrow reads your running processes again, as the scan did, and leaves the item in place while what keeps it runs, your processes cannot be listed, the rule is not in the catalog regrow runs, or, for a rule that names apps, a running app's `Info.plist` cannot be read.
 - **Keeps:**
-  - An item one of your running processes works in, names on its command line, or executes or maps a file from, through a link as well.
+  - An item one of your running processes works in, names on its command line, or executes or maps a file from, the item spelled as the rule spells it or as links resolve it.
   - An item whose path `lsof` and `ps` would print escaped, or whose real path cannot be read.
-  - Everything when your running processes cannot be listed (`lsof`, `ps`), or a running app's `Info.plist` cannot be read: the rule shows an error.
+  - Everything when your running processes cannot be listed (`lsof`, `ps`): the rule shows an error.
 - **Comes back:** Installing a project that uses Puppeteer downloads its browser again. Cost: about 150–300 MB per browser.
 - **Note:** A Puppeteer script cannot start its browser until it is installed again: `npx puppeteer browsers install chrome`, or an `npm install` of the project.
 
@@ -414,11 +414,11 @@ Package caches, build caches and build output of developer tools, and what codin
 **SDKMAN's downloads** · safe · beta · [`rules/sdkman-downloads.yaml`](../rules/sdkman-downloads.yaml)
 
 - **Looks at:** `~/.sdkman/tmp/*.zip`, `~/.sdkman/tmp/*.headers.tmp`.
-- **Removed by:** a move to the Trash, one per item; `regrow undo` puts it back. Right before each removal, regrow reads your running processes again, as the scan did, and leaves the item in place while what keeps it runs, your processes cannot be listed, a running app's `Info.plist` cannot be read, or the rule is not in the catalog regrow runs.
+- **Removed by:** a move to the Trash, one per item; `regrow undo` puts it back. Right before each removal, regrow reads your running processes again, as the scan did, and leaves the item in place while what keeps it runs, your processes cannot be listed, the rule is not in the catalog regrow runs, or, for a rule that names apps, a running app's `Info.plist` cannot be read.
 - **Keeps:**
-  - An item one of your running processes works in, names on its command line, or executes or maps a file from, through a link as well.
+  - An item one of your running processes works in, names on its command line, or executes or maps a file from, the item spelled as the rule spells it or as links resolve it.
   - An item whose path `lsof` and `ps` would print escaped, or whose real path cannot be read.
-  - Everything when your running processes cannot be listed (`lsof`, `ps`), or a running app's `Info.plist` cannot be read: the rule shows an error.
+  - Everything when your running processes cannot be listed (`lsof`, `ps`): the rule shows an error.
 - **Comes back:** `sdk install` downloads an archive again when it needs one. Cost: a download per SDK installed again.
 
 ### uv-cache
@@ -434,11 +434,11 @@ Package caches, build caches and build output of developer tools, and what codin
 **Yarn's global package cache (Yarn 2 and later)** · caution · beta · [`rules/yarn-berry-cache.yaml`](../rules/yarn-berry-cache.yaml)
 
 - **Looks at:** `~/.yarn/berry/cache`.
-- **Removed by:** a move to the Trash, one per item; `regrow undo` puts it back. Right before each removal, regrow reads your running processes again, as the scan did, and leaves the item in place while what keeps it runs, your processes cannot be listed, a running app's `Info.plist` cannot be read, or the rule is not in the catalog regrow runs.
+- **Removed by:** a move to the Trash, one per item; `regrow undo` puts it back. Right before each removal, regrow reads your running processes again, as the scan did, and leaves the item in place while what keeps it runs, your processes cannot be listed, the rule is not in the catalog regrow runs, or, for a rule that names apps, a running app's `Info.plist` cannot be read.
 - **Keeps:**
-  - An item one of your running processes works in, names on its command line, or executes or maps a file from, through a link as well.
+  - An item one of your running processes works in, names on its command line, or executes or maps a file from, the item spelled as the rule spells it or as links resolve it.
   - An item whose path `lsof` and `ps` would print escaped, or whose real path cannot be read.
-  - Everything when your running processes cannot be listed (`lsof`, `ps`), or a running app's `Info.plist` cannot be read: the rule shows an error.
+  - Everything when your running processes cannot be listed (`lsof`, `ps`): the rule shows an error.
 - **Comes back:** `yarn install` downloads the packages a project needs again. Cost: the next install downloads every package.
 - **Note:** A project that uses Plug'n'Play with the global cache, Yarn 4's default, reads its packages from here: it fails to start until `yarn install` runs in it again.
 
@@ -471,10 +471,11 @@ Caches apps fill as they run, each kept while its app runs.
 **Arc's cache** · safe · beta · [`rules/arc-cache.yaml`](../rules/arc-cache.yaml)
 
 - **Looks at:** `~/Library/Caches/Arc`.
-- **Removed by:** a move to the Trash, one per item; `regrow undo` puts it back. Right before each removal, regrow reads your running processes again, as the scan did, and leaves the item in place while what keeps it runs, your processes cannot be listed, a running app's `Info.plist` cannot be read, or the rule is not in the catalog regrow runs.
+- **Removed by:** a move to the Trash, one per item; `regrow undo` puts it back. Right before each removal, regrow reads your running processes again, as the scan did, and leaves the item in place while what keeps it runs, your processes cannot be listed, the rule is not in the catalog regrow runs, or, for a rule that names apps, a running app's `Info.plist` cannot be read.
 - **Keeps:**
   - Everything while the app `company.thebrowser.Browser` runs, by its bundle identifier, a helper or an app inside its bundle included; while it runs the rule shows nothing.
-  - Everything when your running processes cannot be listed (`lsof`, `ps`), or a running app's `Info.plist` cannot be read: the rule shows an error.
+  - Everything when a running app's `Info.plist` cannot be read: the rule shows an error.
+  - Everything when your running processes cannot be listed (`lsof`, `ps`): the rule shows an error.
 - **Comes back:** Arc fills it again as you browse. Cost: pages load from the network again at first.
 
 ### battlenet-caches
@@ -482,10 +483,11 @@ Caches apps fill as they run, each kept while its app runs.
 **Battle.net's caches** · safe · beta · [`rules/battlenet-caches.yaml`](../rules/battlenet-caches.yaml)
 
 - **Looks at:** `~/Library/Application Support/Battle.net/BrowserCaches/*/Cache`, `~/Library/Application Support/Battle.net/BrowserCaches/*/Code Cache`, `~/Library/Application Support/Battle.net/BrowserCaches/*/GPUCache`, `~/Library/Application Support/Battle.net/BrowserCaches/*/DawnCache`, `~/Library/Application Support/Battle.net/Cache`.
-- **Removed by:** a move to the Trash, one per item; `regrow undo` puts it back. Right before each removal, regrow reads your running processes again, as the scan did, and leaves the item in place while what keeps it runs, your processes cannot be listed, a running app's `Info.plist` cannot be read, or the rule is not in the catalog regrow runs.
+- **Removed by:** a move to the Trash, one per item; `regrow undo` puts it back. Right before each removal, regrow reads your running processes again, as the scan did, and leaves the item in place while what keeps it runs, your processes cannot be listed, the rule is not in the catalog regrow runs, or, for a rule that names apps, a running app's `Info.plist` cannot be read.
 - **Keeps:**
-  - Everything while the app `net.battle.app` runs, by its bundle identifier, a helper or an app inside its bundle included; while it runs the rule shows nothing.
-  - Everything when your running processes cannot be listed (`lsof`, `ps`), or a running app's `Info.plist` cannot be read: the rule shows an error.
+  - Everything while the app `net.battle.app` or `net.battle.app.helper` runs, by its bundle identifier, a helper or an app inside its bundle included; while it runs the rule shows nothing.
+  - Everything when a running app's `Info.plist` cannot be read: the rule shows an error.
+  - Everything when your running processes cannot be listed (`lsof`, `ps`): the rule shows an error.
 - **Comes back:** Battle.net fills them again as it runs. Cost: the launcher loads its pages from the network again at first.
 
 ### chrome-cache
@@ -493,10 +495,11 @@ Caches apps fill as they run, each kept while its app runs.
 **Chrome's cache** · safe · beta · [`rules/chrome-cache.yaml`](../rules/chrome-cache.yaml)
 
 - **Looks at:** `~/Library/Caches/Google/Chrome`.
-- **Removed by:** a move to the Trash, one per item; `regrow undo` puts it back. Right before each removal, regrow reads your running processes again, as the scan did, and leaves the item in place while what keeps it runs, your processes cannot be listed, a running app's `Info.plist` cannot be read, or the rule is not in the catalog regrow runs.
+- **Removed by:** a move to the Trash, one per item; `regrow undo` puts it back. Right before each removal, regrow reads your running processes again, as the scan did, and leaves the item in place while what keeps it runs, your processes cannot be listed, the rule is not in the catalog regrow runs, or, for a rule that names apps, a running app's `Info.plist` cannot be read.
 - **Keeps:**
   - Everything while the app `com.google.Chrome` runs, by its bundle identifier, a helper or an app inside its bundle included; while it runs the rule shows nothing.
-  - Everything when your running processes cannot be listed (`lsof`, `ps`), or a running app's `Info.plist` cannot be read: the rule shows an error.
+  - Everything when a running app's `Info.plist` cannot be read: the rule shows an error.
+  - Everything when your running processes cannot be listed (`lsof`, `ps`): the rule shows an error.
 - **Comes back:** Chrome fills it again as you browse. Cost: pages load from the network again at first.
 
 ### curseforge-caches
@@ -504,10 +507,11 @@ Caches apps fill as they run, each kept while its app runs.
 **CurseForge's caches and update downloads** · safe · beta · [`rules/curseforge-caches.yaml`](../rules/curseforge-caches.yaml)
 
 - **Looks at:** `~/Library/Caches/curseforge-updater`, `~/Library/Application Support/CurseForge/Cache`, `~/Library/Application Support/CurseForge/Code Cache`, `~/Library/Application Support/CurseForge/GPUCache`.
-- **Removed by:** a move to the Trash, one per item; `regrow undo` puts it back. Right before each removal, regrow reads your running processes again, as the scan did, and leaves the item in place while what keeps it runs, your processes cannot be listed, a running app's `Info.plist` cannot be read, or the rule is not in the catalog regrow runs.
+- **Removed by:** a move to the Trash, one per item; `regrow undo` puts it back. Right before each removal, regrow reads your running processes again, as the scan did, and leaves the item in place while what keeps it runs, your processes cannot be listed, the rule is not in the catalog regrow runs, or, for a rule that names apps, a running app's `Info.plist` cannot be read.
 - **Keeps:**
   - Everything while the app `com.overwolf.curseforge` runs, by its bundle identifier, a helper or an app inside its bundle included; while it runs the rule shows nothing.
-  - Everything when your running processes cannot be listed (`lsof`, `ps`), or a running app's `Info.plist` cannot be read: the rule shows an error.
+  - Everything when a running app's `Info.plist` cannot be read: the rule shows an error.
+  - Everything when your running processes cannot be listed (`lsof`, `ps`): the rule shows an error.
 - **Comes back:** CurseForge downloads its next update and fills its caches again as it runs. Cost: the next update downloads in full.
 
 ### discord-caches
@@ -515,10 +519,11 @@ Caches apps fill as they run, each kept while its app runs.
 **Discord's caches** · safe · beta · [`rules/discord-caches.yaml`](../rules/discord-caches.yaml)
 
 - **Looks at:** `~/Library/Application Support/discord/Cache`, `~/Library/Application Support/discord/Code Cache`, `~/Library/Application Support/discord/GPUCache`.
-- **Removed by:** a move to the Trash, one per item; `regrow undo` puts it back. Right before each removal, regrow reads your running processes again, as the scan did, and leaves the item in place while what keeps it runs, your processes cannot be listed, a running app's `Info.plist` cannot be read, or the rule is not in the catalog regrow runs.
+- **Removed by:** a move to the Trash, one per item; `regrow undo` puts it back. Right before each removal, regrow reads your running processes again, as the scan did, and leaves the item in place while what keeps it runs, your processes cannot be listed, the rule is not in the catalog regrow runs, or, for a rule that names apps, a running app's `Info.plist` cannot be read.
 - **Keeps:**
   - Everything while the app `com.hnc.Discord` runs, by its bundle identifier, a helper or an app inside its bundle included; while it runs the rule shows nothing.
-  - Everything when your running processes cannot be listed (`lsof`, `ps`), or a running app's `Info.plist` cannot be read: the rule shows an error.
+  - Everything when a running app's `Info.plist` cannot be read: the rule shows an error.
+  - Everything when your running processes cannot be listed (`lsof`, `ps`): the rule shows an error.
 - **Comes back:** Discord fills them again as it runs. Cost: Discord loads images from the network again at first.
 
 ### google-updater-cache
@@ -526,10 +531,11 @@ Caches apps fill as they run, each kept while its app runs.
 **Google Updater's downloaded updates** · safe · beta · [`rules/google-updater-cache.yaml`](../rules/google-updater-cache.yaml)
 
 - **Looks at:** `~/Library/Application Support/Google/GoogleUpdater/crx_cache`.
-- **Removed by:** a move to the Trash, one per item; `regrow undo` puts it back. Right before each removal, regrow reads your running processes again, as the scan did, and leaves the item in place while what keeps it runs, your processes cannot be listed, a running app's `Info.plist` cannot be read, or the rule is not in the catalog regrow runs.
+- **Removed by:** a move to the Trash, one per item; `regrow undo` puts it back. Right before each removal, regrow reads your running processes again, as the scan did, and leaves the item in place while what keeps it runs, your processes cannot be listed, the rule is not in the catalog regrow runs, or, for a rule that names apps, a running app's `Info.plist` cannot be read.
 - **Keeps:**
   - Everything while the app `com.google.GoogleUpdater` runs, by its bundle identifier, a helper or an app inside its bundle included; while it runs the rule shows nothing.
-  - Everything when your running processes cannot be listed (`lsof`, `ps`), or a running app's `Info.plist` cannot be read: the rule shows an error.
+  - Everything when a running app's `Info.plist` cannot be read: the rule shows an error.
+  - Everything when your running processes cannot be listed (`lsof`, `ps`): the rule shows an error.
 - **Comes back:** Google Updater downloads the next update into it when one comes out. Cost: the next update downloads in full.
 
 ### slack-caches
@@ -537,11 +543,12 @@ Caches apps fill as they run, each kept while its app runs.
 **Slack's caches** · safe · beta · [`rules/slack-caches.yaml`](../rules/slack-caches.yaml)
 
 - **Looks at:** `~/Library/Application Support/Slack/Cache`, `~/Library/Application Support/Slack/Code Cache`, `~/Library/Application Support/Slack/GPUCache`.
-- **Removed by:** a move to the Trash, one per item; `regrow undo` puts it back. Right before each removal, regrow reads your running processes again, as the scan did, and leaves the item in place while what keeps it runs, your processes cannot be listed, a running app's `Info.plist` cannot be read, or the rule is not in the catalog regrow runs.
+- **Removed by:** a move to the Trash, one per item; `regrow undo` puts it back. Right before each removal, regrow reads your running processes again, as the scan did, and leaves the item in place while what keeps it runs, your processes cannot be listed, the rule is not in the catalog regrow runs, or, for a rule that names apps, a running app's `Info.plist` cannot be read.
 - **Keeps:**
   - `Service Worker`: it can hold Slack's offline data.
   - Everything while the app `com.tinyspeck.slackmacgap` runs, by its bundle identifier, a helper or an app inside its bundle included; while it runs the rule shows nothing.
-  - Everything when your running processes cannot be listed (`lsof`, `ps`), or a running app's `Info.plist` cannot be read: the rule shows an error.
+  - Everything when a running app's `Info.plist` cannot be read: the rule shows an error.
+  - Everything when your running processes cannot be listed (`lsof`, `ps`): the rule shows an error.
 - **Comes back:** Slack fills them again as it runs. Cost: Slack loads images and files from the network again at first.
 
 ### steam-appcache
@@ -549,10 +556,11 @@ Caches apps fill as they run, each kept while its app runs.
 **Steam's app cache** · safe · beta · [`rules/steam-appcache.yaml`](../rules/steam-appcache.yaml)
 
 - **Looks at:** `~/Library/Application Support/Steam/appcache`.
-- **Removed by:** a move to the Trash, one per item; `regrow undo` puts it back. Right before each removal, regrow reads your running processes again, as the scan did, and leaves the item in place while what keeps it runs, your processes cannot be listed, a running app's `Info.plist` cannot be read, or the rule is not in the catalog regrow runs.
+- **Removed by:** a move to the Trash, one per item; `regrow undo` puts it back. Right before each removal, regrow reads your running processes again, as the scan did, and leaves the item in place while what keeps it runs, your processes cannot be listed, the rule is not in the catalog regrow runs, or, for a rule that names apps, a running app's `Info.plist` cannot be read.
 - **Keeps:**
   - Everything while the app `com.valvesoftware.steam` runs, by its bundle identifier, a helper or an app inside its bundle included; while it runs the rule shows nothing.
-  - Everything when your running processes cannot be listed (`lsof`, `ps`), or a running app's `Info.plist` cannot be read: the rule shows an error.
+  - Everything when a running app's `Info.plist` cannot be read: the rule shows an error.
+  - Everything when your running processes cannot be listed (`lsof`, `ps`): the rule shows an error.
 - **Comes back:** Steam downloads app details and artwork again when it starts. Cost: the library is slower to fill the first time.
 
 ### vscode-caches
@@ -560,10 +568,11 @@ Caches apps fill as they run, each kept while its app runs.
 **VS Code's caches** · safe · beta · [`rules/vscode-caches.yaml`](../rules/vscode-caches.yaml)
 
 - **Looks at:** `~/Library/Application Support/Code/Cache`, `~/Library/Application Support/Code/CachedData`, `~/Library/Application Support/Code/Code Cache`, `~/Library/Application Support/Code/GPUCache`, `~/Library/Application Support/Code/CachedExtensionVSIXs`.
-- **Removed by:** a move to the Trash, one per item; `regrow undo` puts it back. Right before each removal, regrow reads your running processes again, as the scan did, and leaves the item in place while what keeps it runs, your processes cannot be listed, a running app's `Info.plist` cannot be read, or the rule is not in the catalog regrow runs.
+- **Removed by:** a move to the Trash, one per item; `regrow undo` puts it back. Right before each removal, regrow reads your running processes again, as the scan did, and leaves the item in place while what keeps it runs, your processes cannot be listed, the rule is not in the catalog regrow runs, or, for a rule that names apps, a running app's `Info.plist` cannot be read.
 - **Keeps:**
   - Everything while the app `com.microsoft.VSCode` runs, by its bundle identifier, a helper or an app inside its bundle included; while it runs the rule shows nothing.
-  - Everything when your running processes cannot be listed (`lsof`, `ps`), or a running app's `Info.plist` cannot be read: the rule shows an error.
+  - Everything when a running app's `Info.plist` cannot be read: the rule shows an error.
+  - Everything when your running processes cannot be listed (`lsof`, `ps`): the rule shows an error.
 - **Comes back:** VS Code fills them again as it runs, and downloads an extension's package when it next installs or updates it. Cost: a slower first start.
 
 ## Toolchains

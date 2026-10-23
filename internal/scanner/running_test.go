@@ -50,6 +50,9 @@ func TestRunningKeeps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Battle.net's browser helper runs from its framework, outside the
+	// launcher's bundle.
+	_, bnetHelper := appBundle(t, filepath.Join(apps, "Battle.net.17932", "battle.net-core.framework", "Frameworks"), "Battle.net Helper.app", "net.battle.app.helper")
 
 	cases := []struct {
 		name   string
@@ -77,6 +80,7 @@ func TestRunningKeeps(t *testing.T) {
 		{"bun from npm", *catalogRule(t, "bun-cache").UnlessRunning, []string{"/usr/local/lib/node_modules/bun/bin/bun.exe"}, processes{}, cache, "is running"},
 		{"a file mapped from a linked item, as lsof prints it", engine.UnlessRunning{Inside: true}, []string{filepath.Join(realChroma, "onnx", "model")}, processes{}, filepath.Join(linked, "chroma"), "maps a file from it"},
 		{"working in a linked item, as lsof prints it", engine.UnlessRunning{Inside: true}, nil, processes{cwds: []string{realChroma}}, filepath.Join(linked, "chroma"), "works in it"},
+		{"Battle.net's helper outside its launcher", *catalogRule(t, "battlenet-caches").UnlessRunning, []string{bnetHelper}, processes{}, cache, "net.battle.app.helper"},
 		{"an item tools would print escaped", engine.UnlessRunning{Inside: true}, nil, processes{}, filepath.Join(cache, "a\\b"), "no process can be matched"},
 	}
 	for _, tc := range cases {
@@ -90,6 +94,22 @@ func TestRunningKeeps(t *testing.T) {
 				t.Errorf("keeps = %q, want %q", why, tc.want)
 			}
 		})
+	}
+}
+
+// An item whose real path cannot be read cannot be matched to the
+// processes that print it.
+func TestRunningKeepsAnItemItCannotResolve(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads every folder")
+	}
+	locked := filepath.Join(t.TempDir(), "locked")
+	writeFile(t, filepath.Join(locked, "cache", "x"), 10)
+	chmod(t, locked, 0)
+	s := &runningSet{w: testWalker()}
+	why, err := s.keeps(context.Background(), engine.UnlessRunning{Inside: true}, filepath.Join(locked, "cache"))
+	if err != nil || !strings.Contains(why, "real path cannot be read") {
+		t.Errorf("keeps = %q, %v; want it kept as unresolvable", why, err)
 	}
 }
 

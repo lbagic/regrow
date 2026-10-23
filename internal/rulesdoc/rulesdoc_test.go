@@ -163,3 +163,18 @@ func TestVersionBoundsNameWhatTheyAdmit(t *testing.T) {
 		}
 	}
 }
+
+// Only a rule that names apps reads their Info.plist, so only its
+// keeps lines say an unreadable one is an error.
+func TestGuardKeepsNameInfoPlistForAppsOnly(t *testing.T) {
+	for _, r := range catalog(t) {
+		u := r.UnlessRunning
+		if u == nil {
+			continue
+		}
+		says := slices.ContainsFunc(guardKeeps(r), func(l string) bool { return strings.Contains(l, "Info.plist") })
+		if says != (len(u.Apps) > 0) {
+			t.Errorf("%s: keeps lines name Info.plist %v, names apps %v", r.ID, says, len(u.Apps) > 0)
+		}
+	}
+}

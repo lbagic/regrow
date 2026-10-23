@@ -59,7 +59,7 @@ var preActions = map[string]string{
 	engine.PreActionSupersededBuildRecheck:     "regrow judges the build again, as the scan did, and leaves it in place if any reason to keep it holds now or the build in use cannot be told.",
 	engine.PreActionDockerUpdateRecheck:        "regrow judges the download again, as the scan did, and leaves it in place if any reason to keep it holds now.",
 	engine.PreActionCaskRecordRecheck:          "regrow asks brew about the cask again and leaves it installed unless its app is still gone and its uninstall still only quits the app and asks for no password.",
-	engine.PreActionRunningRecheck:             "regrow reads your running processes again, as the scan did, and leaves the item in place while what keeps it runs, your processes cannot be listed, a running app's `Info.plist` cannot be read, or the rule is not in the catalog regrow runs.",
+	engine.PreActionRunningRecheck:             "regrow reads your running processes again, as the scan did, and leaves the item in place while what keeps it runs, your processes cannot be listed, the rule is not in the catalog regrow runs, or, for a rule that names apps, a running app's `Info.plist` cannot be read.",
 }
 
 // PreActionText is the sentence for a hook, and false when the page has
@@ -308,15 +308,15 @@ func guardKeeps(r engine.Rule) []string {
 	}
 	var lines []string
 	if len(u.Apps) > 0 {
-		lines = append(lines, "everything while the app "+orList(u.Apps)+" runs, by its bundle identifier, a helper or an app inside its bundle included; while it runs the rule shows nothing")
+		lines = append(lines, "everything while the app "+orList(u.Apps)+" runs, by its bundle identifier, a helper or an app inside its bundle included; while it runs the rule shows nothing", "everything when a running app's `Info.plist` cannot be read: the rule shows an error")
 	}
 	if len(u.Commands) > 0 {
 		lines = append(lines, "everything while "+orList(u.Commands)+" runs; while it runs the rule shows nothing")
 	}
 	if u.Inside {
-		lines = append(lines, "an item one of your running processes works in, names on its command line, or executes or maps a file from, through a link as well", "an item whose path `lsof` and `ps` would print escaped, or whose real path cannot be read")
+		lines = append(lines, "an item one of your running processes works in, names on its command line, or executes or maps a file from, the item spelled as the rule spells it or as links resolve it", "an item whose path `lsof` and `ps` would print escaped, or whose real path cannot be read")
 	}
-	return append(lines, "everything when your running processes cannot be listed (`lsof`, `ps`), or a running app's `Info.plist` cannot be read: the rule shows an error")
+	return append(lines, "everything when your running processes cannot be listed (`lsof`, `ps`): the rule shows an error")
 }
 
 func pruneText(r engine.Rule) string {

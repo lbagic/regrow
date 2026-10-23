@@ -13,7 +13,9 @@ paths:
     - "~/Library/Application Support/Battle.net/BrowserCaches/*/DawnCache"
     - "~/Library/Application Support/Battle.net/Cache"
 unless_running:
-  apps: [net.battle.app]
+  # The browser helper runs from Battle.net's framework, outside the
+  # launcher's bundle.
+  apps: [net.battle.app, net.battle.app.helper]
 pre_action: running-recheck
 regen:
   story: "Battle.net fills them again as it runs."
