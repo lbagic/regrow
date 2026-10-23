@@ -144,7 +144,7 @@ esac
 here=$(pwd -P)
 built_in="$ROOT/app/.build/built-in"
 if [ -d "$ROOT/app/.build" ] && [ "$(cat "$built_in" 2>/dev/null)" != "$here" ]; then
-	echo "app/.build was not built in this folder; cleaning it, so this build starts from scratch."
+	echo "app/.build holds no record of being built in this folder; cleaning it, so this build starts from scratch."
 	swift package clean --package-path "$ROOT/app"
 fi
 mkdir -p "$ROOT/app/.build"
