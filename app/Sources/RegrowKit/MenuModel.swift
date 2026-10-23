@@ -55,6 +55,18 @@ public struct MenuFigures: Equatable {
     public var checked: String
     /// A check that failed, the engine down: one sentence each.
     public var problems: [String]
+
+    public static let meterGap = 2.0
+
+    /// The meter's segments across `width`, gaps taken out first. Free
+    /// space is drawn to scale; purgeable shows at least 2pt however
+    /// little there is, taken out of what is taken.
+    public func meter(width: Double) -> (taken: Double, purgeable: Double, free: Double) {
+        let room = max(0, width - 2 * Self.meterGap)
+        let free = room * max(0, 1 - taken - purgeable)
+        let shown = min(room - free, max(2, room * purgeable))
+        return (room - free - shown, shown, free)
+    }
 }
 
 /// One line of the menu, top to bottom: the figures, then the actions.

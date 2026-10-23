@@ -13,9 +13,9 @@ struct MenuActions {
     var quit: () -> Void
 }
 
-/// The menu's rows as AppKit items. Text that does nothing is a view of
-/// its own, drawn at full contrast and never highlighted; an item
-/// without an action would be greyed out.
+/// The menu's rows as AppKit items. Text that does nothing is a view in a
+/// disabled item: the arrow keys pass over it, and AppKit greys a title,
+/// never a view.
 enum MenuItems {
     static let width: CGFloat = 340
     static let inset: CGFloat = 14
@@ -66,6 +66,7 @@ enum MenuItems {
         host.frame.size = host.fittingSize
         let item = NSMenuItem()
         item.view = host
+        item.isEnabled = false
         return item
     }
 
@@ -123,16 +124,16 @@ struct FiguresView: View {
             if let free = figures.free, let total = figures.total {
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
                     Text(free).font(.system(size: 20, weight: .semibold)).monospacedDigit()
-                    Text(total).font(.system(size: 13)).foregroundStyle(.secondary)
+                    Text(total).font(.system(size: 13))
                 }
-                Meter(taken: figures.taken, purgeable: figures.purgeable)
+                Meter(figures: figures)
             }
             ForEach([figures.details, figures.forecast].compactMap { $0 }, id: \.self) { line in
-                Text(line).font(.system(size: 12)).foregroundStyle(.secondary)
+                Text(line).font(.system(size: 12))
             }
             Text(figures.checked).font(.system(size: 11)).foregroundStyle(.secondary)
             ForEach(figures.problems, id: \.self) { problem in
-                Text(problem).font(.system(size: 12)).foregroundStyle(.secondary)
+                Text(problem).font(.system(size: 12))
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -141,15 +142,15 @@ struct FiguresView: View {
 
 /// The disk as three segments: taken, purgeable, free.
 struct Meter: View {
-    let taken: Double
-    let purgeable: Double
+    let figures: MenuFigures
 
     var body: some View {
         GeometryReader { space in
-            HStack(spacing: 2) {
-                Rectangle().fill(Color.primary.opacity(0.55)).frame(width: space.size.width * taken)
-                Rectangle().fill(Color.primary.opacity(0.25)).frame(width: max(2, space.size.width * purgeable))
-                Rectangle().fill(Color.primary.opacity(0.1))
+            let width = figures.meter(width: space.size.width)
+            HStack(spacing: MenuFigures.meterGap) {
+                Rectangle().fill(Color.primary.opacity(0.55)).frame(width: width.taken)
+                Rectangle().fill(Color.primary.opacity(0.25)).frame(width: width.purgeable)
+                Rectangle().fill(Color.primary.opacity(0.1)).frame(width: width.free)
             }
         }
         .frame(height: 6)

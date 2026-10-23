@@ -43,6 +43,20 @@ struct MenuModelTests {
         ])
     }
 
+    @Test("the meter draws free space to scale, a nearly full disk included", arguments: [
+        Int64(66_201_620_480), 10 << 30, 5 << 30, 2 << 30, 0,
+    ])
+    func meter(free: Int64) throws {
+        let line = #"{"event":"tick","total":494384795648,"free":\#(free),"purgeable":4042354442,"swap_used":0}"#
+        let rows = MenuModel.rows(state(tick: try #require(Wire.decode(Wire.Tick.self, from: line))))
+        let width = try #require(figuresOf(rows)).meter(width: 312)
+        let room = 312 - 2 * MenuFigures.meterGap
+        #expect(abs(width.free - room * Double(free) / 494_384_795_648) < 0.01)
+        #expect(width.purgeable >= 2)
+        #expect(width.taken >= 0)
+        #expect(abs(width.taken + width.purgeable + width.free - room) < 0.01)
+    }
+
     @Test("before the first tick the figures say so, and every action is there")
     func noTick() throws {
         let rows = MenuModel.rows(MenuState(

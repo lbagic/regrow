@@ -103,9 +103,9 @@ A 6px bar on a 1px `--line-strong` hairline the full width of its column; the fi
 
 ## The menu
 
-The menu bar item is the drive symbol and the free space. Its menu is native, drawn by AppKit: what the owner reads at the top, what they can do under it. A line that does nothing is drawn as text in the label colours, never as a disabled item, which macOS greys out. None of the page's colours or type reaches it; sizes are the system font's.
+The menu bar item is the drive symbol and the free space. Its menu is native, drawn by AppKit: what the owner reads at the top, what they can do under it. A line that does nothing is a view in a disabled item: the arrow keys pass over it, and nothing greys it, as macOS greys a disabled item's title. None of the page's colours or type reaches it; sizes are the system font's.
 
-- **Figures**, 340pt wide with 14pt sides: free space semibold 20 and "free of" the total in secondary 13; a 6px meter (taken, purgeable, free, 2px gaps, the label colour at 55%, 25% and 10%, radius 3); "Purgeable · Swap" and the forecast in secondary 12; "Checked at" in secondary 11; then a failed check or a stopped engine in secondary 12, wrapped.
+- **Figures**, 340pt wide with 14pt sides, in the label colour: free space semibold 20 and "free of" the total in 13; a 6px meter (taken, purgeable, free, 2px gaps, the label colour at 55%, 25% and 10%, radius 3; free to scale, purgeable at least 2px); "Purgeable · Swap" and the forecast in 12; "Checked at" in secondary 11; then a failed check or a stopped engine in 12, wrapped.
 - **Actions**, in this order, separated where shown: Open regrow | the autotrim switch, its state on the right in secondary ("on", "off"; a checkmark would indent every item out of line with the text above), with the engine's note under it in secondary 12, wrapped, its quotes in mono, when autotrim did not run | Full Disk Access with its state on the right, and when it is not granted "Open Full Disk Access settings" and "Relaunch to apply"; "Show staging in Finder" with the staging size on the right in secondary, when there is any | the login environment's failure, wrapped | Quit regrow.
 - A menu's text cannot be selected: under any line that quotes a command, "Copy the command to run in Terminal" copies it.
 

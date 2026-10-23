@@ -10,7 +10,8 @@ struct RegrowApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
 
     var body: some Scene {
-        Settings { EmptyView() }
+        // Without the empty command group, Cmd-, opens an empty window.
+        Settings { EmptyView() }.commands { CommandGroup(replacing: .appSettings) {} }
     }
 }
 
