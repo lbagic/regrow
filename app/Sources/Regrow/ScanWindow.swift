@@ -108,7 +108,7 @@ final class ScanWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, WKScri
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         // A page that ends its process as it loads would load for ever.
         guard Date().timeIntervalSince(lastReload) > 10 else {
-            log("the page's process ended again within 10 s; closing the window, Scan… opens a new one")
+            log("the page's process ended again within 10 s; closing the window, Open regrow opens a new one")
             window.close()
             return
         }

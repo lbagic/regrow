@@ -2,18 +2,6 @@ import Foundation
 
 /// The menu's lines about the last tick, as text.
 public enum MenuText {
-    public static func free(_ tick: Wire.Tick) -> String {
-        "\(humanBytes(tick.free)) free of \(humanBytes(tick.total))"
-    }
-
-    public static func purgeable(_ tick: Wire.Tick) -> String {
-        "Purgeable: \(humanBytes(tick.purgeable))"
-    }
-
-    public static func swap(_ tick: Wire.Tick) -> String {
-        "Swap: \(humanBytes(tick.swapUsed))"
-    }
-
     /// Days to full, or why there is no such figure.
     public static func forecast(_ tick: Wire.Tick) -> String {
         if let days = tick.daysToFull {
@@ -56,12 +44,13 @@ public enum MenuText {
         return "'" + word.replacingOccurrences(of: "'", with: #"'\''"#) + "'"
     }
 
+    /// Full Disk Access as the engine's `hello` found it.
     public static func fullDiskAccess(_ fda: String?) -> String {
         switch fda {
-        case "granted": return "Full Disk Access: granted"
-        case "denied": return "Full Disk Access: not granted"
-        case nil: return "Full Disk Access: not checked yet"
-        default: return "Full Disk Access: unknown"
+        case "granted": return "granted"
+        case "denied": return "not granted"
+        case nil: return "not checked yet"
+        default: return "unknown"
         }
     }
 }

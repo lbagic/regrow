@@ -14,7 +14,7 @@ final class Shell: ObservableObject {
 
     @Published private(set) var tick: Wire.Tick?
     @Published private(set) var checkedAt: Date?
-    @Published private(set) var tickError: String?
+    @Published private(set) var tickFailure: TickFailure?
     @Published private(set) var hello: Wire.Hello?
     @Published private(set) var environmentFailure: String?
     @Published private(set) var engineDown: String?
@@ -56,18 +56,22 @@ final class Shell: ObservableObject {
         tick.map { humanBytes($0.free) } ?? "…"
     }
 
-    /// The engine's words for why autotrim did not run.
-    var autotrimNote: String? {
-        guard autotrim, let skipped = tick?.pruned?.skipped, !skipped.isEmpty else { return nil }
-        return skipped
+    private static let clock: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .none
+        formatter.timeStyle = .short
+        return formatter
+    }()
+
+    var menuState: MenuState {
+        MenuState(
+            tick: tick, checkedAt: checkedAt.map(Self.clock.string(from:)), tickFailure: tickFailure,
+            engineDown: engineDown, autotrim: autotrim, fda: hello?.fda,
+            environmentFailure: environmentFailure, engine: engine)
     }
 
     var engine: String {
         config.engine
-    }
-
-    var stagedBytes: Int64 {
-        tick?.stagedBytes ?? 0
     }
 
     // MARK: Launch
@@ -292,11 +296,11 @@ final class Shell: ObservableObject {
             }
             window?.deliver(line)
         case "done" where ofTick:
-            tickError = nil
+            tickFailure = nil
             lockNoticed = false
             watch?.settled()
         case "error" where ofTick:
-            tickError = MenuText.tickError(code: head.code, message: head.message)
+            tickFailure = TickFailure(code: head.code, message: head.message)
             // A locked gate fails every tick while headroom stays low:
             // it is news once, not every quarter of an hour.
             if let notice = AlertText.notice(forError: head.code ?? "", message: head.message ?? "") {

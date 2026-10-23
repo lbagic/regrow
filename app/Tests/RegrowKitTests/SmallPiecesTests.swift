@@ -179,14 +179,6 @@ struct MenuTextTests {
         return try #require(Wire.decode(Wire.Tick.self, from: line))
     }
 
-    @Test("the figures of a tick read as the menu shows them")
-    func figures() throws {
-        let tick = try tick("")
-        #expect(MenuText.free(tick) == "32.0 GiB free of 460.4 GiB")
-        #expect(MenuText.purgeable(tick) == "Purgeable: 512.0 MiB")
-        #expect(MenuText.swap(tick) == "Swap: 1.0 GiB")
-    }
-
     @Test("days to full, or the reason there is no forecast", arguments: [
         (#","days_to_full":12.34"#, "Full in about 12.3 days at this rate"),
         (#","days_to_full":0.4"#, "Full in less than a day at this rate"),
