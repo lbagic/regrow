@@ -175,13 +175,19 @@ func TestAerialCauseFixText(t *testing.T) {
 		{"still wallpaper", ": " + clearPicks},
 		{"Then stop the downloader", ": sudo killall idleassetsd"},
 		{"Then remove the videos: " + removeOld},
-		{"frees nothing until that copy goes too: " + removeTemp},
+		{"frees nothing until that copy goes too (untested in this form): " + removeTemp},
 		{"Picking an aerial", "System Settings ▸ Wallpaper", "again"},
 	} {
 		if !line(want...) {
 			t.Errorf("no fix line with %q in:\n%s", want, strings.Join(fix, "\n"))
 		} else if i < 3 && !strings.Contains(fix[i], want[0]) {
 			t.Errorf("fix line %d is not the one with %q: clear, stop, remove, in that order:\n%s", i+1, want[0], strings.Join(fix, "\n"))
+		}
+	}
+	// A command ends its line, so what follows the colon pastes.
+	for _, l := range fix {
+		if i := strings.Index(l, ": sudo "); i >= 0 && strings.ContainsAny(l[i:], "()") {
+			t.Errorf("a fix line's command is followed by more words, which a pasted line runs too: %s", l)
 		}
 	}
 	// launchd starts the downloader on demand while it is disabled.

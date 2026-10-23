@@ -653,9 +653,10 @@ func refusedSkips(ruleID string, ds []draft, partial bool, reason func(selector 
 }
 
 // ShellQuote single-quotes s when a shell would split or expand it,
-// or would drop it, empty.
+// or would drop it, empty. zsh expands a leading = to a program's path,
+// and bash a ~ after = in a word that looks like an assignment.
 func ShellQuote(s string) string {
-	if s != "" && !strings.ContainsAny(s, " \t\n'\"\\$`*?[](){}<>|&;!#") {
+	if s != "" && !strings.ContainsAny(s, " \t\n'\"\\$`*?[](){}<>|&;!#") && !strings.HasPrefix(s, "=") && !strings.Contains(s, "=~") {
 		return s
 	}
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"

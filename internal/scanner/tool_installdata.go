@@ -41,7 +41,7 @@ func macOSInstallDataQuery(host engine.Host) ToolQuery {
 		if h.OS == "" {
 			h = engine.DetectHost()
 		}
-		q := &macOSInstallData{w: defaultWalker, dir: macOSInstallDataDir, version: h.Version, plist: plutilXML}
+		q := &macOSInstallData{w: defaultWalker, dir: h.ExpandPath(macOSInstallDataDir), version: h.Version, plist: plutilXML}
 		return q.scan(ctx)
 	}
 }

@@ -275,3 +275,38 @@ func TestNoRuleNamesAnAerialFolder(t *testing.T) {
 		}
 	}
 }
+
+// With part of the folder unreadable, a file whose other link may sit
+// in the unread part is not called held outside.
+func TestAerialVideosPartialWalk(t *testing.T) {
+	host := engine.Host{OS: "darwin", Version: "15.7.7", Root: t.TempDir()}
+	customer := filepath.Join(host.Root, "Library/Application Support/com.apple.idleassetsd/Customer")
+	video := filepath.Join(customer, "4KSDR240FPS", "a.mov")
+	writeFile(t, video, 1<<20)
+	locked := filepath.Join(customer, "locked")
+	if err := os.MkdirAll(locked, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(video, filepath.Join(locked, "a.mov")); err != nil {
+		t.Fatal(err)
+	}
+	chmod(t, locked, 0)
+	items, err := (&aerialVideos{w: testWalker(), host: host}).Items(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || !items[0].Partial || items[0].Path != customer {
+		t.Fatalf("items %+v, want the folder alone, partial", items)
+	}
+	fi, err := os.Lstat(video)
+	if err != nil {
+		t.Fatal(err)
+	}
+	whole, err := DirSize(context.Background(), customer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := whole.Bytes - physicalSize(fi); items[0].Bytes != want {
+		t.Errorf("folder bytes %d, want %d: the file whose other link went unread counts nowhere", items[0].Bytes, want)
+	}
+}

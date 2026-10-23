@@ -61,7 +61,7 @@ func (s *simRuntimesNoXcode) Runtimes(ctx context.Context) ([]engine.Item, error
 	}
 	if elsewhere == nil {
 		elsewhere = func(ctx context.Context) bool {
-			return !spotlightIndexes(ctx, runTool) || xcodeRegistered(ctx, defaultWalker, lsregisterBundles)
+			return xcodeElsewhere(ctx, defaultWalker, runTool, lsregisterBundles)
 		}
 	}
 	if hasSimctl(ctx) || hasXcode(ctx) {
@@ -151,7 +151,7 @@ func xcodeInstalled(ctx context.Context, w *walker, root, home string, spotlight
 		return true
 	}
 	for _, p := range found {
-		if _, err := w.lstat(ctx, p); err == nil {
+		if _, err := w.lstat(ctx, p); !absent(err) {
 			return true
 		}
 	}
@@ -201,6 +201,12 @@ func spotlightXcodes(ctx context.Context) (paths []string, ok bool) {
 		}
 	}
 	return paths, true
+}
+
+// xcodeElsewhere is the default Elsewhere: Spotlight not indexing the
+// startup disk, or an Xcode in LaunchServices' register.
+func xcodeElsewhere(ctx context.Context, w *walker, run func(ctx context.Context, name string, args ...string) ([]byte, bool, error), dump func(context.Context) ([]byte, error)) bool {
+	return !spotlightIndexes(ctx, run) || xcodeRegistered(ctx, w, dump)
 }
 
 // spotlightIndexes reports Spotlight indexing both volumes of the

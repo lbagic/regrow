@@ -39,6 +39,7 @@ func TestSimRuntimesNoXcode(t *testing.T) {
 			listed++
 			return []byte(simctlRuntimeList), true, nil
 		},
+		Elsewhere: func(context.Context) bool { return false },
 	}
 	items, err := s.Runtimes(context.Background())
 	if err != nil {
@@ -347,6 +348,12 @@ func TestXcodeInstalled(t *testing.T) {
 		}, true},
 		{"Spotlight naming a gone app", func(t *testing.T, _, home string) []string { return []string{filepath.Join(home, "Gone", "Xcode.app")} }, false},
 		{"Spotlight giving no answer", func(*testing.T, string, string) []string { return []string{noAnswer} }, true},
+		{"Spotlight naming an Xcode in a folder that refuses", func(t *testing.T, _, home string) []string {
+			p := filepath.Join(home, "Downloads", "Xcode.app")
+			app(t, p, "com.apple.dt.Xcode")
+			chmod(t, filepath.Dir(p), 0)
+			return []string{p}
+		}, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -459,5 +466,39 @@ func TestSpotlightIndexes(t *testing.T) {
 				t.Errorf("spotlightIndexes = %v, want %v", got, tc.indexes)
 			}
 		})
+	}
+}
+
+// The default wider search: Spotlight off for the startup disk, or an
+// Xcode in the register, keeps the runtimes.
+func TestXcodeElsewhere(t *testing.T) {
+	enabled := func(context.Context, string, ...string) ([]byte, bool, error) {
+		return []byte("Indexing enabled."), true, nil
+	}
+	disabled := func(context.Context, string, ...string) ([]byte, bool, error) {
+		return []byte("Indexing disabled."), true, nil
+	}
+	home := t.TempDir()
+	xcode := filepath.Join(home, "Developer", "Xcode.app")
+	writeText(t, filepath.Join(xcode, "Contents", "Info.plist"), launchdPlist("", nil, map[string]string{"CFBundleIdentifier": "com.apple.dt.Xcode"}))
+	none := func(context.Context) ([]byte, error) {
+		return []byte(lsBundleEntry("Safari", "/Applications/Safari.app", "com.apple.Safari", "mounted")), nil
+	}
+	registered := func(context.Context) ([]byte, error) {
+		return []byte(lsBundleEntry("Xcode", xcode, "com.apple.dt.Xcode", "mounted")), nil
+	}
+	for _, tc := range []struct {
+		name string
+		run  func(context.Context, string, ...string) ([]byte, bool, error)
+		dump func(context.Context) ([]byte, error)
+		want bool
+	}{
+		{"indexed, nothing registered", enabled, none, false},
+		{"Spotlight off", disabled, none, true},
+		{"an Xcode registered", enabled, registered, true},
+	} {
+		if got := xcodeElsewhere(context.Background(), testWalker(), tc.run, tc.dump); got != tc.want {
+			t.Errorf("%s: xcodeElsewhere = %v, want %v", tc.name, got, tc.want)
+		}
 	}
 }

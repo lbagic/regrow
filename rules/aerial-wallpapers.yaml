@@ -29,7 +29,7 @@ causes:
       - "Clear the picks it downloads for, which a still wallpaper leaves in place (the table names are macOS 15.7's; where they differ, sqlite3 changes nothing): sudo sqlite3 -cmd '.timeout 5000' \"/Library/Application Support/com.apple.idleassetsd/Aerial.sqlite\" 'BEGIN IMMEDIATE; DELETE FROM Z_2ACTIVEFORUSERS; DELETE FROM Z_3ACTIVEFORUSERS; DELETE FROM Z_1PINNEDFORUSERS; COMMIT;'"
       - "Then stop the downloader, which keeps the picks it read when it started; launchd starts a new one when it is next asked: sudo killall idleassetsd"
       - "Then remove the videos: sudo find \"/Library/Application Support/com.apple.idleassetsd/Customer\" -type f -name '*.mov' -delete"
-      - "A video the downloader's temp folder also holds frees nothing until that copy goes too: sudo find /private/var/folders/zz -path '*/T/com.apple.idleassetsd/CFNetworkDownload_*.tmp' -delete   (untested in this form)"
+      - "A video the downloader's temp folder also holds frees nothing until that copy goes too (untested in this form): sudo find /private/var/folders/zz -path '*/T/com.apple.idleassetsd/CFNetworkDownload_*.tmp' -delete"
       - "Picking an aerial in System Settings ▸ Wallpaper picks it again, and the downloads start again for it. sudo launchctl disable system/com.apple.idleassetsd does not stop them: launchd starts the downloader on demand while it is disabled."
 fixture:
   items:

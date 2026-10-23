@@ -108,17 +108,20 @@ func aerialFolder(ctx context.Context, w *walker, dir string) ([]engine.Item, er
 	}
 	// The walk counted a file once for each link it met; deleting the
 	// folder frees one whose links all lie inside it, once, and none of
-	// the others.
+	// the others. A walk that missed part of the folder cannot tell an
+	// unseen link inside from one outside: such files count nowhere,
+	// and the folder's figure stays a lower bound.
 	frees, held := u.Bytes, int64(0)
 	files := 0
 	for _, lf := range linked {
 		frees -= lf.bytes * int64(lf.seen)
-		if lf.seen >= lf.nlink {
+		switch {
+		case lf.seen >= lf.nlink:
 			frees += lf.bytes
-			continue
+		case !u.Partial:
+			held += lf.bytes
+			files++
 		}
-		held += lf.bytes
-		files++
 	}
 	items := []engine.Item{{Path: dir, Bytes: frees, LastUsed: u.Newest, Partial: u.Partial}}
 	if files > 0 {
