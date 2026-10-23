@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `just app` (`scripts/app.sh`) builds again in a checkout whose folder moved since its last build. SwiftPM's module cache in `app/.build` keeps the folder it was built in, and a build in the new place failed: `OperationQueue` and `NSAppleEventDescriptor` lacked members the SDK has. The script now records the folder it builds in, and when `app/.build` holds no such record or names another folder it runs `swift package clean` first, so that build starts from scratch.
+
 - The menu bar menu reads at a glance: free space large with a disk meter, then purgeable space, swap and the forecast, all in full contrast where they used to be greyed out as disabled items, and the time of the last check. The actions follow: "Open regrow" (it was "Scan…", which only ever opened the window), the autotrim switch with its state on the right and, when autotrim did not run, why, Full Disk Access with its state, "Show staging in Finder" with the staging size, and "Quit regrow". The menu is drawn by AppKit.
 
 - `just app` (`scripts/app.sh install`) now runs the app's smoke checks after it installs and launches the app: `scripts/app-smoke.sh all`, new, runs `trash`, `alert` and `doors` in turn and ends with one `RESULT` line naming any that failed, and `doors` when a folder `trash` left made it skip. `just app --no-check` installs without them.

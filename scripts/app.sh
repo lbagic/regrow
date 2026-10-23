@@ -138,6 +138,18 @@ case "$short" in
 *) short=0.0.0 ;;
 esac
 
+# The module cache in app/.build keeps the folder it was built in: built
+# again after the checkout moved, the app loses members of the SDK's types
+# (`OperationQueue.main`). A cache not recorded as built here is cleaned.
+here=$(pwd -P)
+built_in="$ROOT/app/.build/built-in"
+if [ -d "$ROOT/app/.build" ] && [ "$(cat "$built_in" 2>/dev/null)" != "$here" ]; then
+	echo "app/.build was not built in this folder; cleaning it, so this build starts from scratch."
+	swift package clean --package-path "$ROOT/app"
+fi
+mkdir -p "$ROOT/app/.build"
+printf '%s\n' "$here" >"$built_in"
+
 swift build -c release --package-path "$ROOT/app"
 bin=$(swift build -c release --package-path "$ROOT/app" --show-bin-path)
 
