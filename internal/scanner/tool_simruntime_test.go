@@ -471,6 +471,38 @@ func TestSpotlightIndexes(t *testing.T) {
 
 // The default wider search: Spotlight off for the startup disk, or an
 // Xcode in the register, keeps the runtimes.
+// With Elsewhere nil, Runtimes asks the wider search itself.
+func TestSimRuntimesSearchElsewhereByDefault(t *testing.T) {
+	enabled := func(context.Context, string, ...string) ([]byte, bool, error) {
+		return []byte("Indexing enabled."), true, nil
+	}
+	home := t.TempDir()
+	xcode := filepath.Join(home, "Developer", "Xcode.app")
+	writeText(t, filepath.Join(xcode, "Contents", "Info.plist"), launchdPlist("", nil, map[string]string{"CFBundleIdentifier": "com.apple.dt.Xcode"}))
+	for _, tc := range []struct {
+		name  string
+		entry string
+		want  int
+	}{
+		{"an Xcode registered", lsBundleEntry("Xcode", xcode, "com.apple.dt.Xcode", "mounted"), 0},
+		{"no Xcode registered", lsBundleEntry("Safari", "/Applications/Safari.app", "com.apple.Safari", "mounted"), 1},
+	} {
+		s := &simRuntimesNoXcode{
+			HasSimctl: func(context.Context) bool { return false },
+			HasXcode:  func(context.Context) bool { return false },
+			List: func(context.Context) ([]byte, bool, error) {
+				return []byte(simctlRuntimeList), true, nil
+			},
+			run:  enabled,
+			dump: func(context.Context) ([]byte, error) { return []byte(tc.entry), nil },
+		}
+		items, err := s.Runtimes(context.Background())
+		if err != nil || len(items) != tc.want {
+			t.Errorf("%s: items %v, err %v; want %d", tc.name, items, err, tc.want)
+		}
+	}
+}
+
 func TestXcodeElsewhere(t *testing.T) {
 	enabled := func(context.Context, string, ...string) ([]byte, bool, error) {
 		return []byte("Indexing enabled."), true, nil

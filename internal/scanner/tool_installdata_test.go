@@ -136,3 +136,19 @@ func TestMacOSInstallDataRule(t *testing.T) {
 		t.Errorf("the query reads %q, the note's command another folder", macOSInstallDataDir)
 	}
 }
+
+// The query reads the folder under the scanner's host, so a fixture
+// root is read, not the running machine's.
+func TestMacOSInstallDataReadsHostRoot(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "System/Volumes/Data/macOS Install Data")
+	writeText(t, filepath.Join(dir, "UpdateBundle", "Info.plist"), installDataPlist("13.5"))
+	writeFile(t, filepath.Join(dir, "UpdateBundle", "payload.dmg"), 4096)
+	host := engine.Host{OS: "darwin", Version: "15.7.7", Root: root}
+	for name, q := range map[string]ToolQuery{"the query": macOSInstallDataQuery(host), "DefaultQueries": DefaultQueries(host)["macos-install-data"]} {
+		items, err := q(context.Background())
+		if err != nil || len(items) != 1 || !strings.HasPrefix(items[0].Path, root) {
+			t.Errorf("%s: items %+v, err %v; want the fixture's bundle under %s", name, items, err, root)
+		}
+	}
+}

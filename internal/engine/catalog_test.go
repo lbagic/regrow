@@ -185,9 +185,9 @@ func TestAerialCauseFixText(t *testing.T) {
 		}
 	}
 	// A command ends its line, so what follows the colon pastes.
-	for _, l := range fix {
-		if i := strings.Index(l, ": sudo "); i >= 0 && strings.ContainsAny(l[i:], "()") {
-			t.Errorf("a fix line's command is followed by more words, which a pasted line runs too: %s", l)
+	for _, cmd := range []string{clearPicks, "sudo killall idleassetsd", removeOld, removeTemp} {
+		if i := slices.IndexFunc(fix, func(l string) bool { return strings.Contains(l, ": "+cmd) }); i < 0 || !strings.HasSuffix(fix[i], ": "+cmd) {
+			t.Errorf("the fix line of %q does not end with it, so a pasted line runs more:\n%s", cmd, strings.Join(fix, "\n"))
 		}
 	}
 	// launchd starts the downloader on demand while it is disabled.

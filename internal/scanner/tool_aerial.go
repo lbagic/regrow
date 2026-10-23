@@ -65,8 +65,9 @@ type linkedFile struct {
 
 // aerialFolder measures one folder: an item for the folder holding what
 // deleting its files frees, and one for the files a link outside the
-// folder also holds, when there are any. A folder that refuses is an
-// item with Partial set; an absent one is nothing.
+// folder also holds, when there are any and the walk read the whole
+// folder. A folder that refuses is an item with Partial set; an absent
+// one is nothing.
 func aerialFolder(ctx context.Context, w *walker, dir string) ([]engine.Item, error) {
 	var (
 		mu     sync.Mutex
@@ -129,7 +130,7 @@ func aerialFolder(ctx context.Context, w *walker, dir string) ([]engine.Item, er
 		if files == 1 {
 			label = "1 file a link outside the folder also holds, such as the downloader's temp copies: deleting it here frees nothing"
 		}
-		items = append(items, engine.Item{Label: label, Bytes: held, Partial: u.Partial})
+		items = append(items, engine.Item{Label: label, Bytes: held})
 	}
 	return items, nil
 }

@@ -39,8 +39,11 @@ type simRuntimesNoXcode struct {
 	List func(ctx context.Context) (out []byte, ok bool, err error)
 	// Elsewhere reports an Xcode HasXcode cannot see, or a search that
 	// cannot rule one out. It takes seconds, so it runs only once there
-	// are runtimes to list; nil asks LaunchServices and Spotlight.
+	// are runtimes to list; nil asks LaunchServices and Spotlight,
+	// through run and dump when set.
 	Elsewhere func(ctx context.Context) bool
+	run       func(ctx context.Context, name string, args ...string) ([]byte, bool, error)
+	dump      func(ctx context.Context) ([]byte, error)
 }
 
 func (s *simRuntimesNoXcode) Runtimes(ctx context.Context) ([]engine.Item, error) {
@@ -60,8 +63,15 @@ func (s *simRuntimesNoXcode) Runtimes(ctx context.Context) ([]engine.Item, error
 		}
 	}
 	if elsewhere == nil {
+		run, dump := s.run, s.dump
+		if run == nil {
+			run = runTool
+		}
+		if dump == nil {
+			dump = lsregisterBundles
+		}
 		elsewhere = func(ctx context.Context) bool {
-			return xcodeElsewhere(ctx, defaultWalker, runTool, lsregisterBundles)
+			return xcodeElsewhere(ctx, defaultWalker, run, dump)
 		}
 	}
 	if hasSimctl(ctx) || hasXcode(ctx) {
