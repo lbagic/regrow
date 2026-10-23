@@ -1,11 +1,11 @@
 # Docker Desktop's unfinished update download: it stages an update in
 # ~/Library/Application Support/com.docker.install/in_progress and a
-# download that stopped stays there (2.15 GiB on one machine, two weeks
-# old). Not a container, image or volume; removing it stops nothing.
-# The docker-update-download query (internal/scanner/tool_dockerupdate.go)
-# lists the folder when its Docker.app is unfinished or not newer than
-# the installed one, nothing in it changed in the last day, and no
-# running process uses it. Caution all the same: never pre-selected.
+# download that stopped stays there. Not a container, image or volume;
+# removing it stops nothing. The docker-update-download query
+# (internal/scanner/tool_dockerupdate.go) lists the folder when its
+# Docker.app is unfinished or not newer than the installed one, nothing
+# in it changed in the last day, no running process uses it, and Docker
+# Desktop is not running. Caution all the same: never pre-selected.
 id: docker-update-download
 title: Docker Desktop's unfinished update download
 category: macos
@@ -19,6 +19,7 @@ keeps:
   - "a finished staged Docker.app when no Docker.app is installed to compare it with"
   - "a folder with anything in it changed in the last day: Docker Desktop may be downloading"
   - "a folder a running process executes or maps a file from, works in, or names on its command line"
+  - "the folder while Docker Desktop runs (a process executes from the installed Docker.app): it may be downloading the update"
   - "a folder with no Docker.app in it, and one that cannot all be read"
   - "everything, when an `Info.plist` cannot be read or names no version, or `lsof` or `ps` fails: the rule then shows an error and offers nothing"
 regen:

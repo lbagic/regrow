@@ -13,14 +13,13 @@ import (
 
 // Docker Desktop stages an update in
 // ~/Library/Application Support/com.docker.install/in_progress/Docker.app
-// and installs it from there; a download that stopped stays. One machine
-// held 2.15 GiB, a Docker.app with no Contents/Info.plist written two
-// weeks before, beside an installed Docker. It is not a container, an
-// image or a volume, and removing it stops nothing: Docker Desktop
-// downloads the update again. The folder is an item, to the Trash, when
-// the staged app is unfinished (no Info.plist) or not newer than the
-// installed one, nothing in it changed in the last day, and no running
-// process uses it. The docker-update-recheck pre-action judges it again
+// and installs it from there; a download that stopped stays. It is not a
+// container, an image or a volume, and removing it stops nothing: Docker
+// Desktop downloads the update again. The folder is an item, to the
+// Trash, when the staged app is unfinished (no Info.plist) or not newer
+// than the installed one, nothing in it changed in the last day, no
+// running process uses it, and Docker Desktop, which downloads it, is
+// not running. The docker-update-recheck pre-action judges it again
 // right before the move.
 
 const dockerUpdateQuiet = 24 * time.Hour
@@ -142,6 +141,13 @@ func (d *dockerUpdate) judge(ctx context.Context) (*engine.Item, string, error) 
 	for _, m := range mapped {
 		if within(m, real) || within(m, d.dir) {
 			return nil, "a running process uses " + m, nil
+		}
+	}
+	for _, m := range mapped {
+		for _, app := range d.apps {
+			if within(m, app) {
+				return nil, "Docker Desktop is running: it may be downloading the update", nil
+			}
 		}
 	}
 	u, found, err := d.w.usage(ctx, d.dir)

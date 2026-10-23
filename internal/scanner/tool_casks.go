@@ -8,8 +8,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
+	"syscall"
 
 	"github.com/lbagic/regrow/internal/engine"
 )
@@ -19,21 +21,38 @@ import (
 // the cask, its Caskroom folder and its shims. One brew call lists the
 // installed casks for two rules. A cask whose every app is gone from
 // where brew put it, /Applications and ~/Applications, is an item:
-// brew-cask-records offers `brew uninstall --cask <token>` when the
-// cask's uninstall steps ask for no password (none, or only quitting
-// the app), and brew-cask-records-sudo shows the rest, whose launchctl,
-// pkgutil, delete or script steps make brew ask for one. Never --zap:
-// that deletes the app's data with no Trash. A cask that installs no
-// app is left out, and so is one whose install record or app folder
-// cannot be read. The cask-record-recheck pre-action asks brew again
-// right before the uninstall.
+// brew-cask-records offers `brew uninstall --cask <token>` when nothing
+// its uninstall does may ask for a password, and brew-cask-records-sudo
+// shows the rest. Never --zap: that deletes the app's data with no
+// Trash. A cask that installs no app is left out, and so is one whose
+// install record or app folder cannot be read. The cask-record-recheck
+// pre-action asks brew again right before the uninstall.
+//
+// From Homebrew 7, each relocated artifact carries a sibling "target":
+// the absolute path brew resolved for it. It is no artifact kind.
 
-// plainArtifacts are the artifact kinds brew removes as the owner, with
-// no password; a cask with any other kind needs the owner at a terminal.
-var plainArtifacts = map[string]bool{
-	"app": true, "binary": true, "manpage": true, "bash_completion": true, "zsh_completion": true, "fish_completion": true,
-	"generate_completions_from_executable": true, "preflight_steps": true, "postflight_steps": true, "zap": true, "uninstall": true,
+// plainUninstallSteps are the uninstall steps brew runs with no
+// password: quitting or signalling the app, removing its login item.
+var plainUninstallSteps = map[string]bool{"quit": true, "signal": true, "login_item": true}
+
+// linkArtifacts are the kinds brew installs as a link or small file in
+// a folder; it removes one with sudo when that folder is not the
+// owner's to write. With no target set, the folder is brew's own.
+var linkArtifacts = map[string]bool{
+	"binary": true, "manpage": true, "bash_completion": true, "zsh_completion": true, "fish_completion": true,
+	"pwsh_completion": true, "command_wrapper": true,
 }
+
+// stepArtifacts hold install steps, which Homebrew 7 runs again at
+// uninstall.
+var stepArtifacts = map[string]bool{
+	"preflight_steps": true, "postflight_steps": true, "uninstall_preflight_steps": true, "uninstall_postflight_steps": true,
+}
+
+// plainArtifacts are the other kinds brew removes with no password:
+// completions it writes into its own folders, and zap, which a plain
+// uninstall never runs. Any kind not named here may ask for one.
+var plainArtifacts = map[string]bool{"generate_completions_from_executable": true, "zap": true}
 
 // caskRecords lists the installed casks once per scan for both rules.
 // Tests hand in brew, the home folder and the walker.
@@ -185,28 +204,37 @@ func (c *caskRecords) judge(ctx context.Context, caskroom string, cask installed
 	}
 	var apps []string
 	needsPassword := false
+	home := c.home()
 	for _, art := range cask.Artifacts {
+		resolved, err := resolvedTarget(art, home)
+		if err != nil {
+			return engine.Item{}, false, false, fmt.Errorf("cask %s: %w", cask.Token, err)
+		}
 		for kind, raw := range art {
-			if !plainArtifacts[kind] {
-				needsPassword = true
-			}
-			switch kind {
-			case "app":
-				target, err := appTarget(raw)
+			switch {
+			case kind == "target":
+			case kind == "app":
+				target, err := appTarget(raw, resolved)
 				if err != nil {
 					return engine.Item{}, false, false, fmt.Errorf("cask %s: %w", cask.Token, err)
 				}
 				apps = append(apps, target)
-			case "uninstall":
+			case kind == "uninstall":
 				var stanzas []map[string]json.RawMessage
 				if err := json.Unmarshal(raw, &stanzas); err != nil {
 					return engine.Item{}, false, false, fmt.Errorf("cask %s: its uninstall steps: %w", cask.Token, err)
 				}
 				for _, st := range stanzas {
 					for step := range st {
-						needsPassword = needsPassword || step != "quit"
+						needsPassword = needsPassword || !plainUninstallSteps[step]
 					}
 				}
+			case linkArtifacts[kind]:
+				needsPassword = needsPassword || c.linkNeedsPassword(ctx, raw, resolved)
+			case stepArtifacts[kind]:
+				needsPassword = needsPassword || stepsNeedPassword(raw)
+			case !plainArtifacts[kind]:
+				needsPassword = true
 			}
 		}
 	}
@@ -219,12 +247,11 @@ func (c *caskRecords) judge(ctx context.Context, caskroom string, cask installed
 		return engine.Item{}, false, false, nil
 	}
 	w := c.walker()
-	home := c.home()
 	for _, app := range apps {
 		if rest, ok := strings.CutPrefix(app, "~/"); ok {
 			app = filepath.Join(home, rest)
 		}
-		places := []string{app}
+		places := []string{app, filepath.Join("/Applications", filepath.Base(app)), filepath.Join(home, "Applications", filepath.Base(app))}
 		if !filepath.IsAbs(app) {
 			places = []string{filepath.Join(appdir, app), filepath.Join("/Applications", app), filepath.Join(home, "Applications", app)}
 		}
@@ -247,29 +274,123 @@ func (c *caskRecords) judge(ctx context.Context, caskroom string, cask installed
 	return engine.Item{Path: record, Arg: cask.Token, Label: label, Bytes: u.Bytes, LastUsed: u.Newest, Partial: u.Partial}, needsPassword, true, nil
 }
 
-// appTarget is where an app artifact puts the app, relative to the
-// app folder unless absolute or under ~: its target, or its own name.
-func appTarget(raw json.RawMessage) (string, error) {
+// resolvedTarget is the absolute path Homebrew 7 resolved for an
+// artifact, "" when brew printed none.
+func resolvedTarget(art map[string]json.RawMessage, home string) (string, error) {
+	raw, ok := art["target"]
+	if !ok {
+		return "", nil
+	}
+	var target string
+	if err := json.Unmarshal(raw, &target); err != nil {
+		return "", errors.New("an artifact target regrow cannot read")
+	}
+	if rest, ok := strings.CutPrefix(target, "~/"); ok {
+		target = filepath.Join(home, rest)
+	}
+	if !filepath.IsAbs(target) || climbs(target) {
+		return "", fmt.Errorf("an artifact target that is not a whole path: %q", target)
+	}
+	return filepath.Clean(target), nil
+}
+
+// appTarget is where an app artifact puts the app: brew's resolved
+// target when it printed one; else the target option, or the source's
+// own name, relative to the app folder unless absolute or under ~.
+func appTarget(raw json.RawMessage, resolved string) (string, error) {
 	var parts []json.RawMessage
 	if err := json.Unmarshal(raw, &parts); err != nil || len(parts) == 0 {
 		return "", errors.New("an app artifact regrow cannot read")
 	}
-	var name string
-	if err := json.Unmarshal(parts[0], &name); err != nil || name == "" {
+	var source string
+	if err := json.Unmarshal(parts[0], &source); err != nil || source == "" {
 		return "", errors.New("an app artifact with no name")
 	}
+	if resolved != "" {
+		return resolved, nil
+	}
+	name := filepath.Base(source)
+	if target := targetOption(parts); target != "" {
+		name = target
+	}
+	if climbs(name) || name == "." || name == "/" {
+		return "", fmt.Errorf("an app target that climbs out of its folder: %q", name)
+	}
+	return filepath.Clean(name), nil
+}
+
+// targetOption is the target an artifact's options name, "" for none.
+func targetOption(parts []json.RawMessage) string {
+	target := ""
 	for _, p := range parts[1:] {
 		var opts struct {
 			Target string `json:"target"`
 		}
 		if json.Unmarshal(p, &opts) == nil && opts.Target != "" {
-			name = opts.Target
+			target = opts.Target
 		}
 	}
-	if strings.Contains(name, "..") {
-		return "", fmt.Errorf("an app target that climbs out of its folder: %q", name)
+	return target
+}
+
+func climbs(path string) bool {
+	return slices.Contains(strings.Split(filepath.ToSlash(path), "/"), "..")
+}
+
+// linkNeedsPassword reports whether brew would use sudo to remove a
+// link artifact: its link is there, in a folder the owner cannot write.
+// One whose place cannot be told may.
+func (c *caskRecords) linkNeedsPassword(ctx context.Context, raw json.RawMessage, resolved string) bool {
+	target := resolved
+	if target == "" {
+		var parts []json.RawMessage
+		if err := json.Unmarshal(raw, &parts); err != nil || len(parts) == 0 {
+			return true
+		}
+		target = targetOption(parts)
+		if rest, ok := strings.CutPrefix(target, "~/"); ok {
+			target = filepath.Join(c.home(), rest)
+		}
+		if !filepath.IsAbs(target) {
+			return false
+		}
 	}
-	return filepath.Clean(name), nil
+	w := c.walker()
+	if _, err := w.lstat(ctx, target); absent(err) {
+		return false
+	} else if err != nil {
+		return true
+	}
+	dir := filepath.Dir(target)
+	_, err := bounded(ctx, w, dir, func() (struct{}, error) { return struct{}{}, syscall.Access(dir, accessWrite) })
+	return err != nil
+}
+
+// accessWrite is access(2)'s W_OK.
+const accessWrite = 0x2
+
+// stepsNeedPassword reports whether install steps may use sudo, as
+// brew judges them: a step marked sudo, or one that sets ownership or
+// deletes a keychain certificate. Steps that cannot be read may.
+func stepsNeedPassword(raw json.RawMessage) bool {
+	var blocks []struct {
+		Steps []struct {
+			Sudo json.RawMessage `json:"sudo"`
+			Type string          `json:"type"`
+		} `json:"steps"`
+	}
+	if err := json.Unmarshal(raw, &blocks); err != nil {
+		return true
+	}
+	for _, b := range blocks {
+		for _, st := range b.Steps {
+			sudo := strings.TrimSpace(string(st.Sudo))
+			if (sudo != "" && sudo != "false" && sudo != "null") || st.Type == "set_ownership" || st.Type == "delete_keychain_certificate" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // appdir is the app folder brew installed the cask's apps into, from

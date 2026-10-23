@@ -124,7 +124,7 @@ func TestSupersededCodexReleases(t *testing.T) {
 			old:    "a running process uses",
 			older:  "a running process works in it or names it",
 			newer:  "newer than the build in use",
-			odd:    "newer than the build in use",
+			odd:    "cannot be ordered against the build in use",
 			recent: "changed in the last day",
 		} {
 			if !strings.Contains(whys[name], want) {
@@ -230,6 +230,39 @@ func TestSupersededCursorAgentVersions(t *testing.T) {
 	link(t, filepath.Join(store.dir, old, "bin", "tool"), store.pointers[1])
 	if items, _, err := newTestBuilds(store).scan(context.Background()); err != nil || len(items) != 0 {
 		t.Errorf("items %q, err %v; want nothing with both builds linked", labels(items), err)
+	}
+}
+
+// A build whose number is the live one's under another name, a release
+// of the same version or a build of the same day, cannot be ordered
+// against it.
+func TestSupersededSameNumber(t *testing.T) {
+	for _, tc := range []struct {
+		store       func(string) buildStore
+		live, other string
+		target      string // what the link names inside the live build
+	}{
+		{codexReleases, "0.164.0-alpha.2-aarch64-apple-darwin", "0.164.0-aarch64-apple-darwin", ""},
+		{codexReleases, "0.164.0-aarch64-apple-darwin", "0.164.0-alpha.2-aarch64-apple-darwin", ""},
+		{cursorAgentVersions, "2026.08.11-e8db854", "2026.08.11-0a1b2c3", "bin/tool"},
+	} {
+		t.Run(tc.other, func(t *testing.T) {
+			store := tc.store(t.TempDir())
+			for _, v := range []string{tc.live, tc.other} {
+				plantBuild(t, filepath.Join(store.dir, v), 72*time.Hour)
+			}
+			link(t, filepath.Join(store.dir, tc.live, tc.target), store.pointers[0])
+			items, kept, err := newTestBuilds(store).scan(context.Background())
+			if err != nil || len(items) != 0 {
+				t.Errorf("items %q, err %v; want %s kept", labels(items), err, tc.other)
+			}
+			if len(kept) != 1 || !strings.Contains(kept[0].why, "cannot be ordered") {
+				t.Errorf("kept %+v; want it kept as not comparable with %s", kept, tc.live)
+			}
+		})
+	}
+	if !newerBuild("0.164.1-aarch64-apple-darwin", "0.164.0-aarch64-apple-darwin") || newerBuild("0.163.9-aarch64-apple-darwin", "0.164.0-alpha.2-aarch64-apple-darwin") {
+		t.Error("builds of different numbers are not ordered by number")
 	}
 }
 

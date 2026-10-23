@@ -110,6 +110,127 @@ func TestCaskRecords(t *testing.T) {
 	}
 }
 
+// oneCask is a single installed cask brew describes as js, its record's
+// appdir <root>/Apps, the apps named in present installed there, and
+// <apps>, <root> and <home> in js standing for those folders.
+func oneCask(t *testing.T, js string, present ...string) *caskRecords {
+	t.Helper()
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	caskroom := filepath.Join(root, "Caskroom")
+	apps := filepath.Join(root, "Apps")
+	writeFile(t, filepath.Join(caskroom, "c", "1.0", "marker"), 2048)
+	writeText(t, filepath.Join(caskroom, "c", ".metadata", "config.json"), `{"default":{"appdir":"`+apps+`"},"env":{},"explicit":{}}`)
+	if err := os.MkdirAll(apps, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, app := range present {
+		writeFile(t, filepath.Join(root, app, "Contents", "Info.plist"), 10)
+	}
+	js = strings.NewReplacer("<apps>", apps, "<root>", root, "<home>", home).Replace(js)
+	return &caskRecords{Home: home, w: testWalker(), Brew: func(_ context.Context, args ...string) ([]byte, bool, error) {
+		switch strings.Join(args, " ") {
+		case "info --cask --json=v2 --installed":
+			return []byte(`{"casks":[{"token":"c","installed":"1.0","artifacts":[` + js + `]}]}`), true, nil
+		case "--caskroom":
+			return []byte(caskroom + "\n"), true, nil
+		}
+		return nil, false, errors.New("unexpected brew " + strings.Join(args, " "))
+	}}
+}
+
+// Homebrew 7 prints each relocated artifact's resolved target beside it.
+// That is where the app is, and not an artifact kind.
+func TestCaskJudge(t *testing.T) {
+	const (
+		quit   = `{"uninstall":[{"quit":"dev.example.c"}]}`
+		app7   = `{"app":["Regrow Test C.app"],"target":"<apps>/Regrow Test C.app"}`
+		appOld = `{"app":["Regrow Test C.app"]}`
+	)
+	cases := []struct {
+		name    string
+		js      string
+		present []string // under <root>
+		links   []string // files under <root>, the links brew made
+		roDir   bool     // <root>/ro is not the owner's to write
+		want    string   // "plain", "sudo" or "" (not listed)
+	}{
+		{name: "quit only, brew 7", js: quit + `,` + app7 + `,{"zap":[{"trash":["~/Library/x"]}]}`, want: "plain"},
+		{name: "quit only, before brew 7", js: quit + `,` + appOld, want: "plain"},
+		{name: "the app installed, brew 7", js: quit + `,` + app7, present: []string{"Apps/Regrow Test C.app"}},
+		{name: "an app in a subfolder, installed under its own name, before brew 7",
+			js: quit + `,{"app":["Regrow Test Folder/Regrow Test C.app"]}`, present: []string{"Apps/Regrow Test C.app"}},
+		{name: "an app in a subfolder, installed under its own name, brew 7",
+			js: quit + `,{"app":["Regrow Test Folder/Regrow Test C.app"],"target":"<apps>/Regrow Test C.app"}`, present: []string{"Apps/Regrow Test C.app"}},
+		{name: "an app in a subfolder, gone", js: quit + `,{"app":["Regrow Test Folder/Regrow Test C.app"]}`, want: "plain"},
+		{name: "a target brew resolved outside the app folder, installed",
+			js: quit + `,{"app":["Regrow Test C.app",{"target":"<root>/Other/C.app"}],"target":"<root>/Other/C.app"}`, present: []string{"Other/C.app"}},
+		{name: "an app moved to ~/Applications", js: quit + `,` + app7, present: []string{"home/Applications/Regrow Test C.app"}},
+		{name: "signal only", js: `{"uninstall":[{"signal":["TERM","dev.example.c"]}]},` + app7, want: "plain"},
+		{name: "quit and a login item", js: `{"uninstall":[{"quit":"dev.example.c","login_item":"C"}]},` + app7, want: "plain"},
+		{name: "launchctl", js: `{"uninstall":[{"launchctl":"dev.example.helper","quit":"dev.example.c"}]},` + app7, want: "sudo"},
+		{name: "a binary in a folder brew writes", links: []string{"bin/c"},
+			js: quit + `,` + app7 + `,{"binary":["<apps>/Regrow Test C.app/Contents/MacOS/c"],"target":"<root>/bin/c"}`, want: "plain"},
+		{name: "a binary in a folder the owner cannot write, brew 7", links: []string{"ro/c"}, roDir: true,
+			js: quit + `,` + app7 + `,{"binary":["<apps>/Regrow Test C.app/Contents/MacOS/c",{"target":"<root>/ro/c"}],"target":"<root>/ro/c"}`, want: "sudo"},
+		{name: "a binary in a folder the owner cannot write, before brew 7", links: []string{"ro/c"}, roDir: true,
+			js: quit + `,` + appOld + `,{"binary":["<apps>/Regrow Test C.app/Contents/MacOS/c",{"target":"<root>/ro/c"}]}`, want: "sudo"},
+		{name: "a binary already gone from a folder the owner cannot write", links: []string{"ro/other"}, roDir: true,
+			js: quit + `,` + app7 + `,{"binary":["<apps>/Regrow Test C.app/Contents/MacOS/c"],"target":"<root>/ro/c"}`, want: "plain"},
+		{name: "a binary under brew's own folder, before brew 7", js: quit + `,` + appOld + `,{"binary":["<apps>/Regrow Test C.app/Contents/MacOS/c"]}`, want: "plain"},
+		{name: "a manual page in a folder the owner cannot write", links: []string{"ro/c.1"}, roDir: true,
+			js: quit + `,` + app7 + `,{"manpage":["<apps>/Regrow Test C.app/c.1"],"target":"<root>/ro/c.1"}`, want: "sudo"},
+		{name: "install steps that may use sudo", js: quit + `,` + app7 +
+			`,{"postflight_steps":[{"steps":[{"source":{"path":"{{appdir}}/x"},"target":{"path":"/usr/local/bin/x"},"uninstall":true,"sudo":"if_needed","type":"symlink"}]}]}`, want: "sudo"},
+		{name: "install steps that set ownership", js: quit + `,` + app7 + `,{"preflight_steps":[{"steps":[{"paths":["x"],"type":"set_ownership"}]}]}`, want: "sudo"},
+		{name: "install steps with no sudo", js: quit + `,` + app7 +
+			`,{"postflight_steps":[{"steps":[{"paths":[{"base":"staged_path","path":"c"}],"permissions":"0755","type":"set_permissions"}]}]}`, want: "plain"},
+		{name: "install steps regrow cannot read", js: quit + `,` + app7 + `,{"postflight_steps":{"steps":1}}`, want: "sudo"},
+		{name: "a pkg", js: quit + `,` + app7 + `,{"pkg":["C.pkg"]}`, want: "sudo"},
+		{name: "a flight block", js: quit + `,` + app7 + `,{"uninstall_postflight":null}`, want: "sudo"},
+		{name: "a command wrapper in a folder brew writes", links: []string{"bin/c"}, js: quit + `,` + app7 + `,{"command_wrapper":["c",{"executable":"<apps>/Regrow Test C.app/Contents/MacOS/c"}],"target":"<root>/bin/c"}`, want: "plain"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := oneCask(t, tc.js, tc.present...)
+			root := filepath.Dir(c.Home)
+			for _, l := range tc.links {
+				writeFile(t, filepath.Join(root, l), 10)
+			}
+			if tc.roDir {
+				if os.Geteuid() == 0 {
+					t.Skip("root writes every folder")
+				}
+				ro := filepath.Join(root, "ro")
+				if err := os.Chmod(ro, 0o555); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = os.Chmod(ro, 0o755) })
+			}
+			plain, err := c.Plain(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			sudo, err := c.NeedsPassword(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := ""
+			switch {
+			case len(plain)+len(sudo) > 1:
+				t.Fatalf("plain %q, sudo %q: listed twice", caskTokens(plain), caskTokens(sudo))
+			case len(plain) == 1:
+				got = "plain"
+			case len(sudo) == 1:
+				got = "sudo"
+			}
+			if got != tc.want {
+				t.Errorf("listed as %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestCaskRecordsBrew(t *testing.T) {
 	c := &caskRecords{w: testWalker(), Brew: func(context.Context, ...string) ([]byte, bool, error) { return nil, false, nil }}
 	if items, err := c.Plain(context.Background()); err != nil || len(items) != 0 {
@@ -124,8 +245,7 @@ func TestCaskRecordsBrew(t *testing.T) {
 }
 
 // The uninstall counts as done only once brew no longer lists the cask:
-// brew has returned 0 and kept the record (microsoft-edge, purging
-// another version's folder).
+// brew has returned 0 and kept the record.
 func TestCaskUninstallChecksTheRecord(t *testing.T) {
 	r := catalogRule(t, "brew-cask-records")
 	argv, err := r.NativeCommand.ExpandItem(engine.Item{Arg: "gone-plain"})

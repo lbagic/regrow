@@ -58,6 +58,10 @@ func TestDockerUpdateDownload(t *testing.T) {
 			procs: processes{cwds: []string{"<dir>/Docker.app"}}, why: "works in it"},
 		{name: "a process running from it", fx: fixture{installed: "4.93.0", age: 6 * 24 * time.Hour},
 			mapped: []string{"<dir>/Docker.app/Contents/MacOS/install"}, why: "a running process uses"},
+		{name: "Docker Desktop running", fx: fixture{installed: "4.93.0", age: 6 * 24 * time.Hour},
+			mapped: []string{"<app>/Contents/MacOS/com.docker.backend"}, why: "Docker Desktop is running"},
+		{name: "Docker Desktop running, nothing in the folder newer", fx: fixture{staged: "4.93.0", installed: "4.93.0", age: 6 * 24 * time.Hour},
+			mapped: []string{"<app>/Contents/MacOS/Docker Desktop.app/Contents/MacOS/Docker Desktop"}, why: "Docker Desktop is running"},
 		{name: "no Docker.app in it", fx: fixture{noApp: true, age: 6 * 24 * time.Hour},
 			why: "holds no Docker.app"},
 		{name: "a staged version that does not parse", fx: fixture{staged: "next", installed: "4.93.0", age: 6 * 24 * time.Hour},
@@ -74,7 +78,7 @@ func TestDockerUpdateDownload(t *testing.T) {
 			fix := func(list []string) []string {
 				var out []string
 				for _, s := range list {
-					out = append(out, strings.ReplaceAll(s, "<dir>", d.dir))
+					out = append(out, strings.NewReplacer("<dir>", d.dir, "<app>", d.apps[0]).Replace(s))
 				}
 				return out
 			}

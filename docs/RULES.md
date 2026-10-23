@@ -390,13 +390,13 @@ Installed SDKs and tool versions.
 
 **Homebrew casks whose app is gone** · caution · beta · [`rules/brew-cask-records.yaml`](../rules/brew-cask-records.yaml)
 
-- **Looks at:** `brew info --cask --json=v2 --installed` and `brew --caskroom` (with `HOMEBREW_NO_AUTO_UPDATE=1`); each cask's install record, `<Caskroom>/<token>/.metadata/config.json`, for the folder it put its apps in; whether each app is in that folder, `/Applications` or `~/Applications`; the size of each listed cask's Caskroom folder.
+- **Looks at:** `brew info --cask --json=v2 --installed` and `brew --caskroom` (with `HOMEBREW_NO_AUTO_UPDATE=1`); each cask's install record, `<Caskroom>/<token>/.metadata/config.json`, for the folder it put its apps in; whether each app is where brew put it, in `/Applications` or in `~/Applications`; whether each command, manual page or completion brew linked outside its own folders is there, and whether you can write its folder; the size of each listed cask's Caskroom folder.
 - **Removed by:** `/bin/sh -c 'brew uninstall --cask "$1" || exit; list=$(brew list --cask -1) || { echo "brew list failed after the uninstall" >&2; exit 1; }; if printf "%s\n" "$list" | grep -qxF -- "$1"; then echo "brew still lists cask $1 after its uninstall" >&2; exit 1; fi' sh {arg}`, once per item; `{arg}` is the item as the tool names it. It deletes for good: `regrow undo` cannot bring it back. Right before each removal, regrow asks brew about the cask again and leaves it installed unless its app is still gone and its uninstall still asks for no password.
 - **Keeps:**
   - A cask with any of its apps in its app folder, `/Applications` or `~/Applications`, or one that cannot be checked there.
   - A cask that installs no app: command-line tools, fonts, installer packages.
   - A cask whose install record cannot be read, or whose app folder is not there (a disk not mounted).
-  - A cask whose uninstall asks for a password: `brew-cask-records-sudo` shows it.
+  - A cask whose uninstall may ask for a password: `brew-cask-records-sudo` shows it. That is any uninstall step but quitting or signalling the app and removing its login item, install steps marked sudo, a link in a folder you cannot write, an installer package, a script, or a kind regrow does not know.
 - **Comes back:** Reinstall the app with brew if you want it back: `brew install --cask <token>`. Cost: nothing; the app is already gone, and its data stays (no --zap).
 
 ### brew-cask-records-sudo
@@ -408,7 +408,7 @@ Installed SDKs and tool versions.
 - **Keeps:**
   - Every cask `brew-cask-records` keeps, and every one it offers.
 - **Comes back:** Reinstall the app with brew if you want it back: `brew install --cask <token>`. Cost: n/a — regrow never runs the uninstall here.
-- **Note:** Each of these casks' uninstall steps make brew ask for your password. To remove one, in a terminal: `brew uninstall --cask <token>`. Then check it is gone: `brew list --cask`. If brew still lists it, run: `brew uninstall --cask --force <token>`.
+- **Note:** brew may ask for your password to uninstall each of these casks. To remove one, in a terminal: `brew uninstall --cask <token>`. Then check it is gone: `brew list --cask`. If brew still lists it, run: `brew uninstall --cask --force <token>`.
 
 ### codex-releases
 
@@ -419,7 +419,7 @@ Installed SDKs and tool versions.
 - **Keeps:**
   - The release the `current` link leads into.
   - A release a running process executes or maps a file from, works in, or names on its command line.
-  - A release newer than the one in use, or one whose version cannot be compared with it: an update may be waiting.
+  - A release newer than the one in use, or one whose version cannot be ordered against it (no dotted version, or the same one under another name, such as a pre-release): an update may be waiting.
   - A release with anything in it changed in the last day, and one that cannot all be read.
   - Every release when `current` is missing, leads nowhere, or leads outside the folder, since the release in use cannot be told.
   - Everything, when `lsof` or `ps` fails: the rule then shows an error and offers nothing.
@@ -434,7 +434,7 @@ Installed SDKs and tool versions.
 - **Keeps:**
   - Every build either link leads into.
   - A build a running process executes or maps a file from, works in, or names on its command line.
-  - A build newer than the one in use, or one whose version cannot be compared with it: an update may be waiting.
+  - A build newer than the one in use, or one whose version cannot be ordered against it (no dated version, or the same date): an update may be waiting.
   - A build with anything in it changed in the last day, and one that cannot all be read.
   - Every build when neither link is there, or one leads nowhere or outside the folder, since the build in use cannot be told.
   - Everything, when `lsof` or `ps` fails: the rule then shows an error and offers nothing.
@@ -685,6 +685,7 @@ System caches, logs, downloads and the Trash.
   - A finished staged Docker.app when no Docker.app is installed to compare it with.
   - A folder with anything in it changed in the last day: Docker Desktop may be downloading.
   - A folder a running process executes or maps a file from, works in, or names on its command line.
+  - The folder while Docker Desktop runs (a process executes from the installed Docker.app): it may be downloading the update.
   - A folder with no Docker.app in it, and one that cannot all be read.
   - Everything, when an `Info.plist` cannot be read or names no version, or `lsof` or `ps` fails: the rule then shows an error and offers nothing.
 - **Comes back:** Docker Desktop downloads its update again when it next checks for one. Cost: a download of about 2 GB when Docker Desktop updates.

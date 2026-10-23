@@ -129,3 +129,11 @@ func TestShellJoinPastesAsTheArgv(t *testing.T) {
 		t.Errorf("a shell reads %s\nas %q,\nwant %q", line, got, argv)
 	}
 }
+
+func TestEveryPreActionReadsAsWords(t *testing.T) {
+	for _, p := range engine.KnownPreActions() {
+		if s := ActionCommand(engine.Action{Command: []string{"x"}, PreAction: p}); strings.Contains(s, "(pre: ") {
+			t.Errorf("%s renders as %q, the hook's raw name", p, s)
+		}
+	}
+}

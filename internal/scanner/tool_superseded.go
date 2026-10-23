@@ -215,10 +215,12 @@ func (s *supersededBuilds) judge(ctx context.Context, name, real string, live ma
 		}
 	}
 	for l := range live {
-		if !newerBuild(name, l) {
-			continue
+		switch {
+		case !comparableBuilds(name, l):
+			return engine.Item{}, "it cannot be ordered against the build in use, " + l + ": it may be an update waiting", true, nil
+		case newerBuild(name, l):
+			return engine.Item{}, "it is newer than the build in use, " + l + ": an update may be waiting", true, nil
 		}
-		return engine.Item{}, "it is newer than the build in use, " + l + ": an update may be waiting", true, nil
 	}
 	u, found, err := s.w.usage(ctx, path)
 	switch {
@@ -234,16 +236,25 @@ func (s *supersededBuilds) judge(ctx context.Context, name, real string, live ma
 	return engine.Item{Path: path, Label: s.store.tool + " " + name, Bytes: u.Bytes, LastUsed: u.Newest}, "", true, nil
 }
 
-// newerBuild reports whether build's version, the dotted number its
-// name starts with, is above the live build's, or cannot be compared
-// with it.
+// buildNumber is the dotted number a build's name starts with.
+func buildNumber(name string) (string, bool) {
+	n, _, _ := strings.Cut(name, "-")
+	return n, dottedVersionRe.MatchString(n)
+}
+
+// comparableBuilds reports whether two builds can be ordered by their
+// numbers: both have one, and they differ.
+func comparableBuilds(build, live string) bool {
+	b, okB := buildNumber(build)
+	l, okL := buildNumber(live)
+	return okB && okL && engine.CompareVersion(b, l) != 0
+}
+
+// newerBuild reports whether build's number is above the live build's.
 func newerBuild(build, live string) bool {
-	b, _, _ := strings.Cut(build, "-")
-	l, _, _ := strings.Cut(live, "-")
-	if !dottedVersionRe.MatchString(b) || !dottedVersionRe.MatchString(l) {
-		return true
-	}
-	return engine.CompareVersion(b, l) > 0
+	b, _ := buildNumber(build)
+	l, _ := buildNumber(live)
+	return comparableBuilds(build, live) && engine.CompareVersion(b, l) > 0
 }
 
 // recheck judges one build again, as the pre-action does.

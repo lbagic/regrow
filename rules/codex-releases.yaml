@@ -3,7 +3,7 @@
 # the one its `current` link names. The codex-releases query
 # (internal/scanner/tool_superseded.go) lists every other release,
 # unless a running process uses it, it is newer than the live one, or
-# it changed in the last day. 0.93 GiB in three releases on one machine.
+# it changed in the last day.
 id: codex-releases
 title: Old Codex app server releases
 category: toolchains
@@ -16,7 +16,7 @@ scans: "the folders in `~/.codex/packages/app-server-daemon/releases`, with each
 keeps:
   - "the release the `current` link leads into"
   - "a release a running process executes or maps a file from, works in, or names on its command line"
-  - "a release newer than the one in use, or one whose version cannot be compared with it: an update may be waiting"
+  - "a release newer than the one in use, or one whose version cannot be ordered against it (no dotted version, or the same one under another name, such as a pre-release): an update may be waiting"
   - "a release with anything in it changed in the last day, and one that cannot all be read"
   - "every release when `current` is missing, leads nowhere, or leads outside the folder, since the release in use cannot be told"
   - "everything, when `lsof` or `ps` fails: the rule then shows an error and offers nothing"
