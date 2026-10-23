@@ -7,7 +7,8 @@ paths:
   darwin:
     - "~/.bun/install/cache"
 unless_running:
-  commands: [bun]
+  # bun installed through npm runs as bin/bun.exe.
+  commands: [bun, bun.exe]
 pre_action: running-recheck
 regen:
   story: "bun downloads a package again on the next install that needs it."

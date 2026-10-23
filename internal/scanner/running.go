@@ -58,30 +58,58 @@ func (s *runningSet) keeps(ctx context.Context, u engine.UnlessRunning, path str
 				return "", err
 			}
 			for _, id := range u.Apps {
-				if slices.Contains(texts, id) {
+				if slices.ContainsFunc(texts, func(t string) bool { return strings.EqualFold(t, id) }) {
 					return "the app " + id + " is running (" + bundle + ")", nil
 				}
 			}
 		}
 	}
 	if u.Inside && path != "" {
-		if s.procs.workIn(path) {
+		return s.inside(ctx, path)
+	}
+	return "", nil
+}
+
+// inside says why a process keeps path: it works in it, names it, or
+// executes or maps a file from it, spelled as the rule spells it or as
+// links resolve it, which is how lsof prints it.
+func (s *runningSet) inside(ctx context.Context, path string) (string, error) {
+	real, err := bounded(ctx, s.w, path, func() (string, error) { return filepath.EvalSymlinks(path) })
+	switch {
+	case absent(err):
+		real = path
+	case err != nil:
+		return "its real path cannot be read, so no process can be matched to it", nil
+	}
+	if escapedByTools(path) || escapedByTools(real) {
+		return "lsof and ps would not print its path as it is, so no process can be matched to it", nil
+	}
+	for _, p := range []string{path, real} {
+		if s.procs.workIn(p) {
 			return "a running process works in it or names it", nil
 		}
-		if slices.ContainsFunc(s.mapped, func(m string) bool { return within(m, path) }) {
+		if slices.ContainsFunc(s.mapped, func(m string) bool { return within(m, p) }) {
 			return "a running process executes or maps a file from it", nil
 		}
 	}
 	return "", nil
 }
 
-// bundles are the folders before the first /Contents/ of each mapped
-// file: the app bundle a process runs from, a helper's included.
+// bundles are the folders before each /Contents/ of each mapped file:
+// the app bundle a process runs from, a helper's included, and the app
+// whose bundle holds that one.
 func (s *runningSet) bundles() []string {
 	var out []string
 	for _, m := range s.mapped {
-		if i := strings.Index(m, "/Contents/"); i > 0 && !slices.Contains(out, m[:i]) {
-			out = append(out, m[:i])
+		for i := 0; ; {
+			j := strings.Index(m[i:], "/Contents/")
+			if j < 0 {
+				break
+			}
+			if b := m[:i+j]; b != "" && !slices.Contains(out, b) {
+				out = append(out, b)
+			}
+			i += j + len("/Contents")
 		}
 	}
 	return out
@@ -98,7 +126,7 @@ func (s *runningSet) infoPlist(ctx context.Context, bundle string) ([]string, er
 	if _, read := s.plistOK[bundle]; read {
 		return s.plists[bundle], nil
 	}
-	if strings.Contains(bundle, `\x`) {
+	if strings.Contains(bundle, `\`) {
 		return nil, fmt.Errorf("lsof escaped an app's path (%s), so the app cannot be told", bundle)
 	}
 	p := filepath.Join(bundle, "Contents", "Info.plist")
@@ -167,6 +195,8 @@ func recheckRunning(ctx context.Context, r engine.Rule, path string, read func(c
 	if r.UnlessRunning == nil {
 		return errors.New(r.ID + " names nothing to check as running")
 	}
+	ctx, cancel := context.WithTimeout(ctx, toolQueryTimeout)
+	defer cancel()
 	set, err := read(ctx)
 	if err != nil {
 		return fmt.Errorf("kept while the running processes cannot be read: %w", err)

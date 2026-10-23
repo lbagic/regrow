@@ -316,8 +316,7 @@ type Rule struct {
 	Keeps []string `yaml:"keeps" json:"keeps,omitempty"`
 	// UnlessRunning keeps the rule's items while what uses them runs.
 	// Its pre_action is PreActionRunningRecheck. Not serialized: the
-	// recheck reads it from the catalog, and the protocol's rule stays
-	// as it was.
+	// recheck reads it from the catalog by rule id.
 	UnlessRunning *UnlessRunning `yaml:"unless_running" json:"-"`
 	// Fixture is the rule's golden-test data; never serialized to JSON.
 	Fixture *Fixture `yaml:"fixture" json:"-"`
@@ -497,6 +496,9 @@ func (r Rule) Validate() error {
 		}
 		if slices.Contains(u.Apps, "") || slices.Contains(u.Commands, "") {
 			errs = append(errs, "unless_running must not contain empty names")
+		}
+		if slices.ContainsFunc(u.Commands, func(c string) bool { return strings.Contains(c, "/") }) {
+			errs = append(errs, "unless_running commands are file names, not paths: a running program is matched by its executable's name")
 		}
 		if r.PreAction != PreActionRunningRecheck {
 			errs = append(errs, "unless_running requires pre_action "+PreActionRunningRecheck+", which checks again right before each move")

@@ -208,6 +208,14 @@ func TestValidate(t *testing.T) {
 			"unless_running must not contain empty names",
 		},
 		{
+			"unless_running with a command that is a path",
+			func(r *Rule) {
+				r.UnlessRunning = &UnlessRunning{Commands: []string{"bin/gopls"}}
+				r.PreAction = PreActionRunningRecheck
+			},
+			"unless_running commands are file names",
+		},
+		{
 			"unless_running on a native command",
 			func(r *Rule) {
 				r.NativeCommand = Argv{"tool", "rm", "{path}"}

@@ -1,11 +1,16 @@
-# The Battle.net launcher's browser caches.
+# The Battle.net launcher's browser caches. BrowserCaches/<account>
+# is a whole browser profile (cookies, local storage, service workers);
+# only its cache folders are named.
 id: battlenet-caches
 title: "Battle.net's caches"
 category: app-caches
 risk: safe
 paths:
   darwin:
-    - "~/Library/Application Support/Battle.net/BrowserCaches"
+    - "~/Library/Application Support/Battle.net/BrowserCaches/*/Cache"
+    - "~/Library/Application Support/Battle.net/BrowserCaches/*/Code Cache"
+    - "~/Library/Application Support/Battle.net/BrowserCaches/*/GPUCache"
+    - "~/Library/Application Support/Battle.net/BrowserCaches/*/DawnCache"
     - "~/Library/Application Support/Battle.net/Cache"
 unless_running:
   apps: [net.battle.app]

@@ -3,9 +3,11 @@ package scanner
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/lbagic/regrow/internal/engine"
 )
@@ -30,8 +32,24 @@ func TestRunningKeeps(t *testing.T) {
 	_, steam := appBundle(t, apps, "Steam.AppBundle/Steam", "com.valvesoftware.steam")
 	noPlist := filepath.Join(apps, "Tool.app", "Contents", "MacOS", "tool")
 	writeText(t, noPlist, "")
+	// Chrome ships its updater as an app inside its own bundle.
+	chrome, _ := appBundle(t, apps, "Google Chrome.app", "com.google.Chrome")
+	_, updater := appBundle(t, filepath.Join(chrome, "Contents", "Frameworks", "Google Chrome Framework.framework", "Versions", "1", "Helpers"), "GoogleUpdater.app", "com.google.GoogleUpdater")
 	cache := filepath.Join(t.TempDir(), "Caches", "bun")
 	gopls := filepath.Join(t.TempDir(), "go", "bin", "gopls")
+	// A cache reached through a linked folder, as lsof does not print it.
+	real := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(real, "chroma"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	linked := filepath.Join(t.TempDir(), ".cache")
+	if err := os.Symlink(real, linked); err != nil {
+		t.Fatal(err)
+	}
+	realChroma, err := filepath.EvalSymlinks(filepath.Join(real, "chroma"))
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	cases := []struct {
 		name   string
@@ -54,6 +72,12 @@ func TestRunningKeeps(t *testing.T) {
 		{"a process maps a file from it", engine.UnlessRunning{Inside: true}, []string{filepath.Join(cache, "lib.dylib")}, processes{}, cache, "maps a file from it"},
 		{"inside, but elsewhere", engine.UnlessRunning{Inside: true}, []string{gopls}, processes{cwds: []string{filepath.Dir(cache) + "/bun-other"}}, cache, ""},
 		{"inside is not asked", engine.UnlessRunning{Commands: []string{"bun"}}, nil, processes{cwds: []string{cache}}, cache, ""},
+		{"an app inside another app's bundle", engine.UnlessRunning{Apps: []string{"com.google.GoogleUpdater"}}, []string{updater}, processes{}, cache, "com.google.GoogleUpdater"},
+		{"an app id in another case", engine.UnlessRunning{Apps: []string{"com.tinyspeck.SlackMacGap"}}, []string{slack}, processes{}, cache, "is running"},
+		{"bun from npm", *catalogRule(t, "bun-cache").UnlessRunning, []string{"/usr/local/lib/node_modules/bun/bin/bun.exe"}, processes{}, cache, "is running"},
+		{"a file mapped from a linked item, as lsof prints it", engine.UnlessRunning{Inside: true}, []string{filepath.Join(realChroma, "onnx", "model")}, processes{}, filepath.Join(linked, "chroma"), "maps a file from it"},
+		{"working in a linked item, as lsof prints it", engine.UnlessRunning{Inside: true}, nil, processes{cwds: []string{realChroma}}, filepath.Join(linked, "chroma"), "works in it"},
+		{"an item tools would print escaped", engine.UnlessRunning{Inside: true}, nil, processes{}, filepath.Join(cache, "a\\b"), "no process can be matched"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -66,6 +90,15 @@ func TestRunningKeeps(t *testing.T) {
 				t.Errorf("keeps = %q, want %q", why, tc.want)
 			}
 		})
+	}
+}
+
+// lsof prints a backslash in a path doubled, so a bundle's Info.plist
+// cannot be read at the path it prints.
+func TestRunningKeepsBackslashBundle(t *testing.T) {
+	s := &runningSet{mapped: []string{`/Applications/Old\\Apps/Slack.app/Contents/MacOS/Slack`}, w: testWalker()}
+	if why, err := s.keeps(context.Background(), engine.UnlessRunning{Apps: []string{"com.hnc.Discord"}}, "/x"); err == nil {
+		t.Errorf("keeps = %q with no error, want the escaped bundle as an error", why)
 	}
 }
 
@@ -167,5 +200,53 @@ func TestRecheckRunning(t *testing.T) {
 	r.UnlessRunning = nil
 	if err := recheckRunning(context.Background(), r, item, free); err == nil {
 		t.Error("a rule with no guard: want a refusal")
+	}
+}
+
+// A wedged lsof or ps cannot hold the run past the tools' deadline.
+func TestRecheckRunningHasADeadline(t *testing.T) {
+	r := guardedRule(t.TempDir())
+	var left time.Duration
+	read := func(ctx context.Context) (*runningSet, error) {
+		d, ok := ctx.Deadline()
+		if !ok {
+			return nil, errors.New("no deadline")
+		}
+		left = time.Until(d)
+		return &runningSet{w: testWalker()}, nil
+	}
+	if err := recheckRunning(context.Background(), r, filepath.Join(t.TempDir(), "a"), read); err != nil || left <= 0 || left > toolQueryTimeout {
+		t.Errorf("err %v, %v left; want the processes read under toolQueryTimeout (%v)", err, left, toolQueryTimeout)
+	}
+}
+
+// Battle.net's BrowserCaches holds a browser profile per account; the
+// rule takes only its caches.
+func TestBattlenetLeavesTheBrowserProfile(t *testing.T) {
+	home := t.TempDir()
+	profile := filepath.Join(home, "Library/Application Support/Battle.net/BrowserCaches/12345")
+	for _, f := range []string{"Cookies", "Local Storage/leveldb/000003.log", "IndexedDB/https_x/1.log", "Service Worker/Database/MANIFEST-000001", "Session Storage/LOG",
+		"Cache/Cache_Data/data_0", "Code Cache/js/index", "GPUCache/data_0", "DawnCache/data_0"} {
+		writeFile(t, filepath.Join(profile, f), 4096)
+	}
+	s := New(engine.Host{OS: "darwin", Version: "15.7.7", Home: home})
+	s.Queries = nil
+	s.running = nothingRunning
+	f := s.Scan(context.Background(), []engine.Rule{catalogRule(t, "battlenet-caches")})[0]
+	if f.Err != "" {
+		t.Fatal(f.Err)
+	}
+	var got []string
+	for _, it := range f.Items {
+		rel, _ := filepath.Rel(profile, it.Path)
+		got = append(got, rel)
+		for _, kept := range []string{"Cookies", "Local Storage", "IndexedDB", "Service Worker", "Session Storage"} {
+			if within(filepath.Join(profile, kept), it.Path) {
+				t.Errorf("item %s takes the profile's %s", it.Path, kept)
+			}
+		}
+	}
+	if len(got) != 4 {
+		t.Errorf("items %q, want the profile's four caches", got)
 	}
 }

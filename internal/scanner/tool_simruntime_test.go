@@ -469,8 +469,6 @@ func TestSpotlightIndexes(t *testing.T) {
 	}
 }
 
-// The default wider search: Spotlight off for the startup disk, or an
-// Xcode in the register, keeps the runtimes.
 // With Elsewhere nil, Runtimes asks the wider search itself.
 func TestSimRuntimesSearchElsewhereByDefault(t *testing.T) {
 	enabled := func(context.Context, string, ...string) ([]byte, bool, error) {
@@ -503,6 +501,8 @@ func TestSimRuntimesSearchElsewhereByDefault(t *testing.T) {
 	}
 }
 
+// The default wider search: Spotlight off for the startup disk, or an
+// Xcode in the register, keeps the runtimes.
 func TestXcodeElsewhere(t *testing.T) {
 	enabled := func(context.Context, string, ...string) ([]byte, bool, error) {
 		return []byte("Indexing enabled."), true, nil
