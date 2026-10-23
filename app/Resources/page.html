@@ -537,8 +537,6 @@ function ago(t) {
 let home = null, homeDir = '';
 const tilde = (s) => (home ? String(s).replace(home, '$1~') : String(s));
 
-// tui.ShellJoin
-const shellJoin = (argv) => [].concat(argv || []).map((a) => (/[ \t"'*?[]/.test(a) ? JSON.stringify(a) : a)).join(' ');
 // One word as a shell reads it back, quoted as the engine's shellQuote quotes it.
 const shellWord = (s) => (/[ \t\n'"\\$`*?[\](){}<>|&;!#]/.test(s) ? "'" + s.replace(/'/g, "'\\''") + "'" : s);
 // A command as a shell reads it back, for the pasteboard, and as it is drawn: the home folder as ~ only in a
@@ -546,7 +544,10 @@ const shellWord = (s) => (/[ \t\n'"\\$`*?[\](){}<>|&;!#]/.test(s) ? "'" + s.repl
 const shellLine = (argv) => [].concat(argv || []).map(shellWord).join(' ');
 // A shell expands ~ only where it starts a word: after = or : it stays as written.
 const tildeWord = (w) => (homeDir && (w === homeDir || w.startsWith(homeDir + '/')) ? '~' + w.slice(homeDir.length) : w);
-const drawnLine = (argv) => [].concat(argv || []).map((w) => (shellWord(w) === w ? tildeWord(w) : shellWord(w))).join(' ');
+const drawnWord = (w) => (shellWord(w) === w ? tildeWord(w) : shellWord(w));
+const drawnLine = (argv) => [].concat(argv || []).map(drawnWord).join(' ');
+// A rule's command before an item fills it in, drawn as drawnLine draws it, a {path} or {arg} word as written.
+const ruleLine = (argv) => [].concat(argv || []).map((w) => (/^\{(path|arg)\}$/.test(w) ? w : drawnWord(w))).join(' ');
 // How regrow is started in Terminal, as the engine names itself: an app's engine goes by its path.
 const cli = () => shellWord((S.hello && S.hello.self) || 'regrow');
 
@@ -739,9 +740,9 @@ function entry(v, scale, fresh, small) {
   }
   const open = S.open.has('r' + row.n), each = !!row.select && !row.whole;
   const kept = rule.risk !== 'safe' && rule.risk !== 'caution';
-  const command = shellJoin(rule.native_command), runnable = !/\{(path|arg)\}/.test(command);
+  const runnable = ![].concat(rule.native_command || []).some((w) => /\{(path|arg)\}/.test(w));
   const shown = runnable ? h`<span class="mono">${unbroken(drawnLine(rule.native_command))}</span>${copy(shellLine(rule.native_command), 'command')}`
-    : h`<span class="mono">${unbroken(command)}</span>`;
+    : h`<span class="mono">${unbroken(ruleLine(rule.native_command))}</span>`;
   const runs = row.bucket === 'after_trash' ? 'Goes to the Trash; regrow undo restores it.'
     : row.bucket === 'exported' ? h`Runs ${shown} after a tarball goes to regrow staging, no undo.`
     : row.bucket !== 'frees_now' ? '' : rule.native_command ? h`Runs ${shown}, no undo.` : 'A command frees it, with no undo.';
