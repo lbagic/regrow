@@ -816,6 +816,23 @@ struct Scenario {
             r.expect(homeDir.hasPrefix("/"), "the transcript's backups name no home folder")
             let drawn = await r.js("return drawnLine([h + '/x', '--prefix=' + h + '/opt', '/usr/bin:' + h + '/bin', h])", ["h": homeDir]) as? String ?? ""
             r.same(drawn, "~/x --prefix=\(homeDir)/opt /usr/bin:\(homeDir)/bin ~", "a command drawn with the home folder after = and :")
+            // A rule's command that an item fills in has no Copy. It is drawn as a shell reads it, its {arg} or
+            // {path} word as written.
+            r.same(await r.text(".entry[data-rule=docker-volumes-named] .cost .mono"), "docker volume rm {arg}", "a rule's command an item fills in, drawn")
+            r.same(await r.count(".entry[data-rule=docker-volumes-named] .cost .copy"), 0, "Copy links beside a rule's command an item fills in")
+            let template = ["/bin/sh", "-c", #""$1" runtime delete "$2" || exit; n=$((n+1)); out=$("$1" list)"#, "sh", "/x/simctl", "{arg}"]
+            let ruled = shellLine(Array(template.dropLast())) + " {arg}"
+            r.same(await r.js("return ruleLine(argv)", ["argv": template]) as? String ?? "", ruled, "a rule's command an item fills in, its words quoted for a shell")
+            let volumes = "S.scan.rows.find((row) => row.id === 'docker-volumes-named').rule"
+            let recorded = await r.js("return \(volumes).native_command") as? [String] ?? []
+            r.same(recorded, ["docker", "volume", "rm", "{arg}"], "the volumes rule's recorded command")
+            _ = await r.js("\(volumes).native_command = argv", ["argv": template])
+            r.send([t.lines("hello")[0]])
+            await r.settle()
+            r.same(await r.text(".entry[data-rule=docker-volumes-named] .cost .mono"), ruled, "a row's command an item fills in, drawn")
+            _ = await r.js("\(volumes).native_command = argv", ["argv": recorded])
+            r.send([t.lines("hello")[0]])
+            await r.settle()
             // regrow quoted in a rule's text is started as the engine names itself.
             let named = await r.js("""
                 const d = document.createElement('div'); d.innerHTML = sentence('To see how to stop them: `regrow doctor`.').s;
