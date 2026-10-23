@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/lbagic/regrow/internal/engine"
@@ -144,10 +145,8 @@ func (d *dockerUpdate) judge(ctx context.Context) (*engine.Item, string, error) 
 		}
 	}
 	for _, m := range mapped {
-		for _, app := range d.apps {
-			if within(m, app) {
-				return nil, "Docker Desktop is running: it may be downloading the update", nil
-			}
+		if strings.Contains(foldName(m), "/docker.app/contents/") {
+			return nil, "Docker Desktop is running: it may be downloading the update", nil
 		}
 	}
 	u, found, err := d.w.usage(ctx, d.dir)

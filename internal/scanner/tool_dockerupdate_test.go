@@ -62,6 +62,8 @@ func TestDockerUpdateDownload(t *testing.T) {
 			mapped: []string{"<app>/Contents/MacOS/com.docker.backend"}, why: "Docker Desktop is running"},
 		{name: "Docker Desktop running, nothing in the folder newer", fx: fixture{staged: "4.93.0", installed: "4.93.0", age: 6 * 24 * time.Hour},
 			mapped: []string{"<app>/Contents/MacOS/Docker Desktop.app/Contents/MacOS/Docker Desktop"}, why: "Docker Desktop is running"},
+		{name: "Docker Desktop running from another folder", fx: fixture{installed: "4.93.0", age: 6 * 24 * time.Hour},
+			mapped: []string{"/Applications/Dev/Docker.app/Contents/MacOS/com.docker.backend"}, why: "Docker Desktop is running"},
 		{name: "no Docker.app in it", fx: fixture{noApp: true, age: 6 * 24 * time.Hour},
 			why: "holds no Docker.app"},
 		{name: "a staged version that does not parse", fx: fixture{staged: "next", installed: "4.93.0", age: 6 * 24 * time.Hour},

@@ -19,7 +19,7 @@ keeps:
   - "a finished staged Docker.app when no Docker.app is installed to compare it with"
   - "a folder with anything in it changed in the last day: Docker Desktop may be downloading"
   - "a folder a running process executes or maps a file from, works in, or names on its command line"
-  - "the folder while Docker Desktop runs (a process executes from the installed Docker.app): it may be downloading the update"
+  - "the folder while Docker Desktop runs (a process executes from a Docker.app, wherever it is): it may be downloading the update"
   - "a folder with no Docker.app in it, and one that cannot all be read"
   - "everything, when an `Info.plist` cannot be read or names no version, or `lsof` or `ps` fails: the rule then shows an error and offers nothing"
 regen:

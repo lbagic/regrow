@@ -2,8 +2,9 @@
 # or replaced under another name, and brew still lists the cask. The
 # brew-cask-records query (internal/scanner/tool_casks.go) lists a cask
 # whose every app is gone from the folder brew installed it into,
-# /Applications and ~/Applications, when nothing its uninstall does may
-# ask for a password; brew-cask-records-sudo shows the others.
+# /Applications and ~/Applications, when its uninstall only quits the
+# app and nothing it does may ask for a password;
+# brew-cask-records-sudo shows the others.
 #
 # brew has returned 0 from an uninstall and kept the record, so the
 # command checks `brew list --cask` afterwards and fails while the cask
@@ -22,12 +23,13 @@ native_command:
   - "{arg}"
 # brew is asked about the cask again right before its uninstall.
 pre_action: cask-record-recheck
-scans: "`brew info --cask --json=v2 --installed` and `brew --caskroom` (with `HOMEBREW_NO_AUTO_UPDATE=1`); each cask's install record, `<Caskroom>/<token>/.metadata/config.json`, for the folder it put its apps in; whether each app is where brew put it, in `/Applications` or in `~/Applications`; whether each command, manual page or completion brew linked outside its own folders is there, and whether you can write its folder; the size of each listed cask's Caskroom folder"
+scans: "`brew info --cask --json=v2 --installed` and `brew --caskroom` (with `HOMEBREW_NO_AUTO_UPDATE=1`); each cask's install record, `<Caskroom>/<token>/.metadata/config.json`, for the folder it put its apps in; whether each app is where brew put it, in `/Applications` or in `~/Applications`; whether each command, manual page or completion brew linked is there, and whether you can write its folder; the size of each listed cask's Caskroom folder"
 keeps:
   - "a cask with any of its apps in its app folder, `/Applications` or `~/Applications`, or one that cannot be checked there"
   - "a cask that installs no app: command-line tools, fonts, installer packages"
   - "a cask whose install record cannot be read, or whose app folder is not there (a disk not mounted)"
-  - "a cask whose uninstall may ask for a password: `brew-cask-records-sudo` shows it. That is any uninstall step but quitting or signalling the app and removing its login item, install steps marked sudo, a link in a folder you cannot write, an installer package, a script, or a kind regrow does not know"
+  - "a cask whose uninstall may ask for a password or does more than quit the app: `brew-cask-records-sudo` shows it. That is any uninstall step but quitting the app, uninstall steps of any kind, install steps marked sudo, a link in a folder you cannot write, an installer package, a script, or a kind regrow does not know"
+  - "a cask whose app brew placed with `..` in its path, or in a folder that is not there (a disk not mounted)"
 regen:
   story: "Reinstall the app with brew if you want it back: `brew install --cask <token>`."
   cost: nothing; the app is already gone, and its data stays (no --zap)

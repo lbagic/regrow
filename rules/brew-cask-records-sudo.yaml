@@ -1,14 +1,14 @@
 # Homebrew cask records whose app is gone and whose uninstall may make
 # brew ask for a password (launchctl, pkgutil, a delete, a script, a
-# link in a root-owned folder), which regrow cannot answer from the app.
-# The brew-cask-records query lists them for this rule; the note gives
-# the command to run in a terminal.
+# link in a root-owned folder), which regrow cannot answer from the app,
+# or does more than quit the app. The brew-cask-records query lists them
+# for this rule; the note gives the command to run in a terminal.
 id: brew-cask-records-sudo
-title: Homebrew casks whose app is gone (asks for a password)
+title: Homebrew casks whose app is gone (uninstall in a terminal)
 category: toolchains
 risk: surface-only
 tool_query: brew-cask-records-sudo
-note: "brew may ask for your password to uninstall each of these casks. To remove one, in a terminal: `brew uninstall --cask <token>`. Then check it is gone: `brew list --cask`. If brew still lists it, run: `brew uninstall --cask --force <token>`."
+note: "Uninstalling each of these casks may make brew ask for your password, or does more than quit the app: it stops a service, removes files or a login item, or signals the app. To remove one, in a terminal: `brew uninstall --cask <token>`. Then check it is gone: `brew list --cask`. If brew still lists it, run: `brew uninstall --cask --force <token>`."
 scans: "the casks `brew-cask-records` reads, in the same pass"
 keeps:
   - "every cask `brew-cask-records` keeps, and every one it offers"
