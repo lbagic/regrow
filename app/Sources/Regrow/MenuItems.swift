@@ -5,6 +5,7 @@ import SwiftUI
 /// What the menu's actions do.
 struct MenuActions {
     var open: () -> Void
+    var scan: () -> Void
     var setAutotrim: (Bool) -> Void
     var copy: (String) -> Void
     var openFullDiskAccess: () -> Void
@@ -29,6 +30,8 @@ enum MenuItems {
                 return .separator()
             case .open:
                 return ActionItem("Open regrow", actions.open)
+            case .scan:
+                return ActionItem("Scan", actions.scan)
             case .autotrim(let on):
                 // Its state is a figure, not a checkmark: a checkmark makes
                 // AppKit indent every item, out of line with the text rows.

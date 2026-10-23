@@ -39,7 +39,7 @@ struct MenuModelTests {
         #expect(abs(figures.taken - 0.858) < 0.001)
         #expect(abs(figures.purgeable - 0.008) < 0.001)
         #expect(Array(rows.dropFirst()) == [
-            .separator, .open, .separator, .autotrim(on: false), .separator, .fullDiskAccess("granted"), .separator, .quit,
+            .separator, .open, .scan, .separator, .autotrim(on: false), .separator, .fullDiskAccess("granted"), .separator, .quit,
         ])
     }
 
@@ -109,7 +109,7 @@ struct MenuModelTests {
             tick: try tick(#","staged_bytes":2254857830"#), failure: TickFailure(code: "autotrim_locked", message: Self.lock),
             autotrim: true, fda: "denied", environment: "the login shell gave no answer within 5 s"))
         for action: MenuRow in [
-            .open, .autotrim(on: true), .copy(Self.engine + " prune go-build --yes"), .openFullDiskAccess, .relaunch,
+            .open, .scan, .autotrim(on: true), .copy(Self.engine + " prune go-build --yes"), .openFullDiskAccess, .relaunch,
             .staging(2_254_857_830), .quit,
         ] {
             #expect(rows.contains(action), "\(action)")

@@ -109,6 +109,8 @@ struct Play {
     var helloSelf: String?               // the hello's self, in place of the recorded one
     var executeError: (code: String, message: String)?  // the answer to the next execute
     var clockStops = false               // the page's timers never fire
+    var opened = false                   // the window was opened with Open: the shell asks for no scan
+    var scanFirst = false                // the shell asks for a scan before it hands over the engine's hello
 }
 
 /// The window the page is drawn in: the size DESIGN.md draws it for, unless the environment asks otherwise.
@@ -447,9 +449,11 @@ final class Run: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHa
                 event["self"] = path
                 hello = json(event)
             }
+            if play.scanFirst { send(["event": "shell", "state": "scan"]) }
             send([hello])
             if let tick = play.tick { send([answering(tick, "shell-1")[0]]) }
             if let reason = play.environment { send(["event": "shell", "state": "environment", "captured": false, "reason": reason]) }
+            if !play.opened && !play.scanFirst { send(["event": "shell", "state": "scan"]) }
         case "automation":
             if let allowed = play.automation { send(["event": "shell", "state": "automation", "allowed": allowed]) }
         case "open-full-disk-access", "relaunch":
@@ -1225,6 +1229,33 @@ struct Scenario {
             r.send([r.transcript.lines("hello")[0]])
             await r.settle()
             r.same(r.sent("scan").count, scans, "scans after the same hello came again")
+            await results(r)
+            await r.shoot()
+        },
+        Scenario(name: "opened", play: Play(opened: true)) { r in
+            // Open shows the window and starts nothing: the tray offers the scan.
+            r.same(r.sent("scan").count, 0, "scans in a window opened with Open")
+            r.same(await r.text(".lead h2"), "No scan to show.", "the headline")
+            r.same(await r.text(".tray .say"), "A scan reads the disk and removes nothing.", "the tray")
+            r.same(await r.count(".top [data-do=scan]"), 0, "Scan again in the top bar with no scan")
+            await r.shoot()
+            await r.click(".tray [data-do=scan]")
+            await r.settle()
+            r.same(r.sent("scan").count, 1, "scans after the tray's Scan")
+            await results(r)
+        },
+        Scenario(name: "scan-before-hello", play: Play(scanFirst: true)) { r in
+            // The menu's Scan reaches a page whose engine has not said hello yet: the scan waits for it.
+            await results(r)
+            r.same(r.sent("scan").count, 1, "scans")
+            await r.shoot()
+        },
+        Scenario(name: "scan-asked-again") { r in
+            // The menu's Scan with the window open on a scan: a new one starts.
+            await results(r)
+            r.send(["event": "shell", "state": "scan"])
+            await r.settle()
+            r.same(r.sent("scan").count, 2, "scans after the menu's Scan")
             await results(r)
             await r.shoot()
         },
