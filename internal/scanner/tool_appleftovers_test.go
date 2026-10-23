@@ -990,6 +990,27 @@ func TestAppLeftoversEntitledPathsKeepFolders(t *testing.T) {
 // What could not be read is never claimed absent: an unreadable
 // ~/Library/Preferences is an error, and a location read in part is
 // named where it might have held a sign of the app.
+// A code bundle outside any app is named by itself in a row.
+func TestAppLeftoversEntitledPathsNameTheirBundle(t *testing.T) {
+	for name, bundle := range map[string]string{
+		"a service in a framework":    "/Volumes/Kit/Kit.framework/XPCServices/Svc.xpc",
+		"a plug-in in a plain folder": "/Volumes/code/site.app/Ext.appex",
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newLeftoversFixture(t)
+			b := f.app(bundle, "com.kit.part")
+			f.procs = []string{filepath.Join(b, "Contents", "MacOS", "part")}
+			f.ents[b] = `<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>com.apple.security.temporary-exception.files.home-relative-path.read-write</key><array><string>/Library/Application Support/org.toolbox.data/</string></array></dict></plist>`
+			shared := f.folder("Application Support", "org.toolbox.data")
+			f.folder("Containers", "org.toolbox.data")
+			_, kept := f.judge()
+			if why := keptWhy(kept, shared); !strings.Contains(why, "an entitlement of "+filepath.Base(bundle)) {
+				t.Errorf("kept for %q, want %s named", why, filepath.Base(bundle))
+			}
+		})
+	}
+}
+
 func TestAppLeftoversSayWhatCouldNotBeRead(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("root reads every folder")
@@ -1011,6 +1032,21 @@ func TestAppLeftoversSayWhatCouldNotBeRead(t *testing.T) {
 			t.Fatal(err)
 		}
 		chmod(t, byHost, 0)
+		if offered, _, err := f.a.judge(context.Background(), ""); err == nil {
+			t.Errorf("offered %v, want an error", paths(offered))
+		}
+	})
+	t.Run("a maker's file", func(t *testing.T) {
+		f := newLeftoversFixture(t)
+		f.folder("Containers", "com.locked.app")
+		f.write("~/Locked/com.locked.app.plist", "<plist/>")
+		if err := os.MkdirAll(f.host.ExpandPath("~/Library/Preferences"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(f.host.ExpandPath("~/Locked/com.locked.app.plist"), f.host.ExpandPath("~/Library/Preferences/com.locked.app.plist")); err != nil {
+			t.Fatal(err)
+		}
+		chmod(t, f.host.ExpandPath("~/Locked"), 0)
 		if offered, _, err := f.a.judge(context.Background(), ""); err == nil {
 			t.Errorf("offered %v, want an error", paths(offered))
 		}
@@ -1259,6 +1295,15 @@ func TestAppLeftoversMakersFilesShowUse(t *testing.T) {
 	if err := os.Symlink(f.host.ExpandPath("/Volumes/Sync/com.dangle.app.plist"), f.host.ExpandPath("~/Library/Preferences/com.dangle.app.plist")); err != nil {
 		t.Fatal(err)
 	}
+	twoLabels := f.folder("Containers", "net.domain.app")
+	f.write("~/Library/Preferences/net.domain.plist", "<plist/>")
+	f.touch(f.host.ExpandPath("~/Library/Preferences/net.domain.plist"), 2)
+	noHost := f.folder("Containers", "com.nohost.app")
+	f.write("~/Library/Preferences/ByHost/com.nohost.app.plist", "<plist/>")
+	f.touch(f.host.ExpandPath("~/Library/Preferences/ByHost/com.nohost.app.plist"), 1)
+	bare := f.folder("Group Containers", "ABCDE12345.com.bare")
+	f.write("~/Library/Application Support/ABCDE12345.com.bare", "state")
+	f.touch(f.host.ExpandPath("~/Library/Application Support/ABCDE12345.com.bare"), 1)
 	free := f.folder("Containers", "com.free.app")
 
 	offered, kept := f.judge()
@@ -1266,12 +1311,15 @@ func TestAppLeftoversMakersFilesShowUse(t *testing.T) {
 		t.Errorf("offered %v, want only %s", got, free)
 	}
 	for path, why := range map[string]string{
-		solo:     "Preferences/ABCDE12345.group.solo.plist",
-		duo:      "ByHost/ABCDE12345.group.duo.",
-		dangling: "Preferences/com.dangle.app.plist leads to nothing",
-		linked:   "Preferences/com.linked.app.plist",
-		byHost:   "ByHost/com.byhost.app.",
-		cookies:  "HTTPStorages/dev.deploy.cli.binarycookies",
+		solo:      "Preferences/ABCDE12345.group.solo.plist",
+		duo:       "ByHost/ABCDE12345.group.duo.",
+		dangling:  "Preferences/com.dangle.app.plist leads to nothing",
+		linked:    "Preferences/com.linked.app.plist",
+		byHost:    "ByHost/com.byhost.app.",
+		cookies:   "HTTPStorages/dev.deploy.cli.binarycookies",
+		twoLabels: "Preferences/net.domain.plist",
+		noHost:    "ByHost/com.nohost.app.plist",
+		bare:      "Application Support/ABCDE12345.com.bare,",
 	} {
 		if got := keptWhy(kept, path); !strings.Contains(got, why) {
 			t.Errorf("%s: kept for %q, want %q", path, got, why)
@@ -1326,5 +1374,31 @@ func TestRecheckReadsAppsInstalledAndStartedSince(t *testing.T) {
 	f.procs = append(f.procs, filepath.Join(app, "Contents", "MacOS", "Fresh"))
 	if err := f.a.recheck(ctx, box); err == nil || !strings.Contains(err.Error(), "no leftover now") {
 		t.Errorf("recheck of an app's folder after it was installed and started = %v, want a refusal", err)
+	}
+}
+
+// A bundle the recheck's reading saw running without an Info.plist,
+// which has one now, is an app installed since: the apps are read
+// again.
+func TestRecheckReadsAppsInstalledWhereABundleRan(t *testing.T) {
+	for _, dir := range []string{"/Volumes/P", "/Applications"} {
+		t.Run(dir, func(t *testing.T) {
+			f := newLeftoversFixture(t)
+			box := f.folder("Containers", "com.fresh.app")
+			app := f.host.ExpandPath(dir + "/Fresh.app")
+			if err := os.MkdirAll(filepath.Join(app, "Contents", "MacOS"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			f.procs = []string{filepath.Join(app, "Contents", "MacOS", "Fresh")}
+			f.a.memo = &ownersMemo{}
+			ctx := context.Background()
+			if err := f.a.recheck(ctx, box); err != nil {
+				t.Fatalf("recheck of an offered folder: %v", err)
+			}
+			f.app(dir+"/Fresh.app", "com.fresh.app")
+			if err := f.a.recheck(ctx, box); err == nil || !strings.Contains(err.Error(), "no leftover now") {
+				t.Errorf("recheck of an app's folder after it was installed where its bundle ran = %v, want a refusal", err)
+			}
+		})
 	}
 }

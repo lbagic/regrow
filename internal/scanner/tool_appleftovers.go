@@ -85,18 +85,25 @@ var appSigns = []string{"Containers", "Group Containers", "Saved Application Sta
 // named by their ids: <id>.plist, and <id>.<host>.plist per host.
 var settingsLocations = []string{"Preferences", "Preferences/ByHost"}
 
-// markID is the id a file beside the folders is named by, less its
-// extension (<id>.plist, <id>.binarycookies) and, per host, its host
-// label; "" for a name that is no id.
-func markID(loc, name string) string {
-	id := strings.TrimSuffix(name, filepath.Ext(name))
+// markMakers are the makers a file beside the folders may be named for:
+// those of its whole name, of the name less its extension (<id>.plist,
+// <id>.binarycookies) and, per host, less its host label too. A file
+// can only keep folders, so every reading counts and none needs an
+// id's shape: a file with no extension, a ByHost file with no host
+// label and a two-label domain (net.example.plist) each find their
+// maker.
+func markMakers(loc, name string) []string {
+	readings := []string{name, strings.TrimSuffix(name, filepath.Ext(name))}
 	if loc == "Preferences/ByHost" {
-		id = strings.TrimSuffix(id, filepath.Ext(id))
+		readings = append(readings, strings.TrimSuffix(readings[1], filepath.Ext(readings[1])))
 	}
-	if !idShaped(id) {
-		return ""
+	var makers []string
+	for _, r := range readings {
+		if m := vendorOf(r); m != "" && !slices.Contains(makers, m) {
+			makers = append(makers, m)
+		}
 	}
-	return id
+	return makers
 }
 
 // appInstallRoots are where apps are installed.
@@ -243,28 +250,51 @@ func RecheckAppLeftover(ctx context.Context, path string) error {
 	return a.recheck(ctx, path)
 }
 
-// ownersMemo is the installed apps one reading found, the code bundles
-// running then, and when.
+// ownersMemo is the installed apps one reading found, and when.
 type ownersMemo struct {
-	mu      sync.Mutex
-	home    string
-	at      time.Time
-	in      *installedApps
-	running []string
+	mu   sync.Mutex
+	home string
+	at   time.Time
+	in   *installedApps
+	// unread holds the code bundles running then that the reading did
+	// not read, each with whether it had an Info.plist then.
+	unread map[string]bool
 }
 
 var recheckOwners = &ownersMemo{}
 
-// saw reports that the reading read, or saw running, every code bundle
-// running now. An app installed and started since, anywhere, it did
-// not: the apps are read again.
-func (m *ownersMemo) saw(running []string) bool {
+// unread is each running code bundle in does not hold, with whether an
+// app on its path, or the bundle, has an Info.plist.
+func (a *appLeftovers) unread(ctx context.Context, in *installedApps, running []string) (map[string]bool, error) {
+	out := map[string]bool{}
 	for _, b := range running {
-		if _, read := m.in.bundles[b]; !read && !slices.Contains(m.running, b) {
-			return false
+		if _, read := in.bundles[b]; read {
+			continue
+		}
+		_, ok, err := a.outermost(ctx, b)
+		if err != nil {
+			return nil, err
+		}
+		out[b] = ok
+	}
+	return out, nil
+}
+
+// saw reports that the memo's reading read every code bundle running
+// now, or saw it running with or without an Info.plist as it is now.
+// Otherwise an app was installed and started since, anywhere, or where
+// a bundle without one ran: the apps are read again.
+func (a *appLeftovers) saw(ctx context.Context, running []string) (bool, error) {
+	now, err := a.unread(ctx, a.memo.in, running)
+	if err != nil {
+		return false, err
+	}
+	for b, described := range now {
+		if then, seen := a.memo.unread[b]; !seen || then != described {
+			return false, nil
 		}
 	}
-	return true
+	return true, nil
 }
 
 // owners reads the installed apps, or takes them from the memo while
@@ -277,14 +307,24 @@ func (a *appLeftovers) owners(ctx context.Context, procs []string) (*installedAp
 	defer a.memo.mu.Unlock()
 	now := a.now()
 	running := runningBundles(procs)
-	if age := now.Sub(a.memo.at); a.memo.in != nil && a.memo.home == a.host.Home && age >= 0 && age < ownersReuse && a.memo.saw(running) {
-		return a.memo.in, nil
+	if age := now.Sub(a.memo.at); a.memo.in != nil && a.memo.home == a.host.Home && age >= 0 && age < ownersReuse {
+		saw, err := a.saw(ctx, running)
+		if err != nil {
+			return nil, err
+		}
+		if saw {
+			return a.memo.in, nil
+		}
 	}
 	in, err := a.installed(ctx, procs)
 	if err != nil {
 		return nil, err
 	}
-	a.memo.home, a.memo.at, a.memo.in, a.memo.running = a.host.Home, now, in, running
+	unread, err := a.unread(ctx, in, running)
+	if err != nil {
+		return nil, err
+	}
+	a.memo.home, a.memo.at, a.memo.in, a.memo.unread = a.host.Home, now, in, unread
 	return in, nil
 }
 
@@ -467,8 +507,7 @@ func (a *appLeftovers) folders(ctx context.Context, only string) ([]leftoverFold
 				continue
 			}
 			if !e.IsDir() {
-				if id := markID(loc, e.Name()); id != "" {
-					maker := vendorOf(id)
+				for _, maker := range markMakers(loc, e.Name()) {
 					j.marks[maker] = append(j.marks[maker], filepath.Join(dir, e.Name()))
 				}
 				continue
@@ -864,13 +903,17 @@ func bundleOf(plist string) string {
 // appOf is the app an Info.plist belongs to, which a row names: the
 // first app on its path that one of described is (/Applications/X.app
 // for anything inside it; not a checkout named site.app above it), or
-// the folder holding the Info.plist outside one.
+// the code bundle it describes outside one (a framework's service, a
+// plug-in in a plain folder), else the folder holding it.
 func appOf(plist string, described map[string]bool) string {
 	parts := strings.Split(plist, string(filepath.Separator))
 	for i, p := range parts {
 		if app := strings.Join(parts[:i+1], string(filepath.Separator)); strings.EqualFold(filepath.Ext(p), ".app") && described[app] {
 			return app
 		}
+	}
+	if b := bundleOf(plist); b != "" {
+		return b
 	}
 	return filepath.Dir(plist)
 }
