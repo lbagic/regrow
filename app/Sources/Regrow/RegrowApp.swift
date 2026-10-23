@@ -47,6 +47,7 @@ struct MenuView: View {
         }
         if let error = shell.tickError {
             Text(error)
+            copyCommand(in: error)
         }
         if let down = shell.engineDown {
             Text("The engine is not running: \(down)")
@@ -56,6 +57,7 @@ struct MenuView: View {
         Toggle("Trim the Go build cache when space is low", isOn: $shell.autotrim)
         if let note = shell.autotrimNote {
             Text(note)
+            copyCommand(in: note)
         }
 
         Divider()
@@ -79,6 +81,14 @@ struct MenuView: View {
         Divider()
         Button("Scan…") { shell.openScan() }
         Button("Quit regrow") { MainRunLoop.quit() }
+    }
+
+    /// A menu's text cannot be selected: a command a line quotes is
+    /// copied from the item under it.
+    @ViewBuilder private func copyCommand(in line: String) -> some View {
+        if let command = MenuText.command(in: line, engine: shell.engine) {
+            Button("Copy the command to run in Terminal") { shell.copy(command) }
+        }
     }
 }
 
@@ -114,8 +124,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         // Only a registered login item is started by the login; the owner
         // opening the app while that item runs is a reopen.
-        if SMAppService.mainApp.status == .enabled,
-            LoginSession.isLoginLaunch(at: Date(), sessionStart: LoginSession.consoleStart())
+        if LoginSession.isLoginLaunch(at: Date(), sessionStart: LoginSession.consoleStart()),
+            SMAppService.mainApp.status == .enabled
         {
             return "started within \(Int(LoginSession.window)) s of the login"
         }

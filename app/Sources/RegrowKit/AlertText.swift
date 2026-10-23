@@ -31,10 +31,16 @@ public enum AlertText {
     }
 
     /// The notice for a tick's terminal error, when it has one: a
-    /// locked gate refuses a prune exactly when headroom is low.
+    /// locked gate refuses a prune exactly when headroom is low. A
+    /// notification cannot be copied from, so one that quotes a command
+    /// sends the owner to the menu, which can.
     public static func notice(forError code: String, message: String) -> Notice? {
         guard code == "autotrim_locked" else { return nil }
-        return Notice(title: "Autotrim is locked", body: message)
+        guard MenuText.command(in: message, engine: "regrow") != nil else {
+            return Notice(title: "Autotrim is locked", body: message)
+        }
+        let said = message.hasSuffix(".") ? String(message.dropLast()) : message
+        return Notice(title: "Autotrim is locked", body: "\(said). The menu bar menu copies the command.")
     }
 
     static func title(forKind kind: String) -> String {

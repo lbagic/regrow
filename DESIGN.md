@@ -99,11 +99,11 @@ A 6px bar on a 1px `--line-strong` hairline the full width of its column; the fi
 - Sizes as `engine.HumanBytes` prints them.
 - Say when space comes back, in plain words: "frees now", "after the Trash is emptied", "kept as tarballs until you delete them", "shown only", "macOS reclaims it by itself".
 - Ages: today, yesterday, N days ago, N months ago.
-- The home folder is written `~`, except in a command the owner is told to paste into Terminal and in a tool's own error text, which stay as written. A command or path wraps at a space or after a slash, never inside a name; the exact command is in the element's `title`.
+- The home folder is written `~`, except in a command the owner is told to paste into Terminal and in a tool's own error text, which stay as written. A command or path wraps at a space or after a slash, never inside a name; the command, as a shell reads it, is in the element's `title`.
 
 ## The menu
 
-The menu bar menu is native: system controls and text only, in the order the owner reads it (figures, the last check, autotrim, Full Disk Access, staging, the login environment when it could not be read, "Scan…", "Quit regrow"). None of the page's colours or type reaches it.
+The menu bar menu is native: system controls and text only, in the order the owner reads it (figures, the last check, autotrim, Full Disk Access, staging, the login environment when it could not be read, "Scan…", "Quit regrow"). Its text cannot be selected: a line that quotes a command has a "Copy the command to run in Terminal" item under it. None of the page's colours or type reaches it.
 
 ## Checking a change
 

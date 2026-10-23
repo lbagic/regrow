@@ -811,6 +811,11 @@ struct Scenario {
                 """) as? String ?? ""
             await r.settle()
             r.same(await r.js("return (document.activeElement && document.activeElement.dataset.text) || ''") as? String ?? "", held, "the focus after a Copy pressed from the keyboard")
+            // The home folder is drawn as ~ only where it starts a word: after = or : a shell keeps ~ as written.
+            let homeDir = backups.first.map { String($0.str("path").dropLast($0.str("key").count - 1)) } ?? ""
+            r.expect(homeDir.hasPrefix("/"), "the transcript's backups name no home folder")
+            let drawn = await r.js("return drawnLine([h + '/x', '--prefix=' + h + '/opt', '/usr/bin:' + h + '/bin', h])", ["h": homeDir]) as? String ?? ""
+            r.same(drawn, "~/x --prefix=\(homeDir)/opt /usr/bin:\(homeDir)/bin ~", "a command drawn with the home folder after = and :")
             // regrow quoted in a rule's text is started as the engine names itself.
             let named = await r.js("""
                 const d = document.createElement('div'); d.innerHTML = sentence('To see how to stop them: `regrow doctor`.').s;
@@ -916,7 +921,7 @@ struct Scenario {
             r.has(await r.text("\(group) [data-do=open]"), "and \(moves.count - 1) more like it", "the folded group")
             await r.click("\(group) [data-do=open]")
             r.same(await r.count("\(group) .ln"), moves.count, "the lines of an opened group")
-            r.same(await r.js("return document.querySelector('\(group) .ln [title]').title") as? String ?? "", moves[0].strs("command").map { $0.contains(" ") || $0.contains("\"") ? String(reflecting: $0) : $0 }.joined(separator: " "), "the exact command in the title")
+            r.same(await r.js("return document.querySelector('\(group) .ln [title]').title") as? String ?? "", shellLine(moves[0].strs("command")), "the command in the title, as a shell reads it")
             r.same(r.sent("execute").count, 0, "executes from the plan")
         },
         Scenario(name: "copy-plan") { r in

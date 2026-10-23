@@ -277,6 +277,7 @@ function newRow(e) {
     if (!home && it.path && String(it.key).startsWith('~/') && it.path.endsWith(it.key.slice(1))) {
       const folder = it.path.slice(0, it.path.length - it.key.length + 1);
       home = new RegExp('(^|[\\s"\'=(:])' + folder.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?=/|$)', 'g');
+      homeDir = folder;
     }
     return { i, id, atom: select && select.includes(id) ? id : '', name: it.path || it.label || it.key || '',
       path: !!it.path, bytes: it.bytes || 0, lower: !!it.partial, used: it.last_used ? time(it.last_used) : 0 };
@@ -533,7 +534,7 @@ function ago(t) {
 
 // The home folder, as a pattern for where a path starts. It is learned from an item whose key is its path
 // under ~: the page has no path of its own.
-let home = null;
+let home = null, homeDir = '';
 const tilde = (s) => (home ? String(s).replace(home, '$1~') : String(s));
 
 // tui.ShellJoin
@@ -543,7 +544,9 @@ const shellWord = (s) => (/[ \t\n'"\\$`*?[\](){}<>|&;!#]/.test(s) ? "'" + s.repl
 // A command as a shell reads it back, for the pasteboard, and as it is drawn: the home folder as ~ only in a
 // word left unquoted, where a shell expands it.
 const shellLine = (argv) => [].concat(argv || []).map(shellWord).join(' ');
-const drawnLine = (argv) => [].concat(argv || []).map((w) => (shellWord(w) === w ? tilde(w) : shellWord(w))).join(' ');
+// A shell expands ~ only where it starts a word: after = or : it stays as written.
+const tildeWord = (w) => (homeDir && (w === homeDir || w.startsWith(homeDir + '/')) ? '~' + w.slice(homeDir.length) : w);
+const drawnLine = (argv) => [].concat(argv || []).map((w) => (shellWord(w) === w ? tildeWord(w) : shellWord(w))).join(' ');
 // How regrow is started in Terminal, as the engine names itself: an app's engine goes by its path.
 const cli = () => shellWord((S.hello && S.hello.self) || 'regrow');
 
@@ -792,7 +795,7 @@ function actions(mode) {
     const more = many && mode === 'plan' ? h`<button class="link" data-do="open" data-key="g${gi}" id="g${gi}" aria-expanded="${String(open)}">${open ? 'Show only the first' : `and ${g.actions.length - 1} more like it`}</button>` : '';
     const line = (a) => {
       const st = states[a.seq - first.seq];
-      return h`<span class="ln mono" ${st ? h`data-state="${st.state}"` : ''}>${st ? ICON[st.state] || ICON.skipped : ''}<span title="${shellJoin(a.command)}">${told(a)}</span>${copyAction(a)}${open ? '' : more}${st && st.error && mode === 'running' ? h`<span class="err">${st.error}</span>` : ''}</span>`;
+      return h`<span class="ln mono" ${st ? h`data-state="${st.state}"` : ''}>${st ? ICON[st.state] || ICON.skipped : ''}<span title="${drawnLine(a.command)}">${told(a)}</span>${copyAction(a)}${open ? '' : more}${st && st.error && mode === 'running' ? h`<span class="err">${st.error}</span>` : ''}</span>`;
     };
     return h`<div class="act ${kinds.includes('running') ? 'fresh' : ''}" data-rule="${g.rule}"><span class="seq">${many ? first.seq + '–' + (first.seq + g.actions.length - 1) : first.seq}</span>
       <div class="text"><h4>${titleOf(g.rule)}</h4>${(open ? g.actions : [first]).map(line)}${open ? more : ''}

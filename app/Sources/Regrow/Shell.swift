@@ -62,6 +62,10 @@ final class Shell: ObservableObject {
         return skipped
     }
 
+    var engine: String {
+        config.engine
+    }
+
     var stagedBytes: Int64 {
         tick?.stagedBytes ?? 0
     }
@@ -260,8 +264,7 @@ final class Shell: ObservableObject {
             case .command(let name):
                 pageCommand(name)
             case .copy(let text):
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(text, forType: .string)
+                copy(text)
             }
         }
     }
@@ -432,6 +435,11 @@ final class Shell: ObservableObject {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
             NSWorkspace.shared.open(url)
         }
+    }
+
+    func copy(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
     }
 
     func showStaging() {
