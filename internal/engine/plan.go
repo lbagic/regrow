@@ -328,11 +328,11 @@ func (o PlanOptions) refusal(r Rule) func(selector string) string {
 			self = "regrow"
 		}
 		return func(selector string) string {
-			words := []string{shellQuote(self), "clean"}
+			words := []string{ShellQuote(self), "clean"}
 			for _, a := range o.CleanFlags {
-				words = append(words, shellQuote(a))
+				words = append(words, ShellQuote(a))
 			}
-			words = append(words, shellQuote(selector))
+			words = append(words, ShellQuote(selector))
 			return "needs administrator rights — run it in Terminal: `" + strings.Join(words, " ") + "`"
 		}
 	}
@@ -652,9 +652,10 @@ func refusedSkips(ruleID string, ds []draft, partial bool, reason func(selector 
 	return skips
 }
 
-// shellQuote single-quotes s when a shell would split or expand it.
-func shellQuote(s string) string {
-	if !strings.ContainsAny(s, " \t\n'\"\\$`*?[](){}<>|&;!#") {
+// ShellQuote single-quotes s when a shell would split or expand it,
+// or would drop it, empty.
+func ShellQuote(s string) string {
+	if s != "" && !strings.ContainsAny(s, " \t\n'\"\\$`*?[](){}<>|&;!#") {
 		return s
 	}
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"

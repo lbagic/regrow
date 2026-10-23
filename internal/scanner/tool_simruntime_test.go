@@ -64,6 +64,33 @@ func TestSimRuntimesNoXcode(t *testing.T) {
 	if items, err := s.Runtimes(context.Background()); err != nil || len(items) > 0 || listed > 0 {
 		t.Errorf("with an Xcode installed: items %v, err %v, listed %d times; want nothing", items, err, listed)
 	}
+
+	// An Xcode only the wider search finds, such as one outside the
+	// Applications folders with Spotlight not indexing it.
+	s.HasXcode = func(context.Context) bool { return false }
+	s.Elsewhere = func(context.Context) bool { return true }
+	if items, err := s.Runtimes(context.Background()); err != nil || len(items) > 0 {
+		t.Errorf("with an Xcode found elsewhere: items %v, err %v; want nothing", items, err)
+	}
+}
+
+// The wider search takes seconds, so it runs only once there are
+// runtimes to list.
+func TestSimRuntimesNoXcodeSearchesFurtherOnlyForRuntimes(t *testing.T) {
+	searched := 0
+	s := &simRuntimesNoXcode{
+		HasSimctl: func(context.Context) bool { return false },
+		HasXcode:  func(context.Context) bool { return false },
+		List:      func(context.Context) ([]byte, bool, error) { return []byte(`{}`), true, nil },
+		Elsewhere: func(context.Context) bool { searched++; return false },
+	}
+	if items, err := s.Runtimes(context.Background()); err != nil || len(items) > 0 || searched > 0 {
+		t.Errorf("no runtimes: items %v, err %v, searched %d times; want nothing and no search", items, err, searched)
+	}
+	s.List = func(context.Context) ([]byte, bool, error) { return []byte(simctlRuntimeList), true, nil }
+	if items, err := s.Runtimes(context.Background()); err != nil || len(items) != 1 || searched != 1 {
+		t.Errorf("one runtime: items %v, err %v, searched %d times; want it listed after one search", items, err, searched)
+	}
 }
 
 func TestSimRuntimesNoXcodeWithoutCoreSimulator(t *testing.T) {
@@ -144,7 +171,7 @@ exit 2
 		{"gone at once", "0", "0", "0", true, []string{"runtime delete", "runtime list"}, ""},
 		{"the delete fails", "1", "0", "0", false, []string{"runtime delete"}, ""},
 		{"the listing fails", "0", "1", "0", false, []string{"runtime delete", "runtime list"}, "runtime list failed"},
-		{"still listed", "0", "0", "100000", false, nil, "still listed 10 minutes after its delete"},
+		{"still listed", "0", "0", "100000", false, nil, "still listed after 600 listings a second apart"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -319,6 +346,7 @@ func TestXcodeInstalled(t *testing.T) {
 			return []string{p}
 		}, true},
 		{"Spotlight naming a gone app", func(t *testing.T, _, home string) []string { return []string{filepath.Join(home, "Gone", "Xcode.app")} }, false},
+		{"Spotlight giving no answer", func(*testing.T, string, string) []string { return []string{noAnswer} }, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -327,9 +355,108 @@ func TestXcodeInstalled(t *testing.T) {
 				t.Fatal(err)
 			}
 			answer := tc.setup(t, root, home)
-			got := xcodeInstalled(context.Background(), testWalker(), root, home, func(context.Context) []string { return answer })
+			spotlight := func(context.Context) ([]string, bool) {
+				if slices.Equal(answer, []string{noAnswer}) {
+					return nil, false
+				}
+				return answer, true
+			}
+			got := xcodeInstalled(context.Background(), testWalker(), root, home, spotlight)
 			if got != tc.installed {
 				t.Errorf("xcodeInstalled = %v, want %v", got, tc.installed)
+			}
+		})
+	}
+}
+
+// noAnswer stands for a Spotlight that gave no answer.
+const noAnswer = "(no answer)"
+
+// lsBundleEntry is one bundle of `lsregister -dump Bundle` as macOS
+// 15.7 prints it, cut to the fields read and a few around them.
+func lsBundleEntry(name, path, identifier, mountState string) string {
+	return "--------------------------------------------------------------------------------\n" +
+		"bundle id:                  " + name + " (0x3714)\n" +
+		"class:                      kLSBundleClassApplication (0x2)\n" +
+		"container:                  / (0x4)\n" +
+		"mount state:                " + mountState + "\n" +
+		"path:                       " + path + " (0x7758)\n" +
+		"name:                       " + name + "\n" +
+		"identifier:                 " + identifier + "\n" +
+		"canonical id:               " + strings.ToLower(identifier) + "\n" +
+		"version:                    16.2 ({length = 32, bytes = 0x10000000 00000000 02000000 00000000 ... })\n"
+}
+
+func TestXcodeRegistered(t *testing.T) {
+	safari := lsBundleEntry("Safari", "/Applications/Safari.app", "com.apple.Safari", "mounted")
+	cases := []struct {
+		name       string
+		dump       func(home string) string
+		err        error
+		registered bool
+	}{
+		{"no Xcode registered", func(string) string { return safari }, nil, false},
+		{"an Xcode outside the Applications folders", func(home string) string {
+			return safari + lsBundleEntry("Xcode", filepath.Join(home, "Developer", "Xcode.app"), "com.apple.dt.Xcode", "mounted")
+		}, nil, true},
+		{"an Xcode on a disk not mounted now", func(string) string {
+			return safari + lsBundleEntry("Xcode", "/Volumes/NotMounted/Xcode.app", "com.apple.dt.Xcode", "not mounted")
+		}, nil, true},
+		// LaunchServices keeps a bundle deleted from a disk still
+		// mounted, and Instruments inside it, until it collects them.
+		{"an Xcode since deleted", func(home string) string {
+			gone := filepath.Join(home, "Gone", "Xcode.app")
+			return safari + lsBundleEntry("Xcode", gone, "com.apple.dt.Xcode", "mounted") +
+				lsBundleEntry("Instruments", filepath.Join(gone, "Contents", "Applications", "Instruments.app"), "com.apple.dt.Instruments", "mounted")
+		}, nil, false},
+		{"the identifier in another case", func(home string) string {
+			return lsBundleEntry("Xcode", filepath.Join(home, "Developer", "Xcode.app"), "com.apple.dt.xcode", "mounted")
+		}, nil, true},
+		{"lsregister fails", func(string) string { return "" }, errors.New("exit status 1"), true},
+		{"output with no bundle in it", func(string) string { return "lsregister: unknown table\n" }, nil, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			writeText(t, filepath.Join(home, "Developer", "Xcode.app", "Contents", "Info.plist"), launchdPlist("", nil, map[string]string{"CFBundleIdentifier": "com.apple.dt.Xcode"}))
+			dump := func(context.Context) ([]byte, error) { return []byte(tc.dump(home)), tc.err }
+			if got := xcodeRegistered(context.Background(), testWalker(), dump); got != tc.registered {
+				t.Errorf("xcodeRegistered = %v, want %v", got, tc.registered)
+			}
+		})
+	}
+}
+
+// With Spotlight off for the startup disk, mdfind finds nothing, which
+// cannot be told from no Xcode.
+func TestSpotlightIndexes(t *testing.T) {
+	enabled := "/:\n\tIndexing enabled. \n"
+	cases := []struct {
+		name    string
+		answers map[string]string
+		err     error
+		missing bool
+		indexes bool
+	}{
+		{"both volumes indexed", map[string]string{"/": enabled, "/System/Volumes/Data": "/System/Volumes/Data:\n\tIndexing enabled.\n"}, nil, false, true},
+		{"the Data volume not indexed", map[string]string{"/": enabled, "/System/Volumes/Data": "/System/Volumes/Data:\n\tIndexing disabled.\n"}, nil, false, false},
+		{"Spotlight's server off", map[string]string{"/": "/:\n\tSpotlight server is disabled.\n", "/System/Volumes/Data": enabled}, nil, false, false},
+		{"mdutil fails", nil, errors.New("exit status 1"), false, false},
+		{"no mdutil", nil, nil, true, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			run := func(_ context.Context, name string, args ...string) ([]byte, bool, error) {
+				if name != "mdutil" || len(args) != 2 || args[0] != "-s" {
+					t.Fatalf("ran %s %q", name, args)
+				}
+				if tc.missing || tc.err != nil {
+					return nil, false, tc.err
+				}
+				return []byte(tc.answers[args[1]]), true, nil
+			}
+			if got := spotlightIndexes(context.Background(), run); got != tc.indexes {
+				t.Errorf("spotlightIndexes = %v, want %v", got, tc.indexes)
 			}
 		})
 	}

@@ -39,6 +39,16 @@ func TestMacOSInstallData(t *testing.T) {
 		{"a pending upgrade", "15.7.7", func(t *testing.T, dir string) {
 			writeText(t, filepath.Join(dir, "UpdateBundle", "Info.plist"), installDataPlist("26.0"))
 		}, "", ""},
+		// Versions compare as numbers, part by part.
+		{"a pending upgrade to a two-digit minor", "15.7", func(t *testing.T, dir string) {
+			writeText(t, filepath.Join(dir, "UpdateBundle", "Info.plist"), installDataPlist("15.10"))
+		}, "", ""},
+		{"an older bundle of a one-digit major", "10.15.7", func(t *testing.T, dir string) {
+			writeText(t, filepath.Join(dir, "UpdateBundle", "Info.plist"), installDataPlist("9.3"))
+		}, "macOS 9.3 update, never installed", ""},
+		{"a pending upgrade to a two-digit major", "9.3", func(t *testing.T, dir string) {
+			writeText(t, filepath.Join(dir, "UpdateBundle", "Info.plist"), installDataPlist("10.15"))
+		}, "", ""},
 		{"this Mac's own version", "15.7.7", func(t *testing.T, dir string) {
 			writeText(t, filepath.Join(dir, "UpdateBundle", "Info.plist"), installDataPlist("15.7.7"))
 		}, "", ""},

@@ -12,13 +12,11 @@ import (
 
 // The aerial videos macOS downloads for the wallpaper and the screen
 // saver. Deleting a video frees its bytes only when no other link holds
-// the file: on macOS 15.7, 16 of 69 videos were also held by the
-// downloader's finished downloads in its root-only temp folder, so
-// deleting the folder's videos freed 21.7 of 32.2 GiB. The query sizes
-// the folder in two items, what deleting its files frees and the files
-// a link outside it also holds. Link counts are read for this rule
-// alone: elsewhere sizes stay path-unique (the attack plan leaves
-// hard-link-aware sizing out).
+// the file, and on macOS 15 the downloader's finished downloads in its
+// root-only temp folder can be such links. The query sizes the folder
+// in two items, what deleting its files frees and the files a link
+// outside it also holds. Link counts are read for this rule alone:
+// elsewhere sizes stay path-unique.
 
 // aerialPathEntries are the folders by macOS release: idleassetsd's
 // through macOS 15, the wallpaper agent's container from 26.
@@ -70,66 +68,51 @@ type linkedFile struct {
 // folder also holds, when there are any. A folder that refuses is an
 // item with Partial set; an absent one is nothing.
 func aerialFolder(ctx context.Context, w *walker, dir string) ([]engine.Item, error) {
-	info, err := w.lstat(ctx, dir)
-	switch {
-	case absent(err):
-		return nil, nil
-	case ctx.Err() != nil:
-		return nil, ctx.Err()
-	case err != nil:
-		return []engine.Item{{Path: dir, Partial: true}}, nil
-	}
 	var (
 		mu     sync.Mutex
 		closed bool
-		frees  = physicalSize(info)
-		newest = info.ModTime()
 		linked = map[uint64]*linkedFile{}
 	)
-	partial, err := w.walk(ctx, dir, func(d string, batch []fs.DirEntry) ([]string, bool) {
-		var subdirs []string
-		ok := true
-		for _, e := range batch {
-			fi, err := e.Info()
-			if err != nil {
-				ok = ok && !unreadable(err)
-				continue
-			}
-			if e.IsDir() {
-				subdirs = append(subdirs, childPath(d, e.Name()))
-			}
-			size := physicalSize(fi)
-			st, isStat := fi.Sys().(*syscall.Stat_t)
-			mu.Lock()
-			if !closed {
-				if fi.ModTime().After(newest) {
-					newest = fi.ModTime()
-				}
-				switch {
-				case fi.Mode().IsRegular() && isStat && st.Nlink > 1:
-					lf := linked[st.Ino]
-					if lf == nil {
-						lf = &linkedFile{bytes: size, nlink: uint64(st.Nlink)}
-						linked[st.Ino] = lf
-					}
-					lf.seen++
-				default:
-					frees += size
-				}
-			}
-			mu.Unlock()
+	u, found, err := w.usageSeeing(ctx, dir, func(_ string, e fs.DirEntry) {
+		if !e.Type().IsRegular() {
+			return
 		}
-		return subdirs, ok
+		fi, err := e.Info()
+		if err != nil {
+			return
+		}
+		st, ok := fi.Sys().(*syscall.Stat_t)
+		if !ok || st.Nlink < 2 {
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if closed {
+			return
+		}
+		lf := linked[st.Ino]
+		if lf == nil {
+			lf = &linkedFile{bytes: physicalSize(fi), nlink: uint64(st.Nlink)}
+			linked[st.Ino] = lf
+		}
+		lf.seen++
 	})
 	mu.Lock()
 	defer mu.Unlock()
 	closed = true
-	if err != nil {
+	switch {
+	case err != nil:
 		return nil, err
+	case !found:
+		return nil, nil
 	}
-	var held int64
+	// The walk counted a file once for each link it met; deleting the
+	// folder frees one whose links all lie inside it, once, and none of
+	// the others.
+	frees, held := u.Bytes, int64(0)
 	files := 0
 	for _, lf := range linked {
+		frees -= lf.bytes * int64(lf.seen)
 		if lf.seen >= lf.nlink {
 			frees += lf.bytes
 			continue
@@ -137,13 +120,13 @@ func aerialFolder(ctx context.Context, w *walker, dir string) ([]engine.Item, er
 		held += lf.bytes
 		files++
 	}
-	items := []engine.Item{{Path: dir, Bytes: frees, LastUsed: newest, Partial: partial}}
+	items := []engine.Item{{Path: dir, Bytes: frees, LastUsed: u.Newest, Partial: u.Partial}}
 	if files > 0 {
 		label := fmt.Sprintf("%d files a link outside the folder also holds, such as the downloader's temp copies: deleting them here frees nothing", files)
 		if files == 1 {
 			label = "1 file a link outside the folder also holds, such as the downloader's temp copies: deleting it here frees nothing"
 		}
-		items = append(items, engine.Item{Label: label, Bytes: held, Partial: partial})
+		items = append(items, engine.Item{Label: label, Bytes: held, Partial: u.Partial})
 	}
 	return items, nil
 }

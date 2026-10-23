@@ -11,9 +11,8 @@ import (
 )
 
 // A macOS upgrade stages its payload in "macOS Install Data" on the
-// Data volume, and an upgrade that never ran leaves it there: one
-// machine held a 13.5 bundle, 10.6 GiB, two major releases after it.
-// The folder is reachable only through /System/Volumes/Data. The
+// Data volume, and an upgrade that never ran leaves it there. The
+// folder is reachable only through /System/Volumes/Data. The
 // bundle is listed only when its Info.plist names a macOS older than
 // the one running: a newer one is an upgrade still pending, and a
 // bundle whose version cannot be told is left out.
@@ -34,9 +33,17 @@ type macOSInstallData struct {
 	plist   func(ctx context.Context, data []byte) ([]byte, error)
 }
 
-func queryMacOSInstallData(ctx context.Context) ([]engine.Item, error) {
-	q := &macOSInstallData{w: defaultWalker, dir: macOSInstallDataDir, version: engine.DetectHost().Version, plist: plutilXML}
-	return q.scan(ctx)
+// macOSInstallDataQuery is the query for host; a zero host is the
+// running machine.
+func macOSInstallDataQuery(host engine.Host) ToolQuery {
+	return func(ctx context.Context) ([]engine.Item, error) {
+		h := host
+		if h.OS == "" {
+			h = engine.DetectHost()
+		}
+		q := &macOSInstallData{w: defaultWalker, dir: macOSInstallDataDir, version: h.Version, plist: plutilXML}
+		return q.scan(ctx)
+	}
 }
 
 func (q *macOSInstallData) scan(ctx context.Context) ([]engine.Item, error) {

@@ -14,16 +14,18 @@ import (
 // rules reference them by name via tool_query.
 type ToolQuery func(ctx context.Context) ([]engine.Item, error)
 
-// DefaultQueries returns the built-in query registry.
-func DefaultQueries() map[string]ToolQuery {
+// DefaultQueries returns the built-in query registry. The queries that
+// depend on the macOS release read host; a zero host is the running
+// machine.
+func DefaultQueries(host engine.Host) map[string]ToolQuery {
 	queries := map[string]ToolQuery{
-		"aerial-videos":              (&aerialVideos{}).Items,
+		"aerial-videos":              (&aerialVideos{host: host}).Items,
 		"apfs-purgeable":             queryAPFSPurgeable,
 		"build-output":               queryBuildOutput,
 		"downloaded-installers":      queryDownloadedInstallers,
 		"git-worktrees":              queryGitWorktrees,
 		"hf-hub":                     queryHFHub,
-		"macos-install-data":         queryMacOSInstallData,
+		"macos-install-data":         macOSInstallDataQuery(host),
 		"npx-cache":                  queryNpxCache,
 		"ollama-models":              queryOllamaModels,
 		"simctl-devices":             querySimctlDevices,

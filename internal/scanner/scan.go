@@ -35,7 +35,7 @@ const toolQueryTimeout = 2 * time.Minute
 
 // New builds a scanner for the host with the built-in tool queries.
 func New(host engine.Host) *Scanner {
-	return &Scanner{Host: host, Queries: DefaultQueries(), CauseQueries: DefaultCauseQueries(host)}
+	return &Scanner{Host: host, Queries: DefaultQueries(host), CauseQueries: DefaultCauseQueries(host)}
 }
 
 func (s *Scanner) walker() *walker {

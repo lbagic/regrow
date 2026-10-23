@@ -122,20 +122,20 @@ func TestAerialDownloads(t *testing.T) {
 func TestAerialWallpapersAreShownOnly(t *testing.T) {
 	rule := embeddedRule(t, "aerial-wallpapers")
 	for _, tc := range []struct {
-		version, video string
+		version, folder, video string
 	}{
-		{"15.5", "/Library/Application Support/com.apple.idleassetsd/Customer/4KSDR240FPS/a.mov"},
-		{"26.0", "~/Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches/a.mov"},
+		{"15.5", "/Library/Application Support/com.apple.idleassetsd/Customer", "4KSDR240FPS/a.mov"},
+		{"26.0", "~/Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches", "a.mov"},
 	} {
 		t.Run(tc.version, func(t *testing.T) {
 			host := fixtureHost(t, rule)
 			host.Version = tc.version
-			writeFile(t, host.ExpandPath(tc.video), 1<<20)
-			s := New(host)
-			s.Queries = map[string]ToolQuery{rule.ToolQuery: (&aerialVideos{w: testWalker(), host: host}).Items}
-			findings := s.Scan(context.Background(), []engine.Rule{rule})
-			if f := findings[0]; f.Err != "" || len(f.Items) == 0 {
-				t.Fatalf("finding %+v, want the video's folder found", f)
+			folder := host.ExpandPath(tc.folder)
+			writeFile(t, filepath.Join(folder, tc.video), 1<<20)
+			// New binds the query to the host it scans.
+			findings := New(host).Scan(context.Background(), []engine.Rule{rule})
+			if f := findings[0]; f.Err != "" || len(f.Items) == 0 || f.Items[0].Path != folder {
+				t.Fatalf("finding %+v, want the fixture's folder %s found", f, folder)
 			}
 			if sel := engine.DefaultSelection(findings); len(sel) != 0 {
 				t.Errorf("default selection %v, want nothing", sel)
@@ -220,5 +220,58 @@ func TestAerialVideosSplitByLinks(t *testing.T) {
 	if items, err := (&aerialVideos{w: testWalker(), host: host}).Items(context.Background()); err != nil || len(items) != 1 ||
 		items[0].Path != filepath.Join(host.Home, "Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches") {
 		t.Errorf("on 26: items %+v, err %v; want the container's folder", items, err)
+	}
+}
+
+// aerialConflicts mirrors the catalog's one-owner fence for the aerial
+// folders, which live in the aerial-videos query rather than in a
+// rule's paths: and so escape the fence. No rule may name one or reach
+// inside one, and a rule holding one spells the shared prefix the same.
+func aerialConflicts(catalog []engine.Rule) []string {
+	var conflicts []string
+	for _, r := range catalog {
+		for _, e := range r.Paths["darwin"] {
+			p := filepath.Clean(e.Path)
+			lp := strings.ToLower(p)
+			for _, a := range aerialPathEntries {
+				lf := strings.ToLower(a.Path)
+				matches := lp == lf || strings.HasPrefix(lp, lf+"/") ||
+					strings.HasPrefix(lf, lp+"/") && !strings.HasPrefix(a.Path, p+"/")
+				for dir := lf; !matches && strings.ContainsAny(p, "*?[") && dir != "/" && dir != "."; dir = filepath.Dir(dir) {
+					matches, _ = filepath.Match(lp, dir)
+				}
+				if matches {
+					conflicts = append(conflicts, r.ID+" names "+p+", against the aerial folder "+a.Path)
+				}
+			}
+		}
+	}
+	return conflicts
+}
+
+func TestNoRuleNamesAnAerialFolder(t *testing.T) {
+	catalog, err := engine.LoadEmbedded()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range aerialConflicts(catalog) {
+		t.Error(c)
+	}
+	rule := func(path string) []engine.Rule {
+		return []engine.Rule{{ID: "x", Paths: map[string][]engine.PathEntry{"darwin": {{Path: path}}}}}
+	}
+	for path, want := range map[string]bool{
+		"/Library/Application Support/com.apple.idleassetsd/Customer":             true,
+		"/library/application support/com.apple.idleassetsd/customer/4KSDR240FPS": true,
+		"~/Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches/x":    true,
+		"~/library/containers/com.apple.wallpaper.agent":                          true,
+		"~/Library/Containers/*/Data/Library/Caches":                              true,
+		"~/Library/Containers/com.apple.wallpaper.agent":                          false,
+		"~/Library/Caches": false,
+		"/Library/Application Support/com.apple.idleassetsd/snapshots": false,
+	} {
+		if got := len(aerialConflicts(rule(path))) > 0; got != want {
+			t.Errorf("a rule naming %s: conflict %v, want %v", path, got, want)
+		}
 	}
 }

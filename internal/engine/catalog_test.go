@@ -167,18 +167,27 @@ func TestAerialCauseFixText(t *testing.T) {
 			return true
 		})
 	}
-	for _, want := range [][]string{
-		{"Quit System Settings", "Wallpaper"},
-		{"come back", "the pane is opened"},
-		// The disable leaves the running downloader alone, and was not
-		// tried across a restart; the same line must say both.
-		{"sudo launchctl disable system/com.apple.idleassetsd", "until a restart", "untested", "sudo launchctl enable system/com.apple.idleassetsd"},
-		{"sudo killall idleassetsd"},
+	// idleassetsd downloads for the aerials picked in its database, and
+	// a still wallpaper leaves them picked: clearing the picks, then
+	// restarting it, is what stopped the downloads on macOS 15.7.
+	const clearPicks = `sudo sqlite3 -cmd '.timeout 5000' "/Library/Application Support/com.apple.idleassetsd/Aerial.sqlite" 'BEGIN IMMEDIATE; DELETE FROM Z_2ACTIVEFORUSERS; DELETE FROM Z_3ACTIVEFORUSERS; DELETE FROM Z_1PINNEDFORUSERS; COMMIT;'`
+	for i, want := range [][]string{
+		{"still wallpaper", ": " + clearPicks},
+		{"Then stop the downloader", ": sudo killall idleassetsd"},
 		{"Then remove the videos: " + removeOld},
 		{"frees nothing until that copy goes too: " + removeTemp},
+		{"Picking an aerial", "System Settings ▸ Wallpaper", "again"},
 	} {
 		if !line(want...) {
 			t.Errorf("no fix line with %q in:\n%s", want, strings.Join(fix, "\n"))
+		} else if i < 3 && !strings.Contains(fix[i], want[0]) {
+			t.Errorf("fix line %d is not the one with %q: clear, stop, remove, in that order:\n%s", i+1, want[0], strings.Join(fix, "\n"))
+		}
+	}
+	// launchd starts the downloader on demand while it is disabled.
+	for _, l := range fix {
+		if strings.Contains(l, "launchctl disable") && !strings.Contains(l, "does not stop") {
+			t.Errorf("a fix line offers launchctl disable, which does not stop the downloads: %s", l)
 		}
 	}
 	if line("regrow clean") {

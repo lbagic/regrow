@@ -21,7 +21,7 @@ How it reads them:
 
 ## Programs it starts
 
-A scan starts these programs, each read-only. A program that is not installed means its rules do not apply to this Mac: they find nothing, and say nothing. Some rules take a missing program otherwise: without `ps` or `lsof`, or without `fnm` on your `PATH`, their rules show an error (below); `mdfind` missing, failing or finding nothing counts as Spotlight knowing no Android Studio or Xcode; and `xcrun` finding no `simctl` is what sends sim-runtimes-no-xcode looking.
+A scan starts these programs, each read-only. A program that is not installed means its rules do not apply to this Mac: they find nothing, and say nothing. Some rules take a missing program otherwise: without `ps` or `lsof`, or without `fnm` on your `PATH`, their rules show an error (below); `mdfind` missing, failing or finding nothing counts as Spotlight knowing no Android Studio, while for Xcode only finding nothing counts as none (missing or failing, the simulator runtimes are kept); and `xcrun` finding no `simctl` is what sends sim-runtimes-no-xcode looking.
 
 | Program | Why |
 |---|---|
@@ -40,6 +40,7 @@ With `--beta-rules`, also:
 | `lsof -a -u <your uid> -d txt -F pn` | which Node versions a running process executes or maps a file from |
 | `mdfind` for Android Studio's or Xcode's bundle identifier | whether Android Studio or Xcode is installed somewhere Applications does not show |
 | `xcrun --find simctl`, then `/Library/Developer/PrivateFrameworks/CoreSimulator.framework/Versions/A/Resources/bin/simctl runtime list -j` | simulator runtimes left after Xcode went, listed only when no Xcode is found |
+| `mdutil -s /`, `mdutil -s /System/Volumes/Data`, `/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister -dump Bundle` | only once CoreSimulator's simctl lists a runtime: whether Spotlight indexes the startup disk, and LaunchServices' register of every app it has met, for an Xcode anywhere else, on a disk not mounted now included; the register takes a few seconds |
 | `git` (`worktree list`, `for-each-ref`, `rev-list`, `status --ignored`, `ls-files`, `rev-parse`, `check-ignore`, `config --get`) | whether a worktree is finished and whether a build folder is ignored; every call runs with `--no-optional-locks`, so git does not even refresh its index, and each has 30 seconds |
 | `/usr/bin/plutil -convert xml1 -o - -` | turns a binary `Info.plist`, an app's or a staged macOS upgrade's, handed to it on its input, into text, for the app's identifier and version or the upgrade's macOS version |
 
@@ -62,7 +63,7 @@ A run starts only from a plan you confirmed, at the prompt or in advance with `-
 - appends to `~/.local/state/regrow/oplog.jsonl`, one line synced to disk before each action and one when it ends;
 - tells Finder through `osascript` to move each Trash item to the Trash, or, when Finder fails for any reason but a cancelled run, renames the item into `~/.local/state/regrow/staging/<run-id>/`; an item on another volume cannot be renamed there, so that action fails and the item stays;
 - runs each rule's own command as the plan shows it, `sudo` included where the rule asks for it, in your terminal so `sudo` can ask for your password (the app leaves such a command for you to run in Terminal);
-- for a simulator runtime left after Xcode went, runs CoreSimulator's own simctl through `/bin/sh`: `runtime delete <identifier>`, then `runtime list -j` once a second until the runtime is gone, for at most about 10 minutes;
+- for a simulator runtime left after Xcode went, runs CoreSimulator's own simctl through `/bin/sh`: `runtime delete <identifier>`, then `runtime list -j` once a second until the runtime is gone, and fails after 600 listings; a simctl that never answers holds the run, as any rule's command would;
 - for a Docker volume, first writes `~/.local/state/regrow/staging/<run-id>/docker-volume-<name>.tar` by running `docker run --rm -v <name>:/volume:ro busybox tar …`;
 - right before removing an agent session's scratch, a worktree, a build folder, an npx folder, a download or a Node version, runs that rule's recheck; [RULES.md](RULES.md) says what each one checks.
 

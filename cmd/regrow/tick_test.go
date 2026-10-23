@@ -107,13 +107,13 @@ func TestPreviewLines(t *testing.T) {
 		{"56.0 GiB in 85000 entries"},
 		{"used in the last 48h", "an hour of entries at a time, to about 15.0 GiB"},
 		{"DRY RUN", "nothing executed"},
-		// The path, the pattern and the date are quoted, so the line can be
-		// pasted: in double quotes the shell turns \\[ back into the \[
-		// that find needs to match the bracket literally.
+		// The path, the pattern, the ! and the date are quoted, so the
+		// line can be pasted: in single quotes find gets the \[ it needs
+		// to match the bracket literally.
 		{"[prune]", "41.0 GiB", "no undo",
-			`/usr/bin/find "/home/dev/ca[che]/go-build" -ignore_readdir_race -mindepth 2 -maxdepth 2 -type f ` +
-				`-path "/home/dev/ca\\[che\\]/go-build/[0123456789abcdef][0123456789abcdef]/*-[ad]" ` +
-				`! -newermt "2026-10-02 09:59:59 UTC" -delete`},
+			`/usr/bin/find '/home/dev/ca[che]/go-build' -ignore_readdir_race -mindepth 2 -maxdepth 2 -type f ` +
+				`-path '/home/dev/ca\[che\]/go-build/[0123456789abcdef][0123456789abcdef]/*-[ad]' ` +
+				`'!' -newermt '2026-10-02 09:59:59 UTC' -delete`},
 		{"Would delete about 41.0 GiB in 60000 entries", "leaving about 15.0 GiB"},
 		{"no Trash, no undo"},
 		{"A build is running (compile)"},
