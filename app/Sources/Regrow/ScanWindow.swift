@@ -127,6 +127,14 @@ final class ScanWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, WKScri
 
     // MARK: NSWindowDelegate
 
+    /// The close button and Cmd-W hide the window: the page, and the scan
+    /// it holds, stay for the next Open. Only `close()` ends them.
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        sender.orderOut(nil)
+        log("scan window hidden")
+        return false
+    }
+
     func windowWillClose(_ notification: Notification) {
         // The content controller holds its handler strongly.
         webView.configuration.userContentController.removeScriptMessageHandler(forName: Self.handler)
