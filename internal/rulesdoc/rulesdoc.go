@@ -57,7 +57,7 @@ var preActions = map[string]string{
 	engine.PreActionFnmVersionRecheck:          "regrow reads every source again, as the scan did, and leaves the version installed if anything names it now or a source cannot be read.",
 	engine.PreActionSupersededBuildRecheck:     "regrow judges the build again, as the scan did, and leaves it in place if any reason to keep it holds now or the build in use cannot be told.",
 	engine.PreActionDockerUpdateRecheck:        "regrow judges the download again, as the scan did, and leaves it in place if any reason to keep it holds now.",
-	engine.PreActionCaskRecordRecheck:          "regrow asks brew about the cask again and leaves it installed unless its app is still gone and its uninstall still asks for no password.",
+	engine.PreActionCaskRecordRecheck:          "regrow asks brew about the cask again and leaves it installed unless its app is still gone and its uninstall still only quits the app and asks for no password.",
 }
 
 // PreActionText is the sentence for a hook, and false when the page has

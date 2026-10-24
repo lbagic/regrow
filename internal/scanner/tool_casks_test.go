@@ -52,6 +52,7 @@ func caskFixture(t *testing.T) (*caskRecords, string) {
 	writeFile(t, filepath.Join(home, "Applications", "Regrow Test Home.app", "Contents", "Info.plist"), 10)
 	c := &caskRecords{
 		Home: home,
+		Apps: []string{filepath.Join(root, "Applications"), filepath.Join(home, "Applications")},
 		w:    testWalker(),
 		Brew: func(_ context.Context, args ...string) ([]byte, bool, error) {
 			switch strings.Join(args, " ") {
@@ -108,10 +109,16 @@ func TestCaskRecords(t *testing.T) {
 			t.Errorf("recheck of %s passed", tok)
 		}
 	}
+	// launchctl asks for no password; the refusal says what the row means.
+	err = c.recheck(context.Background(), filepath.Join(caskroom, "gone-launchctl"))
+	if err == nil || !strings.Contains(err.Error(), "may ask for a password, or does more than quit the app") {
+		t.Errorf("recheck of a -sudo record: %v; want the -sudo row's words", err)
+	}
 }
 
 // oneCask is a single installed cask brew describes as js, its record's
-// appdir <root>/Apps, the apps named in present installed there, and
+// appdir <root>/Apps, the apps named in present installed there,
+// <root>/Applications and <home>/Applications the app folders, and
 // <apps>, <root> and <home> in js standing for those folders.
 func oneCask(t *testing.T, js string, present ...string) *caskRecords {
 	t.Helper()
@@ -128,7 +135,8 @@ func oneCask(t *testing.T, js string, present ...string) *caskRecords {
 		writeFile(t, filepath.Join(root, app, "Contents", "Info.plist"), 10)
 	}
 	js = strings.NewReplacer("<apps>", apps, "<root>", root, "<home>", home).Replace(js)
-	return &caskRecords{Home: home, w: testWalker(), Brew: func(_ context.Context, args ...string) ([]byte, bool, error) {
+	folders := []string{filepath.Join(root, "Applications"), filepath.Join(home, "Applications")}
+	return &caskRecords{Home: home, Apps: folders, w: testWalker(), Brew: func(_ context.Context, args ...string) ([]byte, bool, error) {
 		switch strings.Join(args, " ") {
 		case "info --cask --json=v2 --installed":
 			return []byte(`{"casks":[{"token":"c","installed":"1.0","artifacts":[` + js + `]}]}`), true, nil
@@ -153,6 +161,7 @@ func TestCaskJudge(t *testing.T) {
 		present []string // under <root>
 		links   []string // files under <root>, the links brew made
 		roDir   bool     // <root>/ro is not the owner's to write
+		locked  string   // a folder under <root> nobody may read
 		want    string   // "plain", "sudo" or "" (not listed)
 	}{
 		{name: "quit only, brew 7", js: quit + `,` + app7 + `,{"zap":[{"trash":["~/Library/x"]}]}`, want: "plain"},
@@ -166,6 +175,15 @@ func TestCaskJudge(t *testing.T) {
 		{name: "a target brew resolved outside the app folder, installed",
 			js: quit + `,{"app":["Regrow Test C.app",{"target":"<root>/Other/C.app"}],"target":"<root>/Other/C.app"}`, present: []string{"Other/C.app"}},
 		{name: "an app moved to ~/Applications", js: quit + `,` + app7, present: []string{"home/Applications/Regrow Test C.app"}},
+		{name: "an app moved one folder down in its app folder", js: quit + `,` + app7, present: []string{"Apps/Dev/Regrow Test C.app"}},
+		{name: "an app moved one folder down in /Applications", js: quit + `,` + app7, present: []string{"Applications/Utilities/Regrow Test C.app"}},
+		{name: "an app moved one folder down in ~/Applications", js: quit + `,` + app7, present: []string{"home/Applications/Dev/Regrow Test C.app"}},
+		{name: "an app moved one folder down, its name in another case", js: quit + `,` + app7, present: []string{"Apps/Dev/regrow test c.app"}},
+		{name: "an app moved one folder down from a target outside the app folder",
+			js: quit + `,{"app":["Regrow Test C.app",{"target":"<root>/Other/C.app"}],"target":"<root>/Other/C.app"}`, present: []string{"Other/Sub/C.app"}},
+		{name: "a folder in the app folder regrow cannot read", js: quit + `,` + app7, locked: "Apps/Locked"},
+		{name: "another app one folder down", js: quit + `,` + app7, present: []string{"Apps/Dev/Regrow Test D.app"}, want: "plain"},
+		{name: "an app two folders down", js: quit + `,` + app7, present: []string{"Apps/Dev/Old/Regrow Test C.app"}, want: "plain"},
 		// brew signals and removes login items even when the app is gone,
 		// so one moved where regrow does not look is hit.
 		{name: "signal only", js: `{"uninstall":[{"signal":["TERM","dev.example.c"]}]},` + app7, want: "sudo"},
@@ -214,6 +232,19 @@ func TestCaskJudge(t *testing.T) {
 					t.Fatal(err)
 				}
 				t.Cleanup(func() { _ = os.Chmod(ro, 0o755) })
+			}
+			if tc.locked != "" {
+				if os.Geteuid() == 0 {
+					t.Skip("root reads every folder")
+				}
+				locked := filepath.Join(root, tc.locked)
+				if err := os.MkdirAll(locked, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Chmod(locked, 0); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
 			}
 			plain, err := c.Plain(context.Background())
 			if err != nil {

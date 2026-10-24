@@ -323,60 +323,71 @@ func (d *downloadedInstallers) judgeOne(ctx context.Context, path string, apps [
 // could hide an installed copy.
 func (d *downloadedInstallers) installedApps(ctx context.Context) ([]installedApp, bool) {
 	var apps []installedApp
-	complete := true
-	add := func(path string) {
-		at, err := bounded(ctx, d.w, path, func() (time.Time, error) { return d.added(path) })
-		if err != nil {
-			at = time.Time{}
-		}
-		apps = append(apps, installedApp{path: path, key: nameKey(strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))), added: at})
-	}
 	for _, root := range appRoots {
-		root = d.host.ExpandPath(root)
-		entries, partial, err := d.w.list(ctx, root)
-		if err != nil || partial {
+		paths, complete := appBundles(ctx, d.w, d.host.ExpandPath(root))
+		if !complete {
 			return nil, false
 		}
-		for _, e := range entries {
-			p := filepath.Join(root, e.Name())
-			isDir, err := d.statDir(ctx, p)
-			switch {
-			case err != nil:
-				complete = false
-				continue
-			case !isDir:
-				continue
-			case strings.EqualFold(filepath.Ext(e.Name()), ".app"):
-				add(p)
+		for _, path := range paths {
+			at, err := bounded(ctx, d.w, path, func() (time.Time, error) { return d.added(path) })
+			if err != nil {
+				at = time.Time{}
+			}
+			apps = append(apps, installedApp{path: path, key: nameKey(strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))), added: at})
+		}
+	}
+	return apps, true
+}
+
+// appBundles lists the app bundles in root and one folder down
+// (/Applications/Utilities), following symlinks. complete is false
+// when root, a folder in it or an entry could not be read. A root that
+// is not there holds none.
+func appBundles(ctx context.Context, w *walker, root string) (paths []string, complete bool) {
+	entries, partial, err := w.list(ctx, root)
+	if err != nil || partial {
+		return nil, false
+	}
+	complete = true
+	for _, e := range entries {
+		p := filepath.Join(root, e.Name())
+		isDir, err := statDir(ctx, w, p)
+		switch {
+		case err != nil:
+			complete = false
+			continue
+		case !isDir:
+			continue
+		case strings.EqualFold(filepath.Ext(e.Name()), ".app"):
+			paths = append(paths, p)
+			continue
+		}
+		sub, partial, err := w.list(ctx, p)
+		if err != nil || partial {
+			complete = false
+			continue
+		}
+		for _, s := range sub {
+			sp := filepath.Join(p, s.Name())
+			if !strings.EqualFold(filepath.Ext(s.Name()), ".app") {
 				continue
 			}
-			sub, partial, err := d.w.list(ctx, p)
-			if err != nil || partial {
+			isDir, err := statDir(ctx, w, sp)
+			if err != nil {
 				complete = false
-				continue
-			}
-			for _, s := range sub {
-				sp := filepath.Join(p, s.Name())
-				if !strings.EqualFold(filepath.Ext(s.Name()), ".app") {
-					continue
-				}
-				isDir, err := d.statDir(ctx, sp)
-				if err != nil {
-					complete = false
-				} else if isDir {
-					add(sp)
-				}
+			} else if isDir {
+				paths = append(paths, sp)
 			}
 		}
 	}
-	return apps, complete
+	return paths, complete
 }
 
 // statDir reports whether path is a folder, through a symlink. A path
 // that is not there, a dangling symlink among them, is no folder; any
 // other failure is an error.
-func (d *downloadedInstallers) statDir(ctx context.Context, path string) (bool, error) {
-	fi, err := d.w.stat(ctx, path)
+func statDir(ctx context.Context, w *walker, path string) (bool, error) {
+	fi, err := w.stat(ctx, path)
 	switch {
 	case absent(err):
 		return false, nil

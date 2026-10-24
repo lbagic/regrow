@@ -20,13 +20,15 @@ import (
 // replaced by its own updater under another name, leaves brew listing
 // the cask, its Caskroom folder and its shims. One brew call lists the
 // installed casks for two rules. A cask whose every app is gone from
-// where brew put it, /Applications and ~/Applications, is an item:
-// brew-cask-records offers `brew uninstall --cask <token>` when its
-// uninstall only quits the app and nothing it does may ask for a
-// password, and brew-cask-records-sudo shows the rest. Never --zap: that deletes the app's data with no
-// Trash. A cask that installs no app is left out, and so is one whose
-// install record or app folder cannot be read. The cask-record-recheck
-// pre-action asks brew again right before the uninstall.
+// where brew put it, /Applications and ~/Applications, and from one
+// folder down in each, is an item: brew-cask-records offers
+// `brew uninstall --cask <token>` when its uninstall only quits the
+// app and nothing it does may ask for a password, and
+// brew-cask-records-sudo shows the rest. Never --zap: that deletes the
+// app's data with no Trash. A cask that installs no app is left out,
+// and so is one whose install record or app folders cannot be read.
+// The cask-record-recheck pre-action asks brew again right before the
+// uninstall.
 //
 // From Homebrew 7, each relocated artifact carries a sibling "target":
 // the absolute path brew resolved for it. It is no artifact kind.
@@ -57,10 +59,11 @@ var stepArtifacts = map[string]bool{"preflight_steps": true, "postflight_steps":
 var plainArtifacts = map[string]bool{"generate_completions_from_executable": true, "zap": true}
 
 // caskRecords lists the installed casks once per scan for both rules.
-// Tests hand in brew, the home folder and the walker.
+// Tests hand in brew, the home folder, the app folders and the walker.
 type caskRecords struct {
 	Brew func(ctx context.Context, args ...string) (out []byte, ok bool, err error)
 	Home string
+	Apps []string // nil: appRoots
 	w    *walker
 
 	mu    sync.Mutex
@@ -78,7 +81,7 @@ func (c *caskRecords) Plain(ctx context.Context) ([]engine.Item, error) {
 }
 
 // NeedsPassword is the brew-cask-records-sudo query: records whose
-// uninstall asks for a password.
+// uninstall may ask for a password or does more than quit the app.
 func (c *caskRecords) NeedsPassword(ctx context.Context) ([]engine.Item, error) {
 	c.load(ctx)
 	return c.sudo, c.err
@@ -87,7 +90,8 @@ func (c *caskRecords) NeedsPassword(ctx context.Context) ([]engine.Item, error) 
 // RecheckCaskRecord is the cask-record-recheck pre-action: right before
 // `brew uninstall --cask`, it asks brew about the casks again and
 // refuses unless the one at path is still installed, its apps still
-// gone, and its uninstall still asks for no password.
+// gone, and its uninstall still only quits the app and asks for no
+// password.
 func RecheckCaskRecord(ctx context.Context, path string) error {
 	ctx, cancel := context.WithTimeout(ctx, toolQueryTimeout)
 	defer cancel()
@@ -106,7 +110,7 @@ func (c *caskRecords) recheck(ctx context.Context, path string) error {
 	}
 	for _, it := range sudo {
 		if it.Path == filepath.Clean(path) {
-			return fmt.Errorf("cask %s now has uninstall steps that ask for a password: not uninstalled", filepath.Base(path))
+			return fmt.Errorf("cask %s's uninstall now may ask for a password, or does more than quit the app: not uninstalled", filepath.Base(path))
 		}
 	}
 	return fmt.Errorf("cask %s is no longer installed with its app gone: not uninstalled", filepath.Base(path))
@@ -155,6 +159,21 @@ func (c *caskRecords) home() string {
 	return home
 }
 
+// appFolders are where an app is looked for besides where brew put it.
+func (c *caskRecords) appFolders() []string {
+	if c.Apps != nil {
+		return c.Apps
+	}
+	folders := make([]string, len(appRoots))
+	for i, r := range appRoots {
+		folders[i] = r
+		if rest, ok := strings.CutPrefix(r, "~/"); ok {
+			folders[i] = filepath.Join(c.home(), rest)
+		}
+	}
+	return folders
+}
+
 // installedCask is the part of `brew info --cask --json=v2` read here.
 type installedCask struct {
 	Token     string                       `json:"token"`
@@ -181,8 +200,9 @@ func (c *caskRecords) list(ctx context.Context) (plain, sudo []engine.Item, err 
 	if !filepath.IsAbs(caskroom) {
 		return nil, nil, fmt.Errorf("brew --caskroom printed %q, not a folder", caskroom)
 	}
+	scan := &appScan{w: c.walker(), names: map[string]map[string]bool{}}
 	for _, cask := range info.Casks {
-		item, needsPassword, ok, err := c.judge(ctx, caskroom, cask)
+		item, needsPassword, ok, err := c.judge(ctx, caskroom, cask, scan)
 		switch {
 		case err != nil:
 			return nil, nil, err
@@ -197,10 +217,11 @@ func (c *caskRecords) list(ctx context.Context) (plain, sudo []engine.Item, err 
 }
 
 // judge decides one cask: ok when every app it installed is gone, and
-// whether its uninstall asks for a password. A cask that installs no
-// app, or whose record or app folder cannot be read, is not ok. Its
-// only error is a cask brew described in a shape not read here.
-func (c *caskRecords) judge(ctx context.Context, caskroom string, cask installedCask) (engine.Item, bool, bool, error) {
+// whether its uninstall may ask for a password or does more than quit
+// the app. A cask that installs no app, or whose record or app folders
+// cannot be read, is not ok. Its only error is a cask brew described
+// in a shape not read here.
+func (c *caskRecords) judge(ctx context.Context, caskroom string, cask installedCask, scan *appScan) (engine.Item, bool, bool, error) {
 	if cask.Token == "" || strings.ContainsAny(cask.Token, "/ ") || cask.Token[0] == '-' {
 		return engine.Item{}, false, false, fmt.Errorf("brew described a cask named %q", cask.Token)
 	}
@@ -252,21 +273,36 @@ func (c *caskRecords) judge(ctx context.Context, caskroom string, cask installed
 		return engine.Item{}, false, false, nil
 	}
 	w := c.walker()
+	folders := c.appFolders()
 	for _, app := range apps {
 		if rest, ok := strings.CutPrefix(app, "~/"); ok {
 			app = filepath.Join(home, rest)
 		}
-		places := []string{app, filepath.Join("/Applications", filepath.Base(app)), filepath.Join(home, "Applications", filepath.Base(app))}
 		if filepath.IsAbs(app) && !w.isDir(ctx, filepath.Dir(app)) {
 			// Its folder is not there: a disk not mounted.
 			return engine.Item{}, false, false, nil
 		}
+		places := []string{app}
+		name := filepath.Base(app)
 		if !filepath.IsAbs(app) {
-			places = []string{filepath.Join(appdir, app), filepath.Join("/Applications", app), filepath.Join(home, "Applications", app)}
+			places = []string{filepath.Join(appdir, app)}
+			name = app
+		}
+		for _, f := range folders {
+			places = append(places, filepath.Join(f, name))
 		}
 		for _, p := range places {
 			if _, err := w.lstat(ctx, p); !absent(err) {
 				// There, or it cannot be told.
+				return engine.Item{}, false, false, nil
+			}
+		}
+		roots := append([]string{appdir}, folders...)
+		if filepath.IsAbs(app) {
+			roots = append(roots, filepath.Dir(app))
+		}
+		for _, r := range roots {
+			if found, told := scan.has(ctx, r, filepath.Base(name)); found || !told {
 				return engine.Item{}, false, false, nil
 			}
 		}
@@ -281,6 +317,31 @@ func (c *caskRecords) judge(ctx context.Context, caskroom string, cask installed
 	}
 	label := fmt.Sprintf("%s %s: %s gone", cask.Token, cask.Installed, strings.Join(names, ", "))
 	return engine.Item{Path: record, Arg: cask.Token, Label: label, Bytes: u.Bytes, LastUsed: u.Newest, Partial: u.Partial}, needsPassword, true, nil
+}
+
+// appScan lists each folder's app bundles and those one folder down
+// once per brew listing, by folded name; nil for a folder that could
+// not all be listed.
+type appScan struct {
+	w     *walker
+	names map[string]map[string]bool
+}
+
+// has reports whether an app called name is in folder or one folder
+// down; told is false when that cannot be read.
+func (s *appScan) has(ctx context.Context, folder, name string) (found, told bool) {
+	names, seen := s.names[folder]
+	if !seen {
+		paths, complete := appBundles(ctx, s.w, folder)
+		if complete {
+			names = map[string]bool{}
+			for _, p := range paths {
+				names[foldName(filepath.Base(p))] = true
+			}
+		}
+		s.names[folder] = names
+	}
+	return names[foldName(name)], names != nil
 }
 
 // resolvedTarget is the absolute path Homebrew 7 resolved for an
