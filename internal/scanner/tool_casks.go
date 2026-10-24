@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -113,7 +114,7 @@ func (c *caskRecords) recheck(ctx context.Context, path string) error {
 			return fmt.Errorf("cask %s's uninstall now may ask for a password, or does more than quit the app: not uninstalled", filepath.Base(path))
 		}
 	}
-	return fmt.Errorf("cask %s is no longer installed with its app gone: not uninstalled", filepath.Base(path))
+	return fmt.Errorf("cask %s is no longer installed with its app gone, or regrow can no longer tell: not uninstalled", filepath.Base(path))
 }
 
 func (c *caskRecords) load(ctx context.Context) {
@@ -319,29 +320,59 @@ func (c *caskRecords) judge(ctx context.Context, caskroom string, cask installed
 	return engine.Item{Path: record, Arg: cask.Token, Label: label, Bytes: u.Bytes, LastUsed: u.Newest, Partial: u.Partial}, needsPassword, true, nil
 }
 
-// appScan lists each folder's app bundles and those one folder down
-// once per brew listing, by folded name; nil for a folder that could
-// not all be listed.
+// appScan reads the entries of each folder and of its folders one
+// level down once per brew listing, by folded name. Every entry counts,
+// a link that leads nowhere among them. A folder is nil, not told, when
+// it could not all be listed or holds a link that leads nowhere, which
+// may be a folder on a disk not mounted.
 type appScan struct {
 	w     *walker
 	names map[string]map[string]bool
 }
 
-// has reports whether an app called name is in folder or one folder
+// has reports whether anything called name is in folder or one folder
 // down; told is false when that cannot be read.
 func (s *appScan) has(ctx context.Context, folder, name string) (found, told bool) {
 	names, seen := s.names[folder]
 	if !seen {
-		paths, complete := appBundles(ctx, s.w, folder)
-		if complete {
-			names = map[string]bool{}
-			for _, p := range paths {
-				names[foldName(filepath.Base(p))] = true
-			}
-		}
+		names = s.read(ctx, folder)
 		s.names[folder] = names
 	}
 	return names[foldName(name)], names != nil
+}
+
+func (s *appScan) read(ctx context.Context, folder string) map[string]bool {
+	entries, partial, err := s.w.list(ctx, folder)
+	if err != nil || partial {
+		return nil
+	}
+	names := map[string]bool{}
+	for _, e := range entries {
+		names[foldName(e.Name())] = true
+		if strings.EqualFold(filepath.Ext(e.Name()), ".app") {
+			continue
+		}
+		p := filepath.Join(folder, e.Name())
+		isDir := e.IsDir()
+		if e.Type()&fs.ModeSymlink != 0 {
+			fi, err := s.w.stat(ctx, p)
+			if err != nil {
+				return nil
+			}
+			isDir = fi.IsDir()
+		}
+		if !isDir {
+			continue
+		}
+		sub, partial, err := s.w.list(ctx, p)
+		if err != nil || partial {
+			return nil
+		}
+		for _, se := range sub {
+			names[foldName(se.Name())] = true
+		}
+	}
+	return names
 }
 
 // resolvedTarget is the absolute path Homebrew 7 resolved for an

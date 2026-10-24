@@ -109,7 +109,7 @@ func TestCaskRecords(t *testing.T) {
 			t.Errorf("recheck of %s passed", tok)
 		}
 	}
-	// launchctl asks for no password; the refusal says what the row means.
+	// gone-launchctl is on the -sudo row; the refusal says what that row means.
 	err = c.recheck(context.Background(), filepath.Join(caskroom, "gone-launchctl"))
 	if err == nil || !strings.Contains(err.Error(), "may ask for a password, or does more than quit the app") {
 		t.Errorf("recheck of a -sudo record: %v; want the -sudo row's words", err)
@@ -162,6 +162,7 @@ func TestCaskJudge(t *testing.T) {
 		links   []string // files under <root>, the links brew made
 		roDir   bool     // <root>/ro is not the owner's to write
 		locked  string   // a folder under <root> nobody may read
+		dead    []string // links under <root> to <root>/NotMounted, a disk not mounted
 		want    string   // "plain", "sudo" or "" (not listed)
 	}{
 		{name: "quit only, brew 7", js: quit + `,` + app7 + `,{"zap":[{"trash":["~/Library/x"]}]}`, want: "plain"},
@@ -182,7 +183,10 @@ func TestCaskJudge(t *testing.T) {
 		{name: "an app moved one folder down from a target outside the app folder",
 			js: quit + `,{"app":["Regrow Test C.app",{"target":"<root>/Other/C.app"}],"target":"<root>/Other/C.app"}`, present: []string{"Other/Sub/C.app"}},
 		{name: "a folder in the app folder regrow cannot read", js: quit + `,` + app7, locked: "Apps/Locked"},
+		{name: "a folder link that leads nowhere", js: quit + `,` + app7, dead: []string{"Applications/Dev"}},
+		{name: "an app link one folder down that leads nowhere", js: quit + `,` + app7, dead: []string{"Apps/Dev/Regrow Test C.app"}},
 		{name: "another app one folder down", js: quit + `,` + app7, present: []string{"Apps/Dev/Regrow Test D.app"}, want: "plain"},
+		{name: "a link one folder down under another name that leads nowhere", js: quit + `,` + app7, dead: []string{"Apps/Dev/Other"}, want: "plain"},
 		{name: "an app two folders down", js: quit + `,` + app7, present: []string{"Apps/Dev/Old/Regrow Test C.app"}, want: "plain"},
 		// brew signals and removes login items even when the app is gone,
 		// so one moved where regrow does not look is hit.
@@ -222,6 +226,15 @@ func TestCaskJudge(t *testing.T) {
 			root := filepath.Dir(c.Home)
 			for _, l := range tc.links {
 				writeFile(t, filepath.Join(root, l), 10)
+			}
+			for _, l := range tc.dead {
+				link := filepath.Join(root, l)
+				if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(filepath.Join(root, "NotMounted", filepath.Base(l)), link); err != nil {
+					t.Fatal(err)
+				}
 			}
 			if tc.roDir {
 				if os.Geteuid() == 0 {
@@ -267,6 +280,38 @@ func TestCaskJudge(t *testing.T) {
 				t.Errorf("listed as %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// Without Apps the rule looks in /Applications and ~/Applications.
+func TestCaskAppFolders(t *testing.T) {
+	c := oneCask(t, `{"uninstall":[{"quit":"dev.example.c"}]},{"app":["Regrow Test C.app"],"target":"<apps>/Regrow Test C.app"}`, "home/Applications/Dev/Regrow Test C.app")
+	c.Apps = nil
+	if got, want := c.appFolders(), []string{"/Applications", filepath.Join(c.Home, "Applications")}; !slices.Equal(got, want) {
+		t.Errorf("app folders %q, want %q", got, want)
+	}
+	plain, err := c.Plain(context.Background())
+	if err != nil || len(plain) != 0 {
+		t.Errorf("plain %q, err %v; the app is in ~/Applications/Dev", caskTokens(plain), err)
+	}
+}
+
+// A folder regrow cannot read leaves the cask out; the refusal says
+// it can no longer tell.
+func TestCaskRecheckWhenAFolderCannotBeRead(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads every folder")
+	}
+	c := oneCask(t, `{"uninstall":[{"quit":"dev.example.c"}]},{"app":["Regrow Test C.app"],"target":"<apps>/Regrow Test C.app"}`)
+	root := filepath.Dir(c.Home)
+	locked := filepath.Join(root, "Apps", "Locked")
+	if err := os.MkdirAll(locked, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+	err := c.recheck(context.Background(), filepath.Join(root, "Caskroom", "c"))
+	if err == nil || !strings.Contains(err.Error(), "or regrow can no longer tell") {
+		t.Errorf("recheck: %v; want it to say regrow can no longer tell", err)
 	}
 }
 
