@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Opening regrow's window no longer starts a scan. The menu bar menu has "Open regrow", which shows the window as you left it, and "Scan", which shows it and starts a scan. Closing the window hides it, so the scan, plan or run it shows is there at the next Open; a window with no scan yet has a Scan button. Opening Regrow.app from Finder or Spotlight shows the window without a scan. "Relaunch to apply" after granting Full Disk Access starts a scan, as its point is a scan with the new access.
+
 - The app's scan window draws a rule's command that each item fills in (one holding `{path}` or `{arg}`, which has no Copy) with each word quoted as a shell reads it, its `{path}` or `{arg}` as written. It used double quotes, inside which a shell expands `$1` and runs `$(…)`, so such a command selected and pasted into Terminal would not have meant what the rule runs.
 
 - `just app` (`scripts/app.sh`) builds again in a checkout whose folder moved since its last build. SwiftPM's module cache in `app/.build` keeps the folder it was built in, and a build in the new place failed: `OperationQueue` and `NSAppleEventDescriptor` lacked members the SDK has. The script now records the folder it builds in, and when `app/.build` holds no such record or names another folder it runs `swift package clean` first, so that build starts from scratch.

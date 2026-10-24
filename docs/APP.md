@@ -1,6 +1,6 @@
 # The menubar app
 
-`Regrow.app` keeps regrow in the menu bar: free space, purgeable space, swap and days-to-full at a glance, a watch tick every 15 minutes and on wake whose alerts arrive as notifications, and a window that scans, plans and runs a clean. Opening the app from Finder, Spotlight or `open` shows the window, also while it runs; a launch at login shows only the menu bar item, whose "Open regrow" opens it. While Regrow is in your Login Items, a launch in the first two minutes after you log in counts as the login's and opens no window; opening the app while it runs always shows it, and so does a relaunch. It is a shell around `regrow engine` ([ENGINE.md](ENGINE.md)): the Go binary sits inside the bundle and does all the work. The scan page follows [DESIGN.md](../DESIGN.md).
+`Regrow.app` keeps regrow in the menu bar: free space, purgeable space, swap and days-to-full at a glance, a watch tick every 15 minutes and on wake whose alerts arrive as notifications, and a window that scans, plans and runs a clean. Opening the app from Finder, Spotlight or `open` shows the window, also while it runs; a launch at login shows only the menu bar item. The menu's "Open regrow" shows the window as it was left, and "Scan" shows it and starts a scan; a window with no scan offers Scan in its tray. Closing the window hides it, so the scan, plan or run it shows waits for the next Open. While Regrow is in your Login Items, a launch in the first two minutes after you log in counts as the login's and opens no window; opening the app while it runs always shows it, and so does a relaunch. It is a shell around `regrow engine` ([ENGINE.md](ENGINE.md)): the Go binary sits inside the bundle and does all the work. The scan page follows [DESIGN.md](../DESIGN.md).
 
 It builds with the Command Line Tools alone. No Xcode is needed.
 
@@ -30,7 +30,7 @@ Full Disk Access goes to the app, not to a terminal: the engine inside the bundl
 
 - One engine at a time, started again when it exits, with the environment of a login shell, so `go`, `docker` and `brew` are found as they are in a terminal. When that environment cannot be read the menu and the page say so, and a plan skips each command whose program is not on the PATH.
 - A watch tick at launch, every 15 minutes and on wake. The autotrim switch sends the tick with `autotrim`; the engine refuses it until one `regrow prune go-build --yes` has completed.
-- A scan only when the window asks for one. Nothing runs without the plan screen and the confirm screen, whose tick box unlocks the button.
+- A scan only when you ask for one: the menu's Scan, the window's Scan or Scan again, or the relaunch that applies Full Disk Access. Nothing runs without the plan screen and the confirm screen, whose tick box unlocks the button.
 
 The menu's "Show staging in Finder" opens regrow's staging folder: what a run moved there because Finder was not available, and the export made before a docker volume is removed. The app deletes nothing there.
 
@@ -49,7 +49,7 @@ The smoke checks start the installed app through LaunchServices, so the grants t
 
 ## What a launch can choose
 
-Anything running as you can start the app with variables and arguments of its choosing, and what the app runs then has its Full Disk Access. So a bundle signed with the identity takes nothing from its launch beyond `--open-scan`, which opens the window, and `-autotrim YES`, which turns autotrim on for that run:
+Anything running as you can start the app with variables and arguments of its choosing, and what the app runs then has its Full Disk Access. So a bundle signed with the identity takes nothing from its launch beyond `--open-scan`, which opens the window and starts a scan, and `-autotrim YES`, which turns autotrim on for that run:
 
 - No `REGROW_` variable. `REGROW_ENGINE`, `REGROW_PAGE`, `REGROW_RULES_DIR`, `REGROW_HOME`, `REGROW_STATE_HOME` and `REGROW_LOG` point a development run at other files only in an ad hoc or unsigned build (`just app-build`, `swift run`). The line is the signature, not the path: a copy of the installed app anywhere holds its grants.
 - Nothing the engine, the login shell, osascript or the relaunch helper inherit from the app's environment: each starts from the login shell's environment, or from your account's (home, user and shell from the password database, the system `PATH`).

@@ -64,13 +64,13 @@ A size is the figure and its unit set apart: the unit at regular weight in `--in
 
 ## The page, top to bottom
 
-1. **Top bar**: the name, the scan's status in words, one action on the right ("Scan again"; while scanning, a progress bar and "Stop"). Empty on the plan and confirm steps.
+1. **Top bar**: the name, the scan's status in words, one action on the right ("Scan again" once there is a scan; while scanning, a progress bar and "Stop"). Empty on the plan and confirm steps.
 2. **Headline**: with a forecast, when the disk fills at the recent pace; without one, free space of the total, and a line under the meter saying why there is no forecast.
 3. **Disk meter**: 6px, three segments with 2px gaps, then the figures in words: free, purgeable, swap.
 4. **Four totals**, side by side, and a fifth, the volume exports, only when the scan holds a docker volume: a 4px rule filled against the largest of them, the figure, a swatch and a label saying when the space comes back. They are never added up, and a line under them says so. While a scan runs each reads "pending".
 5. **Notice** (Full Disk Access off): one `--panel` row, a lock icon, a sentence, its action on the right.
 6. **Sections**, in this order, each only when it has rows: Not scanned, Safe to clear, Your call, Only shown. A header is the title, a count in words, and on the right the bar scale or a link.
-7. **Tray**: the three steps (Findings, Plan, Confirm) as numbered circles, a sentence on where things stand, the next action as the one filled button. On the findings, the sentence counts what is ticked, the skips its plan would have, and what that frees, by total.
+7. **Tray**: the three steps (Findings, Plan, Confirm) as numbered circles, a sentence on where things stand, the next action as the one filled button. On the findings, the sentence counts what is ticked, the skips its plan would have, and what that frees, by total. With no scan yet, under "No scan to show.", it says a scan removes nothing, and the button is Scan.
 
 ## Findings
 
@@ -106,7 +106,7 @@ A 6px bar on a 1px `--line-strong` hairline the full width of its column; the fi
 The menu bar item is the drive symbol and the free space. Its menu is native, drawn by AppKit: what the owner reads at the top, what they can do under it. A line that does nothing is a view in a disabled item: the arrow keys pass over it, and nothing greys it, as macOS greys a disabled item's title. None of the page's colours or type reaches it; sizes are the system font's.
 
 - **Figures**, 340pt wide with 14pt sides, in the label colour: free space semibold 20 and "free of" the total in 13; a 6px meter (taken, purgeable, free, 2px gaps, the label colour at 55%, 25% and 10%, radius 3; free to scale, purgeable at least 2px); "Purgeable · Swap" and the forecast in 12; "Checked at" in secondary 11; then a failed check or a stopped engine in 12, wrapped.
-- **Actions**, in this order, separated where shown: Open regrow | the autotrim switch, its state on the right in secondary ("on", "off"; a checkmark would indent every item out of line with the text above), with the engine's note under it in secondary 12, wrapped, its quotes in mono, when autotrim did not run | Full Disk Access with its state on the right, and when it is not granted "Open Full Disk Access settings" and "Relaunch to apply"; "Show staging in Finder" with the staging size on the right in secondary, when there is any | the login environment's failure, wrapped | Quit regrow.
+- **Actions**, in this order, separated where shown: Open regrow, which shows the window as it was left, and Scan, which shows it and starts a scan | the autotrim switch, its state on the right in secondary ("on", "off"; a checkmark would indent every item out of line with the text above), with the engine's note under it in secondary 12, wrapped, its quotes in mono, when autotrim did not run | Full Disk Access with its state on the right, and when it is not granted "Open Full Disk Access settings" and "Relaunch to apply"; "Show staging in Finder" with the staging size on the right in secondary, when there is any | the login environment's failure, wrapped | Quit regrow.
 - A menu's text cannot be selected: under any line that quotes a command, "Copy the command to run in Terminal" copies it.
 
 ## Checking a change
