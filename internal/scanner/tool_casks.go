@@ -323,8 +323,8 @@ func (c *caskRecords) judge(ctx context.Context, caskroom string, cask installed
 // appScan reads the entries of each folder and of its folders one
 // level down once per brew listing, by folded name. Every entry counts,
 // a link that leads nowhere among them. A folder is nil, not told, when
-// it could not all be listed or holds a link that leads nowhere, which
-// may be a folder on a disk not mounted.
+// it could not all be listed or holds a link not named as an app that
+// leads nowhere, which may be a folder on a disk not mounted.
 type appScan struct {
 	w     *walker
 	names map[string]map[string]bool
