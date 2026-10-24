@@ -46,6 +46,8 @@ final class Shell: ObservableObject {
     private var pageReady = false
     /// A scan asked for before the page said it was ready.
     private var scanAsked = false
+    /// The page was loaded again after its process ended, and lost what it showed.
+    private var pageReloaded = false
 
     private init() {
         log = LogFile(url: config.log)
@@ -387,9 +389,10 @@ final class Shell: ObservableObject {
                 guard let self else { return }
                 self.apply(self.router.pageMessage(body))
             },
-            onPageGone: { [weak self] in
+            onPageGone: { [weak self] reloading in
                 guard let self else { return }
                 self.pageReady = false
+                self.pageReloaded = reloading
                 self.apply(self.router.pageClosed())
             },
             onClose: { [weak self] in
@@ -402,6 +405,7 @@ final class Shell: ObservableObject {
             })
         self.window = window
         pageReady = false
+        pageReloaded = false
         scanAsked = scan
         window.show()
         log("scan window opened, page \(config.page.path)")
@@ -424,6 +428,10 @@ final class Shell: ObservableObject {
                 standing.append(environmentLine(environmentFailure))
             }
             standing.forEach { window?.deliver($0) }
+            if pageReloaded {
+                pageReloaded = false
+                window?.deliver(Router.shellEvent("reloaded"))
+            }
             pageReady = true
             if scanAsked {
                 scanAsked = false

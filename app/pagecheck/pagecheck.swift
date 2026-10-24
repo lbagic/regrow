@@ -111,6 +111,7 @@ struct Play {
     var clockStops = false               // the page's timers never fire
     var opened = false                   // the window was opened with Open: the shell asks for no scan
     var scanFirst = false                // the shell asks for a scan before it hands over the engine's hello
+    var holdHello = false                // the engine has not said hello when the page is ready
 }
 
 /// The window the page is drawn in: the size DESIGN.md draws it for, unless the environment asks otherwise.
@@ -450,7 +451,7 @@ final class Run: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHa
                 hello = json(event)
             }
             if play.scanFirst { send(["event": "shell", "state": "scan"]) }
-            send([hello])
+            if !play.holdHello { send([hello]) }
             if let tick = play.tick { send([answering(tick, "shell-1")[0]]) }
             if let reason = play.environment { send(["event": "shell", "state": "environment", "captured": false, "reason": reason]) }
             if !play.opened && !play.scanFirst { send(["event": "shell", "state": "scan"]) }
@@ -1258,6 +1259,53 @@ struct Scenario {
             r.same(r.sent("scan").count, 2, "scans after the menu's Scan")
             await results(r)
             await r.shoot()
+        },
+        Scenario(name: "pre-hello", play: Play(opened: true, holdHello: true)) { r in
+            // Open before the engine has said hello: nothing is promised, and Scan waits for the engine.
+            r.same(await r.text(".lead h2"), "Waiting for regrow.", "the headline")
+            r.same(await r.text(".tray .say"), "Waiting for the engine to start.", "the tray")
+            r.expect(await r.flag("return document.querySelector('.tray [data-do=scan]').disabled"), "Scan can be clicked before the engine said hello")
+            await r.shoot()
+            r.send([r.transcript.lines("hello")[0]])
+            await r.settle()
+            r.same(r.sent("scan").count, 0, "scans after hello in a window opened with Open")
+            r.same(await r.text(".tray .say"), "A scan reads the disk and removes nothing.", "the tray after hello")
+        },
+        Scenario(name: "down-no-scan", play: Play(opened: true)) { r in
+            // The engine stops under a window with no scan: none is promised, and none starts when it is back.
+            r.send(["event": "shell", "state": "engine_down", "message": "the engine exited with status 2"])
+            await r.settle()
+            r.same(await r.text(".lead .aside"), "Scan once the engine is back.", "the engine-down screen")
+            await r.shoot()
+            r.send([r.transcript.lines("hello")[0]])
+            await r.settle()
+            r.same(r.sent("scan").count, 0, "scans once the engine is back")
+            r.same(await r.text(".lead h2"), "No scan to show.", "the headline once the engine is back")
+        },
+        Scenario(name: "scan-while-down", play: Play(opened: true)) { r in
+            // The menu's Scan while the engine is down: the scan starts when it is back.
+            r.send(["event": "shell", "state": "engine_down", "message": "the engine exited with status 2"])
+            await r.settle()
+            r.send(["event": "shell", "state": "scan"])
+            await r.settle()
+            r.same(await r.text(".lead .aside"), "The scan you asked for starts as soon as the engine is back.", "the engine-down screen")
+            r.same(r.sent("scan").count, 0, "scans while the engine is down")
+            r.send([r.transcript.lines("hello")[0]])
+            await r.settle()
+            r.same(r.sent("scan").count, 1, "scans once the engine is back")
+            await results(r)
+            await r.shoot()
+        },
+        Scenario(name: "reloaded", play: Play(opened: true)) { r in
+            // The page was loaded again after its process ended: it says the scan it showed is gone.
+            r.send(["event": "shell", "state": "reloaded"])
+            await r.settle()
+            r.same(await r.text(".lead .aside"), "This window's page stopped and was loaded again, and the scan it showed went with it.", "the note")
+            await r.shoot()
+            await r.click(".tray [data-do=scan]")
+            await r.settle()
+            await results(r)
+            r.same(await r.count(".lead .aside"), 0, "the note once a scan started")
         },
         Scenario(name: "review-error") { r in
             // A review sent before the last tick change was counted is refused: the count still goes out, and the

@@ -14,18 +14,19 @@ final class ScanWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, WKScri
     private let page: URL
     private let log: LogFile
     private let onMessage: (Any) -> Void
-    private let onPageGone: () -> Void
+    private let onPageGone: (_ reloading: Bool) -> Void
     private let onClose: () -> Void
 
     private var firstLoadAllowed = false
     private var lastReload = Date.distantPast
 
     /// `onPageGone` is called when the page's requests have nobody left
-    /// to answer: the window closed, or the page's process ended.
+    /// to answer: the window closed, or the page's process ended, when
+    /// `reloading` is true and the page is loaded again.
     init(
         page: URL, log: LogFile,
         onMessage: @escaping (Any) -> Void,
-        onPageGone: @escaping () -> Void,
+        onPageGone: @escaping (_ reloading: Bool) -> Void,
         onClose: @escaping () -> Void
     ) {
         self.page = page
@@ -112,7 +113,7 @@ final class ScanWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, WKScri
             window.close()
             return
         }
-        onPageGone()
+        onPageGone(true)
         log("the page's process ended; loading the page again")
         lastReload = Date()
         load()
@@ -139,7 +140,7 @@ final class ScanWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, WKScri
         // The content controller holds its handler strongly.
         webView.configuration.userContentController.removeScriptMessageHandler(forName: Self.handler)
         webView.navigationDelegate = nil
-        onPageGone()
+        onPageGone(false)
         onClose()
     }
 }
