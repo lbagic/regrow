@@ -256,45 +256,22 @@ type ownersMemo struct {
 	home string
 	at   time.Time
 	in   *installedApps
-	// unread holds the code bundles running then that the reading did
-	// not read, each with whether it had an Info.plist then.
-	unread map[string]bool
 }
 
 var recheckOwners = &ownersMemo{}
 
-// unread is each running code bundle in does not hold, with whether an
-// app on its path, or the bundle, has an Info.plist.
-func (a *appLeftovers) unread(ctx context.Context, in *installedApps, running []string) (map[string]bool, error) {
-	out := map[string]bool{}
-	for _, b := range running {
-		if _, read := in.bundles[b]; read {
-			continue
-		}
-		_, ok, err := a.outermost(ctx, b)
-		if err != nil {
-			return nil, err
-		}
-		out[b] = ok
-	}
-	return out, nil
-}
-
 // saw reports that the memo's reading read every code bundle running
-// now, or saw it running with or without an Info.plist as it is now.
-// Otherwise an app was installed and started since, anywhere, or where
-// a bundle without one ran: the apps are read again.
-func (a *appLeftovers) saw(ctx context.Context, running []string) (bool, error) {
-	now, err := a.unread(ctx, a.memo.in, running)
-	if err != nil {
-		return false, err
-	}
-	for b, described := range now {
-		if then, seen := a.memo.unread[b]; !seen || then != described {
-			return false, nil
+// now. One it did not read sends the recheck to read the apps again,
+// however it came to run unread: an app installed and started since,
+// anywhere, an Info.plist written where a bundle ran, during the
+// reading or after, a bundle with no Info.plist or no id.
+func (m *ownersMemo) saw(running []string) bool {
+	for _, b := range running {
+		if _, read := m.in.bundles[b]; !read {
+			return false
 		}
 	}
-	return true, nil
+	return true
 }
 
 // owners reads the installed apps, or takes them from the memo while
@@ -307,24 +284,14 @@ func (a *appLeftovers) owners(ctx context.Context, procs []string) (*installedAp
 	defer a.memo.mu.Unlock()
 	now := a.now()
 	running := runningBundles(procs)
-	if age := now.Sub(a.memo.at); a.memo.in != nil && a.memo.home == a.host.Home && age >= 0 && age < ownersReuse {
-		saw, err := a.saw(ctx, running)
-		if err != nil {
-			return nil, err
-		}
-		if saw {
-			return a.memo.in, nil
-		}
+	if age := now.Sub(a.memo.at); a.memo.in != nil && a.memo.home == a.host.Home && age >= 0 && age < ownersReuse && a.memo.saw(running) {
+		return a.memo.in, nil
 	}
 	in, err := a.installed(ctx, procs)
 	if err != nil {
 		return nil, err
 	}
-	unread, err := a.unread(ctx, in, running)
-	if err != nil {
-		return nil, err
-	}
-	a.memo.home, a.memo.at, a.memo.in, a.memo.unread = a.host.Home, now, in, unread
+	a.memo.home, a.memo.at, a.memo.in = a.host.Home, now, in
 	return in, nil
 }
 

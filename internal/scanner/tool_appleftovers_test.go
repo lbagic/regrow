@@ -987,9 +987,6 @@ func TestAppLeftoversEntitledPathsKeepFolders(t *testing.T) {
 	}
 }
 
-// What could not be read is never claimed absent: an unreadable
-// ~/Library/Preferences is an error, and a location read in part is
-// named where it might have held a sign of the app.
 // A code bundle outside any app is named by itself in a row.
 func TestAppLeftoversEntitledPathsNameTheirBundle(t *testing.T) {
 	for name, bundle := range map[string]string{
@@ -1011,6 +1008,9 @@ func TestAppLeftoversEntitledPathsNameTheirBundle(t *testing.T) {
 	}
 }
 
+// What could not be read is never claimed absent: an unreadable
+// ~/Library/Preferences is an error, and a location read in part is
+// named where it might have held a sign of the app.
 func TestAppLeftoversSayWhatCouldNotBeRead(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("root reads every folder")
@@ -1350,17 +1350,12 @@ func TestAppLeftoversSkipFoldersNamedLikeApps(t *testing.T) {
 
 // Within the memo's minute, a recheck reads the installed apps again
 // when an app runs that the reading did not see, wherever it is
-// installed; a running bundle the reading saw and could not read is
-// not cause to read again.
+// installed, and not while every running app was read.
 func TestRecheckReadsAppsInstalledAndStartedSince(t *testing.T) {
 	f := newLeftoversFixture(t)
 	box := f.folder("Containers", "com.fresh.app")
-	plain := f.host.ExpandPath("/Volumes/P/Plain.app")
-	if err := os.MkdirAll(filepath.Join(plain, "Contents", "MacOS"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	f.procs = []string{filepath.Join(plain, "Contents", "MacOS", "plain")}
-	f.app("/Applications/Alpha.app", "com.alpha.app")
+	alpha := f.app("/Applications/Alpha.app", "com.alpha.app")
+	f.procs = []string{filepath.Join(alpha, "Contents", "MacOS", "Alpha")}
 	f.a.memo = &ownersMemo{}
 	ctx := context.Background()
 	if err := f.a.recheck(ctx, box); err != nil {
@@ -1377,27 +1372,67 @@ func TestRecheckReadsAppsInstalledAndStartedSince(t *testing.T) {
 	}
 }
 
-// A bundle the recheck's reading saw running without an Info.plist,
-// which has one now, is an app installed since: the apps are read
-// again.
-func TestRecheckReadsAppsInstalledWhereABundleRan(t *testing.T) {
-	for _, dir := range []string{"/Volumes/P", "/Applications"} {
-		t.Run(dir, func(t *testing.T) {
+// A code bundle running that the recheck's reading did not read sends
+// the next recheck to read the apps again, however it came to run
+// unread: an app installed where a bundle without an Info.plist ran,
+// an Info.plist written while the apps were read, a helper of an app
+// read gaining one, one without an id gaining it.
+func TestRecheckReadsAppsWhenABundleRunsUnread(t *testing.T) {
+	bare := func(t *testing.T, f *leftoversFixture, path string) string {
+		b := f.host.ExpandPath(path)
+		if err := os.MkdirAll(filepath.Join(b, "Contents", "MacOS"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	cases := map[string]func(t *testing.T, f *leftoversFixture) (bundle string, change func()){
+		"installed where a bundle ran, on a volume": func(t *testing.T, f *leftoversFixture) (string, func()) {
+			b := bare(t, f, "/Volumes/P/Fresh.app")
+			return b, func() { f.app("/Volumes/P/Fresh.app", "com.fresh.app") }
+		},
+		"installed where a bundle ran, in Applications": func(t *testing.T, f *leftoversFixture) (string, func()) {
+			b := bare(t, f, "/Applications/Fresh.app")
+			return b, func() { f.app("/Applications/Fresh.app", "com.fresh.app") }
+		},
+		"an Info.plist written during the reading": func(t *testing.T, f *leftoversFixture) (string, func()) {
+			b := bare(t, f, "/Volumes/P/Fresh.app")
+			f.app("/Applications/Alpha.app", "com.alpha.app")
+			read := f.a.entitlements
+			var once sync.Once
+			f.a.entitlements = func(ctx context.Context, bundle string) ([]byte, error) {
+				once.Do(func() {
+					_ = os.WriteFile(filepath.Join(b, "Contents", "Info.plist"), []byte(infoPlist("com.fresh.app", "1.0")), 0o644)
+				})
+				return read(ctx, bundle)
+			}
+			return b, func() {}
+		},
+		"a helper of an app read": func(t *testing.T, f *leftoversFixture) (string, func()) {
+			outer := f.app("/Volumes/P/Outer.app", "com.outer.app")
+			b := bare(t, f, "/Volumes/P/Outer.app/Contents/Helpers/Fresh.app")
+			return b, func() {
+				f.plist(filepath.Join(outer, "Contents", "Helpers", "Fresh.app", "Contents", "Info.plist"), "com.fresh.app")
+			}
+		},
+		"an Info.plist without an id": func(t *testing.T, f *leftoversFixture) (string, func()) {
+			b := f.app("/Volumes/P/Fresh.app", "")
+			return b, func() { f.app("/Volumes/P/Fresh.app", "com.fresh.app") }
+		},
+	}
+	for name, arrange := range cases {
+		t.Run(name, func(t *testing.T) {
 			f := newLeftoversFixture(t)
 			box := f.folder("Containers", "com.fresh.app")
-			app := f.host.ExpandPath(dir + "/Fresh.app")
-			if err := os.MkdirAll(filepath.Join(app, "Contents", "MacOS"), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			f.procs = []string{filepath.Join(app, "Contents", "MacOS", "Fresh")}
+			bundle, change := arrange(t, f)
+			f.procs = []string{filepath.Join(bundle, "Contents", "MacOS", "Fresh")}
 			f.a.memo = &ownersMemo{}
 			ctx := context.Background()
 			if err := f.a.recheck(ctx, box); err != nil {
 				t.Fatalf("recheck of an offered folder: %v", err)
 			}
-			f.app(dir+"/Fresh.app", "com.fresh.app")
+			change()
 			if err := f.a.recheck(ctx, box); err == nil || !strings.Contains(err.Error(), "no leftover now") {
-				t.Errorf("recheck of an app's folder after it was installed where its bundle ran = %v, want a refusal", err)
+				t.Errorf("recheck of the folder of an app running unread = %v, want a refusal", err)
 			}
 		})
 	}
