@@ -1271,6 +1271,17 @@ struct Scenario {
             r.same(r.sent("scan").count, 0, "scans after hello in a window opened with Open")
             r.same(await r.text(".tray .say"), "A scan reads the disk and removes nothing.", "the tray after hello")
         },
+        Scenario(name: "asked-pre-hello", play: Play(scanFirst: true, holdHello: true)) { r in
+            // The relaunch that applies Full Disk Access, before the engine has said hello: the scan waits for it.
+            r.same(await r.text(".tray .say"), "The scan starts once the engine is ready.", "the tray with a scan asked for")
+            r.expect(await r.flag("return document.querySelector('.tray [data-do=scan]').disabled"), "Scan can be clicked before the engine said hello")
+            r.same(r.sent("scan").count, 0, "scans before hello")
+            await r.shoot()
+            r.send([r.transcript.lines("hello")[0]])
+            await r.settle()
+            r.same(r.sent("scan").count, 1, "scans after hello")
+            await results(r)
+        },
         Scenario(name: "down-no-scan", play: Play(opened: true)) { r in
             // The engine stops under a window with no scan: none is promised, and none starts when it is back.
             r.send(["event": "shell", "state": "engine_down", "message": "the engine exited with status 2"])
@@ -1297,15 +1308,24 @@ struct Scenario {
             await r.shoot()
         },
         Scenario(name: "reloaded", play: Play(opened: true)) { r in
-            // The page was loaded again after its process ended: it says the scan it showed is gone.
-            r.send(["event": "shell", "state": "reloaded"])
+            // The page was loaded again after its process ended: it says what it showed is gone.
+            r.send(["event": "shell", "state": "reloaded", "running": false])
             await r.settle()
-            r.same(await r.text(".lead .aside"), "This window's page stopped and was loaded again, and the scan it showed went with it.", "the note")
+            r.same(await r.text(".lead .aside"), "This window's page stopped and was loaded again, so what it showed is gone.", "the note")
             await r.shoot()
             await r.click(".tray [data-do=scan]")
             await r.settle()
             await results(r)
             r.same(await r.count(".lead .aside"), 0, "the note once a scan started")
+        },
+        Scenario(name: "reloaded-run", play: Play(opened: true)) { r in
+            // Loaded again while a run was going: the run goes on out of sight, and history lists what it did.
+            r.send(["event": "shell", "state": "reloaded", "running": true])
+            await r.settle()
+            r.has(await r.text(".lead .aside"), "A run was going when it stopped: the run goes on to its end, and ", "the note")
+            r.same(await r.text(".lead .aside .mono"), "/Users/dev/Applications/Regrow.app/Contents/MacOS/regrow-engine history", "the command in the note")
+            r.same(await r.count(".lead .aside .copy"), 1, "Copy beside the command")
+            await r.shoot()
         },
         Scenario(name: "review-error") { r in
             // A review sent before the last tick change was counted is refused: the count still goes out, and the
@@ -1404,6 +1424,7 @@ struct Scenario {
             await r.settle()
             r.same(await r.screen(), "down", "the screen")
             r.has(await r.text(".page"), "the engine exited with status 1: write /dev/stdout: broken pipe", "the shell's message")
+            r.same(await r.text(".lead .aside"), "This page scans again as soon as the engine is back.", "the engine-down screen")
             r.same(await r.count("button:not(:disabled)"), 0, "buttons that can be pressed while the engine is down")
             await r.shoot()
             let scans = r.sent("scan").count

@@ -48,6 +48,8 @@ final class Shell: ObservableObject {
     private var scanAsked = false
     /// The page was loaded again after its process ended, and lost what it showed.
     private var pageReloaded = false
+    /// An execute was in flight when the reloaded page's process ended; it runs on.
+    private var reloadedMidRun = false
 
     private init() {
         log = LogFile(url: config.log)
@@ -393,6 +395,7 @@ final class Shell: ObservableObject {
                 guard let self else { return }
                 self.pageReady = false
                 self.pageReloaded = reloading
+                self.reloadedMidRun = reloading && self.router.executeInFlight
                 self.apply(self.router.pageClosed())
             },
             onClose: { [weak self] in
@@ -406,6 +409,7 @@ final class Shell: ObservableObject {
         self.window = window
         pageReady = false
         pageReloaded = false
+        reloadedMidRun = false
         scanAsked = scan
         window.show()
         log("scan window opened, page \(config.page.path)")
@@ -430,7 +434,7 @@ final class Shell: ObservableObject {
             standing.forEach { window?.deliver($0) }
             if pageReloaded {
                 pageReloaded = false
-                window?.deliver(Router.shellEvent("reloaded"))
+                window?.deliver(Router.shellEvent("reloaded", ["running": reloadedMidRun]))
             }
             pageReady = true
             if scanAsked {

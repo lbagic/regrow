@@ -253,7 +253,7 @@ const S = {
   error: null,        // an error event that no other state explains
   opened: false,      // the Full Disk Access settings were opened from here
   wantScan: false,    // the shell asked for a scan before the engine said hello
-  reloaded: false,    // the page's process ended and the page was loaded again, losing what it showed
+  reloaded: null,     // the page's process ended and the page was loaded again, losing what it showed: {running}
   scan: null,         // see newScan
   known: false,       // the first plan has said what starts ticked
   ticked: new Set(),  // atoms, each one handed over in a finding's select
@@ -349,7 +349,7 @@ const on = {
     if (e.state === 'automation') S.automation = e.allowed ? 'allowed' : 'denied';
     // The menu's Scan, or a relaunch to apply Full Disk Access.
     if (e.state === 'scan') { if (S.hello && !S.down) act.scan(); else S.wantScan = true; }
-    if (e.state === 'reloaded') S.reloaded = true;
+    if (e.state === 'reloaded') S.reloaded = { running: e.running === true };
     if (e.state !== 'engine_down') return;
     if (S.run && !S.run.result) S.cut = { id: S.plan.id, done: S.plan.actions.filter((a) => stateOf(a).state === 'done').length, of: S.plan.actions.length, moves: S.plan.actions.length > S.plan.commands };
     asked.clear();
@@ -411,7 +411,7 @@ const on = {
 
 function scan() {
   counting = clearTimeout(counting);
-  Object.assign(S, { screen: 'findings', scan: newScan(), reloaded: false, known: false, ticked: new Set(), tray: null, planning: '',
+  Object.assign(S, { screen: 'findings', scan: newScan(), reloaded: null, known: false, ticked: new Set(), tray: null, planning: '',
     plan: null, note: '', run: null, error: null, safeOpen: false, open: new Set() });
   S.scan.req = ask('scan', 'scan');
 }
@@ -684,7 +684,7 @@ function notices(all) {
 function drawFindings() {
   const sc = S.scan;
   if (!sc) {
-    return h`<section class="lead"><h2>${S.hello ? 'No scan to show.' : 'Waiting for regrow.'}</h2>${S.reloaded ? h`<p class="aside">This window's page stopped and was loaded again, and the scan it showed went with it.</p>` : ''}</section>${notices(false)}`;
+    return h`<section class="lead"><h2>${S.hello ? 'No scan to show.' : 'Waiting for regrow.'}</h2>${S.reloaded ? h`<p class="aside">This window's page stopped and was loaded again, so what it showed is gone.${S.reloaded.running ? h` A run was going when it stopped: the run goes on to its end, and <span class="mono">${cli()} history</span>${copy(cli() + ' history', 'command')} lists what it did.` : ''}</p>` : ''}</section>${notices(false)}`;
   }
   const scanning = sc.phase === 'scanning', so = scanning ? ' so far' : '';
   const views = sc.rows.map(measure).sort((a, b) => b.own - a.own);
