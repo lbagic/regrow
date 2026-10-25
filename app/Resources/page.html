@@ -684,7 +684,7 @@ function notices(all) {
 function drawFindings() {
   const sc = S.scan;
   if (!sc) {
-    return h`<section class="lead"><h2>${S.hello ? 'No scan to show.' : 'Waiting for regrow.'}</h2>${S.reloaded ? h`<p class="aside">This window's page stopped and was loaded again, so what it showed is gone.${S.reloaded.running ? h` A run was going when it stopped: the run goes on to its end, and <span class="mono">${cli()} history</span>${copy(cli() + ' history', 'command')} lists what it did.` : ''}</p>` : ''}</section>${notices(false)}`;
+    return h`<section class="lead"><h2>${S.hello ? 'No scan to show.' : 'Waiting for regrow.'}</h2>${S.reloaded ? h`<p class="aside">This window's page stopped and was loaded again, so what it showed is gone.${S.reloaded.running ? h` A run was going when it stopped; <span class="mono">${cli()} history</span>${copy(cli() + ' history', 'command')} lists what it did.` : ''}</p>` : ''}</section>${notices(false)}`;
   }
   const scanning = sc.phase === 'scanning', so = scanning ? ' so far' : '';
   const views = sc.rows.map(measure).sort((a, b) => b.own - a.own);

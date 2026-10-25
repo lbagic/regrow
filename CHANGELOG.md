@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Opening regrow's window no longer starts a scan. The menu bar menu has "Open regrow", which shows the window as you left it, and "Scan", which shows it and starts a scan. Closing the window hides it, so the scan, plan or run it shows is there at the next Open; a window with no scan yet has a Scan button. Opening Regrow.app from Finder or Spotlight shows the window without a scan. "Relaunch to apply" after granting Full Disk Access starts a scan, as its point is a scan with the new access. If the window's page has to be loaded again, it says what it showed is gone and, when a run was going, that the run goes on and `regrow history` lists what it did.
+- Opening regrow's window no longer starts a scan. The menu bar menu has "Open regrow", which shows the window as you left it, and "Scan", which shows it and starts a scan. Closing the window hides it, so the scan, plan or run it shows is there at the next Open; a window with no scan yet has a Scan button. Opening Regrow.app from Finder or Spotlight shows the window without a scan. "Relaunch to apply" after granting Full Disk Access starts a scan, as its point is a scan with the new access. If the window's page has to be loaded again, it says what it showed is gone and, when a run was going, that `regrow history` lists what it did.
 
 - The app's scan window draws a rule's command that each item fills in (one holding `{path}` or `{arg}`, which has no Copy) with each word quoted as a shell reads it, its `{path}` or `{arg}` as written. It used double quotes, inside which a shell expands `$1` and runs `$(…)`, so such a command selected and pasted into Terminal would not have meant what the rule runs.
 

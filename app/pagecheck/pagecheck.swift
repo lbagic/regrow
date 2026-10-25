@@ -1318,13 +1318,18 @@ struct Scenario {
             await results(r)
             r.same(await r.count(".lead .aside"), 0, "the note once a scan started")
         },
-        Scenario(name: "reloaded-run", play: Play(opened: true)) { r in
-            // Loaded again while a run was going: the run goes on out of sight, and history lists what it did.
+        Scenario(name: "reloaded-run", play: Play(helloSelf: "/Users/dev/Team's R&D/Regrow.app/Contents/MacOS/regrow-engine", opened: true)) { r in
+            // Loaded again while a run was going: the run went on out of sight, however it ended, and history lists what it did.
             r.send(["event": "shell", "state": "reloaded", "running": true])
             await r.settle()
-            r.has(await r.text(".lead .aside"), "A run was going when it stopped: the run goes on to its end, and ", "the note")
-            r.same(await r.text(".lead .aside .mono"), "/Users/dev/Applications/Regrow.app/Contents/MacOS/regrow-engine history", "the command in the note")
-            r.same(await r.count(".lead .aside .copy"), 1, "Copy beside the command")
+            let note = await r.text(".lead .aside")
+            r.has(note, "so what it showed is gone. A run was going when it stopped; ", "the note")
+            r.has(note, " lists what it did.", "the note's end")
+            let history = "'/Users/dev/Team'\\''s R&D/Regrow.app/Contents/MacOS/regrow-engine' history"
+            r.same(await r.text(".lead .aside .mono"), history, "the command in the note")
+            await r.click(".lead .aside .copy")
+            await r.settle()
+            r.same(r.pasted.last ?? "", history, "what the note's Copy copies")
             await r.shoot()
         },
         Scenario(name: "review-error") { r in
