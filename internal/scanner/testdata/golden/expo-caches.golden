@@ -1,0 +1,1 @@
+[trash] expo-caches: osascript -e tell application "Finder" to return POSIX path of ((delete POSIX file "~/.expo/ios-simulator-app-cache") as alias)  (pre: running-recheck)

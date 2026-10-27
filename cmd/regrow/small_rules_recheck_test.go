@@ -17,6 +17,12 @@ import (
 // with the Trash and the journal injected, over a throwaway home.
 func recheckRun(t *testing.T) (host engine.Host, exe func(engine.Plan) (int, int, []string, string)) {
 	t.Helper()
+	return recheckRunWith(t, nil)
+}
+
+// recheckRunWith is recheckRun over catalog.
+func recheckRunWith(t *testing.T, catalog []engine.Rule) (host engine.Host, exe func(engine.Plan) (int, int, []string, string)) {
+	t.Helper()
 	home, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -29,7 +35,7 @@ func recheckRun(t *testing.T) (host engine.Host, exe func(engine.Plan) (int, int
 		t.Helper()
 		mover := &movingMover{to: t.TempDir()}
 		journal := &memJournal{}
-		ex, release, err := newRunExecutor(host, "fixture-run", nil)
+		ex, release, err := newRunExecutor(host, catalog, "fixture-run", nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -134,6 +140,52 @@ func TestDownloadedInstallerRecheckStopsTheTrashMove(t *testing.T) {
 	}
 	if !strings.Contains(msg, "is kept now") || !strings.Contains(msg, dmg) {
 		t.Fatalf("journaled error = %q, want it to name the download and say it is kept", msg)
+	}
+}
+
+// A guarded rule's item a running process names stays; the other goes.
+// A rule the catalog does not hold is refused, its guard unknown.
+func TestRunningRecheckStopsTheTrashMove(t *testing.T) {
+	for _, tool := range []string{"lsof", "ps", "sh"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skipf("%s not installed", tool)
+		}
+	}
+	rule := engine.Rule{ID: "fixture-cache", Title: "A cache", Category: "fixture", Risk: engine.RiskSafe,
+		UnlessRunning: &engine.UnlessRunning{Inside: true}, PreAction: engine.PreActionRunningRecheck}
+	host, run := recheckRunWith(t, []engine.Rule{rule})
+	used, idle := filepath.Join(host.Home, "Caches", "used"), filepath.Join(host.Home, "Caches", "idle")
+	for _, d := range []string{used, idle} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// The shell waits in a builtin, so it starts no child to outlive it.
+	server := exec.Command("sh", "-c", "read line", used+"/server.sock")
+	stdin, err := server.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := server.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = stdin.Close()
+		_ = server.Process.Kill()
+		_ = server.Wait()
+	})
+
+	done, failed, moved, msg := run(trashPlan(t, host, rule, used, idle))
+	if done != 1 || failed != 1 || !reflect.DeepEqual(moved, []string{idle}) {
+		t.Fatalf("done %d, failed %d, moved %v; want the idle folder moved and the used one kept", done, failed, moved)
+	}
+	if !strings.Contains(msg, "a running process works in it or names it") {
+		t.Fatalf("journaled error = %q, want the reason", msg)
+	}
+
+	_, run = recheckRunWith(t, nil)
+	if done, failed, moved, msg := run(trashPlan(t, host, rule, idle)); done != 0 || failed != 1 || len(moved) != 0 || !strings.Contains(msg, "not in the catalog") {
+		t.Fatalf("a rule outside the catalog: done %d, failed %d, moved %v, %q; want it refused", done, failed, moved, msg)
 	}
 }
 

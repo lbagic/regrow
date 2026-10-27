@@ -1,0 +1,20 @@
+# The packages bun has downloaded.
+id: bun-cache
+title: "bun's package cache"
+category: dev-caches
+risk: safe
+paths:
+  darwin:
+    - "~/.bun/install/cache"
+unless_running:
+  # bun installed through npm runs as bin/bun.exe.
+  commands: [bun, bun.exe]
+pre_action: running-recheck
+regen:
+  story: "bun downloads a package again on the next install that needs it."
+  cost: "the next install downloads what it needs"
+sudo: false
+beta: true
+fixture:
+  files:
+    - "~/.bun/install/cache/react@18.3.1/package.json"

@@ -1,0 +1,20 @@
+# The packages Yarn 2 and later keep in their global cache. yarn-cache is Yarn 1's.
+id: yarn-berry-cache
+title: "Yarn's global package cache (Yarn 2 and later)"
+category: dev-caches
+risk: caution
+paths:
+  darwin:
+    - "~/.yarn/berry/cache"
+unless_running:
+  inside: true
+pre_action: running-recheck
+note: "A project that uses Plug'n'Play with the global cache, Yarn 4's default, reads its packages from here: it fails to start until `yarn install` runs in it again."
+regen:
+  story: "`yarn install` downloads the packages a project needs again."
+  cost: "the next install downloads every package"
+sudo: false
+beta: true
+fixture:
+  files:
+    - "~/.yarn/berry/cache/react-npm-18.3.1-af38f3c1ae-10c0.zip"

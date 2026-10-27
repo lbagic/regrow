@@ -1,0 +1,19 @@
+# The query and schema engines the Prisma CLI downloaded.
+id: prisma-engines
+title: "Prisma's downloaded engines"
+category: dev-caches
+risk: safe
+paths:
+  darwin:
+    - "~/.cache/prisma"
+unless_running:
+  inside: true
+pre_action: running-recheck
+regen:
+  story: "The Prisma CLI downloads them again the next time it needs them."
+  cost: "a download of each engine"
+sudo: false
+beta: true
+fixture:
+  files:
+    - "~/.cache/prisma/master/abc123/darwin-arm64/schema-engine"

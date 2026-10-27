@@ -1,0 +1,1 @@
+[trash] google-updater-cache: osascript -e tell application "Finder" to return POSIX path of ((delete POSIX file "~/Library/Application Support/Google/GoogleUpdater/crx_cache") as alias)  (pre: running-recheck)

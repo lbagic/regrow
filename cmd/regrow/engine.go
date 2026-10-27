@@ -87,7 +87,7 @@ func newEngineServer(host engine.Host, catalog []engine.Rule, flags []string) *p
 		Tick:       tickFor(host, catalog),
 		Staged:     stagedBytes,
 		NewExecutor: func(runID string) (*executor.Executor, func(), error) {
-			return newRunExecutor(host, runID, dockerStream)
+			return newRunExecutor(host, catalog, runID, dockerStream)
 		},
 		StagingDir: func(runID string) string {
 			logPath, err := oplog.DefaultPath()

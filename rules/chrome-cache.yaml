@@ -1,0 +1,19 @@
+# Chrome's browser cache, which it rebuilds as you browse.
+id: chrome-cache
+title: "Chrome's cache"
+category: app-caches
+risk: safe
+paths:
+  darwin:
+    - "~/Library/Caches/Google/Chrome"
+unless_running:
+  apps: [com.google.Chrome]
+pre_action: running-recheck
+regen:
+  story: "Chrome fills it again as you browse."
+  cost: "pages load from the network again at first"
+sudo: false
+beta: true
+fixture:
+  files:
+    - "~/Library/Caches/Google/Chrome/Default/Cache/Cache_Data/data_0"

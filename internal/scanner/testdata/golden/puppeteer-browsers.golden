@@ -1,0 +1,1 @@
+[trash] puppeteer-browsers: osascript -e tell application "Finder" to return POSIX path of ((delete POSIX file "~/.cache/puppeteer") as alias)  (pre: running-recheck)

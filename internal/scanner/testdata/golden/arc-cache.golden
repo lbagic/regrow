@@ -1,0 +1,1 @@
+[trash] arc-cache: osascript -e tell application "Finder" to return POSIX path of ((delete POSIX file "~/Library/Caches/Arc") as alias)  (pre: running-recheck)

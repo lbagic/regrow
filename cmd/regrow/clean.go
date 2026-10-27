@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -60,7 +61,7 @@ func runClean(host engine.Host, catalog []engine.Rule, ids []string, yes bool) e
 			return nil
 		}
 	}
-	return executePlan(host, plan)
+	return executePlan(host, catalog, plan)
 }
 
 // printPlanActions prints the about-to-run action list — before the
@@ -84,13 +85,13 @@ func printPlanActions(plan engine.Plan) {
 // executePlan runs an already-confirmed plan: oplog first, then the
 // executor. Both confirmation paths (clean prompt, TUI plan → x → y)
 // land here.
-func executePlan(host engine.Host, plan engine.Plan) error {
+func executePlan(host engine.Host, catalog []engine.Rule, plan engine.Plan) error {
 	logPath, err := oplog.DefaultPath()
 	if err != nil {
 		return err
 	}
 	runID := executor.NewRunID(time.Now())
-	exec, release, err := newRunExecutor(host, runID, nil)
+	exec, release, err := newRunExecutor(host, catalog, runID, nil)
 	if err != nil {
 		return err
 	}
@@ -110,8 +111,9 @@ func executePlan(host engine.Host, plan engine.Plan) error {
 // newRunExecutor wires the executor of one run: the journal, and a
 // mover and volume exporter pointed at the run's staging directory.
 // stream runs the export's docker command; nil streams docker's
-// stderr to the terminal. release closes the journal.
-func newRunExecutor(host engine.Host, runID string, stream func(context.Context, []string, io.Writer) error) (*executor.Executor, func(), error) {
+// stderr to the terminal. The running recheck reads a rule's guard
+// from catalog. release closes the journal.
+func newRunExecutor(host engine.Host, catalog []engine.Rule, runID string, stream func(context.Context, []string, io.Writer) error) (*executor.Executor, func(), error) {
 	logPath, err := oplog.DefaultPath()
 	if err != nil {
 		return nil, nil, err
@@ -162,6 +164,13 @@ func newRunExecutor(host engine.Host, runID string, stream func(context.Context,
 			},
 			engine.PreActionCaskRecordRecheck: func(ctx context.Context, a engine.Action) (*trash.Receipt, error) {
 				return nil, scanner.RecheckCaskRecord(ctx, a.Path)
+			},
+			engine.PreActionRunningRecheck: func(ctx context.Context, a engine.Action) (*trash.Receipt, error) {
+				i := slices.IndexFunc(catalog, func(r engine.Rule) bool { return r.ID == a.RuleID })
+				if i < 0 {
+					return nil, fmt.Errorf("%s is not in the catalog, so what keeps its items cannot be checked", a.RuleID)
+				}
+				return nil, scanner.RecheckRunning(ctx, catalog[i], a.Path)
 			},
 			engine.PreActionAppLeftoverRecheck: func(ctx context.Context, a engine.Action) (*trash.Receipt, error) {
 				return nil, scanner.RecheckAppLeftover(ctx, a.Path)

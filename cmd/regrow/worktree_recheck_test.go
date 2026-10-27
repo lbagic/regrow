@@ -121,7 +121,7 @@ func TestWorktreeRecheckStopsTheRemoval(t *testing.T) {
 
 	var ran [][]string
 	journal := &memJournal{}
-	exe, release, err := newRunExecutor(host, "fixture-run", nil)
+	exe, release, err := newRunExecutor(host, nil, "fixture-run", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

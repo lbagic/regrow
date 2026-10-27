@@ -36,8 +36,8 @@ With `--beta-rules`, also:
 | Program | Why |
 |---|---|
 | `ps -x -U <your uid>`, and `ps -E -p <pids>` for running `claude` processes | which agent sessions are still running; from a `claude` process's environment regrow uses only `CLAUDE_CONFIG_DIR` and `HOME` |
-| `lsof -a -d cwd -u <your uid>`, `ps -x -U <your uid> -o args=` | which projects and npx folders a running process works in or names |
-| `lsof -a -u <your uid> -d txt -F pn` | which Node versions, Codex or cursor-agent builds, or staged Docker update a running process executes or maps a file from, and whether Docker Desktop runs |
+| `lsof -a -d cwd -u <your uid>`, `ps -x -U <your uid> -o args=` | which projects, npx folders and app or tool caches a running process works in or names |
+| `lsof -a -u <your uid> -d txt -F pn` | which Node versions, Codex or cursor-agent builds, or staged Docker update a running process executes or maps a file from, and whether Docker Desktop runs; and, for the rules that keep a cache while its app or tool runs, which apps and programs run: the `Info.plist` of each app bundle a process runs from is read for its bundle identifier, once per scan |
 | `brew info --cask --json=v2 --installed`, `brew --caskroom` | the installed casks, their apps and uninstall steps, and where brew keeps their records; run with `HOMEBREW_NO_AUTO_UPDATE=1`, so brew does not update itself first |
 | `mdfind` for Android Studio's or Xcode's bundle identifier | whether Android Studio or Xcode is installed somewhere Applications does not show |
 | `xcrun --find simctl`, then `/Library/Developer/PrivateFrameworks/CoreSimulator.framework/Versions/A/Resources/bin/simctl runtime list -j` | simulator runtimes left after Xcode went, listed only when no Xcode is found |
@@ -45,7 +45,7 @@ With `--beta-rules`, also:
 | `git` (`worktree list`, `for-each-ref`, `rev-list`, `status --ignored`, `ls-files`, `rev-parse`, `check-ignore`, `config --get`) | whether a worktree is finished and whether a build folder is ignored; every call runs with `--no-optional-locks`, so git does not even refresh its index, and each has 30 seconds |
 | `/usr/bin/plutil -convert xml1 -o - -` | turns a binary `Info.plist`, an app's or a staged macOS upgrade's, handed to it on its input, into text, for the app's identifier and version or the upgrade's macOS version |
 
-When they need `ps` or `lsof` and cannot run it, the agent-session, build-output, npx, fnm, Codex, cursor-agent and Docker-update rules show an error and offer nothing.
+When they need `ps` or `lsof` and cannot run it, the agent-session, build-output, npx, fnm, Codex, cursor-agent and Docker-update rules, and the rules that keep a cache while its app or tool runs, show an error and offer nothing.
 
 `regrow scan --json` also takes one free-space sample before the scan. `regrow doctor` scans only the rules that watch for a runaway bug and the phantom-space rules, so of the programs above it starts `sw_vers`, `tmutil` and `osascript`, and it adds `go env GOFLAGS` (with `GOTOOLCHAIN=local`, so Go downloads nothing). Its other checks read Docker Desktop's settings file and `~/.docker/daemon.json`, look for videos in the aerial wallpaper folder, and search your project folders, 3 levels down, for git repositories and read their worktree records.
 
@@ -67,7 +67,7 @@ A run starts only from a plan you confirmed, at the prompt or in advance with `-
 - for a simulator runtime left after Xcode went, runs CoreSimulator's own simctl through `/bin/sh`: `runtime delete <identifier>`, then `runtime list -j` once a second until the runtime is gone, and fails after 600 listings; a simctl that never answers holds the run, as any rule's command would;
 - for a Docker volume, first writes `~/.local/state/regrow/staging/<run-id>/docker-volume-<name>.tar` by running `docker run --rm -v <name>:/volume:ro busybox tar …`;
 - for a Homebrew cask whose app is gone, runs `brew uninstall --cask <token>` through `/bin/sh`, then `brew list --cask -1`, and counts the action failed while brew still lists the cask;
-- right before removing an agent session's scratch, a worktree, a build folder, an npx folder, a download, a Node version, an old Codex or cursor-agent build, Docker's staged update or a cask record, runs that rule's recheck; [RULES.md](RULES.md) says what each one checks.
+- right before removing an agent session's scratch, a worktree, a build folder, an npx folder, a download, a Node version, an old Codex or cursor-agent build, Docker's staged update, a cask record or a cache kept while its app or tool runs, runs that rule's recheck; [RULES.md](RULES.md) says what each one checks.
 
 `regrow undo` renames items back from the Trash or staging, without Finder, and appends to the oplog. `regrow tick` asks for free space through `osascript` and appends the sample to `~/.local/state/regrow/headroom.jsonl`, which about once a day it rewrites through `headroom.jsonl.tmp` to drop samples older than 30 days; on an acute alert it runs `ps -axo pid=,ppid=,rss=,comm=` to name the process using the most memory; with `--autotrim`, when free space is low and autotrim is unlocked, it records in `~/.local/state/regrow/prune.state` whether a running build defers the prune, and otherwise deletes Go build cache entries as `regrow prune go-build --yes` does, described next, until free space is back at its target. `regrow prune go-build --yes` runs `go env GOCACHE`, `ps -axo pid=,ppid=,rss=,comm=` and `/usr/bin/find <GOCACHE> … -delete`, journals to the oplog, and locks `~/.local/state/regrow/prune.state`. The menubar app's own files are in [APP.md](APP.md).
 

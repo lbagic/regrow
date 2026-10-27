@@ -123,6 +123,12 @@ func TestValidate(t *testing.T) {
 	if err := trashWithHook.Validate(); err != nil {
 		t.Fatalf("a pre_action on a Trash rule must be valid, the hook gates each move: %v", err)
 	}
+	guarded := validRule()
+	guarded.UnlessRunning = &UnlessRunning{Apps: []string{"com.tinyspeck.slackmacgap"}, Commands: []string{"gopls"}, Inside: true}
+	guarded.PreAction = PreActionRunningRecheck
+	if err := guarded.Validate(); err != nil {
+		t.Fatalf("a guarded Trash rule with its recheck must be valid: %v", err)
+	}
 
 	tests := []struct {
 		name    string
@@ -169,6 +175,54 @@ func TestValidate(t *testing.T) {
 				r.PreAction = PreActionVolumeExport
 			},
 			"per-item action",
+		},
+		{
+			"unless_running without its recheck",
+			func(r *Rule) { r.UnlessRunning = &UnlessRunning{Commands: []string{"bun"}} },
+			"unless_running requires pre_action " + PreActionRunningRecheck,
+		},
+		{
+			"unless_running behind another pre_action",
+			func(r *Rule) {
+				r.UnlessRunning = &UnlessRunning{Commands: []string{"bun"}}
+				r.PreAction = PreActionNpxRecheck
+			},
+			"unless_running requires pre_action " + PreActionRunningRecheck,
+		},
+		{
+			"the recheck without unless_running",
+			func(r *Rule) { r.PreAction = PreActionRunningRecheck },
+			"pre_action " + PreActionRunningRecheck + " requires unless_running",
+		},
+		{
+			"unless_running naming nothing",
+			func(r *Rule) { r.UnlessRunning = &UnlessRunning{}; r.PreAction = PreActionRunningRecheck },
+			"unless_running names no app, command or inside",
+		},
+		{
+			"unless_running with an empty name",
+			func(r *Rule) {
+				r.UnlessRunning = &UnlessRunning{Apps: []string{"com.hnc.Discord", ""}}
+				r.PreAction = PreActionRunningRecheck
+			},
+			"unless_running must not contain empty names",
+		},
+		{
+			"unless_running with a command that is a path",
+			func(r *Rule) {
+				r.UnlessRunning = &UnlessRunning{Commands: []string{"bin/gopls"}}
+				r.PreAction = PreActionRunningRecheck
+			},
+			"unless_running commands are file names",
+		},
+		{
+			"unless_running on a native command",
+			func(r *Rule) {
+				r.NativeCommand = Argv{"tool", "rm", "{path}"}
+				r.UnlessRunning = &UnlessRunning{Commands: []string{"tool"}}
+				r.PreAction = PreActionRunningRecheck
+			},
+			"unless_running guards Trash moves only",
 		},
 		{
 			"empties_trash without native command",

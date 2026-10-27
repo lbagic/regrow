@@ -50,7 +50,7 @@ func summaryOf(t *testing.T, mover executor.Mover, actions ...engine.Action) (li
 	fakeDocker(t)
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	exe, release, err := newRunExecutor(engine.Host{OS: "darwin", Home: t.TempDir()}, "fixture-run", nil)
+	exe, release, err := newRunExecutor(engine.Host{OS: "darwin", Home: t.TempDir()}, nil, "fixture-run", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

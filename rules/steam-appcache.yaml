@@ -1,0 +1,19 @@
+# Steam's cache of app details and library artwork. Games and their files live in steamapps, which this leaves alone.
+id: steam-appcache
+title: "Steam's app cache"
+category: app-caches
+risk: safe
+paths:
+  darwin:
+    - "~/Library/Application Support/Steam/appcache"
+unless_running:
+  apps: [com.valvesoftware.steam]
+pre_action: running-recheck
+regen:
+  story: "Steam downloads app details and artwork again when it starts."
+  cost: "the library is slower to fill the first time"
+sudo: false
+beta: true
+fixture:
+  files:
+    - "~/Library/Application Support/Steam/appcache/appinfo.vdf"

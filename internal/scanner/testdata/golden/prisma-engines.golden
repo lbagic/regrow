@@ -1,0 +1,1 @@
+[trash] prisma-engines: osascript -e tell application "Finder" to return POSIX path of ((delete POSIX file "~/.cache/prisma") as alias)  (pre: running-recheck)

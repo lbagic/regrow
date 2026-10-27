@@ -1,0 +1,21 @@
+# Discord's Electron caches.
+id: discord-caches
+title: "Discord's caches"
+category: app-caches
+risk: safe
+paths:
+  darwin:
+    - "~/Library/Application Support/discord/Cache"
+    - "~/Library/Application Support/discord/Code Cache"
+    - "~/Library/Application Support/discord/GPUCache"
+unless_running:
+  apps: [com.hnc.Discord]
+pre_action: running-recheck
+regen:
+  story: "Discord fills them again as it runs."
+  cost: "Discord loads images from the network again at first"
+sudo: false
+beta: true
+fixture:
+  files:
+    - "~/Library/Application Support/discord/Cache/Cache_Data/data_0"

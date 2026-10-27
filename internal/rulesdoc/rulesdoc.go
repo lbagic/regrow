@@ -27,6 +27,7 @@ type group struct{ category, name, blurb string }
 var groups = []group{
 	{"ai", "AI models", "Model caches and libraries of AI tools."},
 	{"dev-caches", "Developer caches and build output", "Package caches, build caches and build output of developer tools, and what coding agents leave behind."},
+	{"app-caches", "App caches", "Caches apps fill as they run, each kept while its app runs."},
 	{"toolchains", "Toolchains", "Installed SDKs and tool versions."},
 	{"xcode", "Xcode and simulators", ""},
 	{"docker", "Docker", "Docker objects, listed through the `docker` command; regrow never touches Docker's files directly."},
@@ -58,6 +59,7 @@ var preActions = map[string]string{
 	engine.PreActionSupersededBuildRecheck:     "regrow judges the build again, as the scan did, and leaves it in place if any reason to keep it holds now or the build in use cannot be told.",
 	engine.PreActionDockerUpdateRecheck:        "regrow judges the download again, as the scan did, and leaves it in place if any reason to keep it holds now.",
 	engine.PreActionCaskRecordRecheck:          "regrow asks brew about the cask again and leaves it installed unless its app is still gone and its uninstall still only quits the app and asks for no password.",
+	engine.PreActionRunningRecheck:             "regrow reads your running processes again, as the scan did, and leaves the item in place while what keeps it runs, your processes cannot be listed, the rule is not in the catalog regrow runs, or, for a rule that names apps, a running app's `Info.plist` cannot be read.",
 	engine.PreActionAppLeftoverRecheck:         "regrow judges the folder and the other folders of its maker again, as the scan did, and leaves it in place unless it is still offered: an app installed since, a change, or anything pointing into one of them keeps it, and so does a source that cannot be read.",
 }
 
@@ -181,9 +183,9 @@ func writeRule(b *strings.Builder, r engine.Rule) {
 
 	p("- **Looks at:** %s\n", looksAt(r))
 	p("- **Removed by:** %s\n", removedBy(r))
-	if len(r.Keeps) > 0 {
+	if keeps := append(slices.Clone(r.Keeps), guardKeeps(r)...); len(keeps) > 0 {
 		p("- **Keeps:**\n")
-		for _, k := range r.Keeps {
+		for _, k := range keeps {
 			p("  - %s\n", sentence(capitalize(prose(k))))
 		}
 	}
@@ -296,6 +298,26 @@ func removedBy(r engine.Rule) string {
 		}
 	}
 	return s
+}
+
+// guardKeeps says what the rule's unless_running keeps, from the
+// guard itself.
+func guardKeeps(r engine.Rule) []string {
+	u := r.UnlessRunning
+	if u == nil {
+		return nil
+	}
+	var lines []string
+	if len(u.Apps) > 0 {
+		lines = append(lines, "everything while the app "+orList(u.Apps)+" runs, by its bundle identifier, a helper or an app inside its bundle included; while it runs the rule shows nothing", "everything when a running app's `Info.plist` cannot be read: the rule shows an error")
+	}
+	if len(u.Commands) > 0 {
+		lines = append(lines, "everything while "+orList(u.Commands)+" runs; while it runs the rule shows nothing")
+	}
+	if u.Inside {
+		lines = append(lines, "an item one of your running processes works in, names on its command line, or executes or maps a file from, the item spelled as the rule spells it or as links resolve it", "an item whose path `lsof` and `ps` would print escaped, or whose real path cannot be read")
+	}
+	return append(lines, "everything when your running processes cannot be listed (`lsof`, `ps`): the rule shows an error")
 }
 
 func pruneText(r engine.Rule) string {
