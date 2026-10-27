@@ -43,6 +43,12 @@ func DefaultQueries(host engine.Host) map[string]ToolQuery {
 	queries["android-ndk"] = android.NDKs
 	queries["android-sdk"] = android.SDK
 	queries["fnm-node-versions"] = (&fnmVersions{}).Unreferenced
+	queries["codex-releases"] = homeStore(codexReleases)
+	queries["cursor-agent-versions"] = homeStore(cursorAgentVersions)
+	queries["docker-update-download"] = queryDockerUpdate
+	casks := &caskRecords{}
+	queries["brew-cask-records"] = casks.Plain
+	queries["brew-cask-records-sudo"] = casks.NeedsPassword
 	queries["sim-runtimes-no-xcode"] = (&simRuntimesNoXcode{}).Runtimes
 	for name, q := range dockerQueries() {
 		queries[name] = q

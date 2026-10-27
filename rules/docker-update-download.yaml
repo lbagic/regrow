@@ -1,0 +1,34 @@
+# Docker Desktop's unfinished update download: it stages an update in
+# ~/Library/Application Support/com.docker.install/in_progress and a
+# download that stopped stays there. Not a container, image or volume;
+# removing it stops nothing. The docker-update-download query
+# (internal/scanner/tool_dockerupdate.go) lists the folder when its
+# Docker.app is unfinished or not newer than the installed one, nothing
+# in it changed in the last day, no running process uses it, and Docker
+# Desktop is not running. Caution all the same: never pre-selected.
+id: docker-update-download
+title: Docker Desktop's unfinished update download
+category: macos
+risk: caution
+tool_query: docker-update-download
+# The folder and running processes are read again right before the move.
+pre_action: docker-update-recheck
+scans: "`~/Library/Application Support/com.docker.install/in_progress`: its `Docker.app`'s `Info.plist` and that of the Docker.app in `/Applications` or `~/Applications`, the folder's newest modification time, and your processes' working folders, command lines and the files they execute or map (`lsof`, `ps`)"
+keeps:
+  - "a staged Docker.app newer than the installed one: the update is waiting to install"
+  - "a finished staged Docker.app when no Docker.app is installed to compare it with"
+  - "a folder with anything in it changed in the last day: Docker Desktop may be downloading"
+  - "a folder a running process executes or maps a file from, works in, or names on its command line"
+  - "the folder while Docker Desktop runs (a process executes from a Docker.app, wherever it is): it may be downloading the update"
+  - "a folder with no Docker.app in it, and one that cannot all be read"
+  - "everything, when an `Info.plist` cannot be read or names no version, or `lsof` or `ps` fails: the rule then shows an error and offers nothing"
+regen:
+  story: Docker Desktop downloads its update again when it next checks for one.
+  cost: a download of about 2 GB when Docker Desktop updates
+sudo: false
+beta: true
+fixture:
+  items:
+    - label: Docker Desktop update, never finished downloading
+      path: ~/Library/Application Support/com.docker.install/in_progress
+      bytes: 2300000000

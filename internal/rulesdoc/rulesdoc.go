@@ -55,6 +55,9 @@ var preActions = map[string]string{
 	engine.PreActionNpxRecheck:                 "regrow judges the folder again, as the scan did, and leaves it in place if any reason to keep it holds now or your processes cannot be listed.",
 	engine.PreActionDownloadedInstallerRecheck: "regrow judges the download against the installed apps again, as the scan did, and leaves it in place if any reason to keep it holds now.",
 	engine.PreActionFnmVersionRecheck:          "regrow reads every source again, as the scan did, and leaves the version installed if anything names it now or a source cannot be read.",
+	engine.PreActionSupersededBuildRecheck:     "regrow judges the build again, as the scan did, and leaves it in place if any reason to keep it holds now or the build in use cannot be told.",
+	engine.PreActionDockerUpdateRecheck:        "regrow judges the download again, as the scan did, and leaves it in place if any reason to keep it holds now.",
+	engine.PreActionCaskRecordRecheck:          "regrow asks brew about the cask again and leaves it installed unless its app is still gone and its uninstall still only quits the app and asks for no password.",
 	engine.PreActionAppLeftoverRecheck:         "regrow judges the folder and the other folders of its maker again, as the scan did, and leaves it in place unless it is still offered: an app installed since, a change, or anything pointing into one of them keeps it, and so does a source that cannot be read.",
 }
 

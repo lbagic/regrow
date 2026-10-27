@@ -47,6 +47,12 @@ func ActionCommand(a engine.Action) string {
 		s += "  (download and app checked again first)"
 	case engine.PreActionFnmVersionRecheck:
 		s += "  (version checked unreferenced again first)"
+	case engine.PreActionSupersededBuildRecheck:
+		s += "  (build checked unused again first)"
+	case engine.PreActionDockerUpdateRecheck:
+		s += "  (download and Docker checked again first)"
+	case engine.PreActionCaskRecordRecheck:
+		s += "  (brew asked about the cask again first)"
 	default:
 		s += "  (pre: " + a.PreAction + ")"
 	}

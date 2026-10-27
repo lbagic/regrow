@@ -2,7 +2,7 @@
 
 # What regrow scans
 
-regrow's catalog holds 65 rules: 27 safe, 25 caution and 13 surface-only. 28 of them are beta, and a scan includes them only with `--beta-rules`. Every entry below is written from the rule's file in [`rules/`](../rules), the catalog `regrow rules --beta-rules` lists. Paths are the macOS ones; the rules also carry Linux paths, for a Linux build that has not shipped. [SCAN.md](SCAN.md) says what a scan reads, which programs it runs, and what regrow writes.
+regrow's catalog holds 70 rules: 29 safe, 27 caution and 14 surface-only. 33 of them are beta, and a scan includes them only with `--beta-rules`. Every entry below is written from the rule's file in [`rules/`](../rules), the catalog `regrow rules --beta-rules` lists. Paths are the macOS ones; the rules also carry Linux paths, for a Linux build that has not shipped. [SCAN.md](SCAN.md) says what a scan reads, which programs it runs, and what regrow writes.
 
 How to read an entry:
 
@@ -354,6 +354,10 @@ Installed SDKs and tool versions.
 |---|---|---|
 | [Android NDKs (no Android Studio)](#android-ndk) | caution, beta | Trash |
 | [Android SDK (no Android Studio)](#android-sdk) | caution, beta | Trash |
+| [Homebrew casks whose app is gone](#brew-cask-records) | caution, beta | `/bin/sh -c 'brew uninstall --cask "$1" \|\| exit; list=$(brew list --cask -1) \|\| { echo "brew list failed after the uninstall" >&2; exit 1; }; if printf "%s\n" "$list" \| grep -qxF -- "$1"; then echo "brew still lists cask $1 after its uninstall" >&2; exit 1; fi' sh {arg}` |
+| [Homebrew casks whose app is gone (uninstall in a terminal)](#brew-cask-records-sudo) | surface-only, beta | never |
+| [Old Codex app server releases](#codex-releases) | safe, beta | Trash |
+| [Old cursor-agent builds](#cursor-agent-versions) | safe, beta | Trash |
 | [Node versions nothing references (fnm)](#fnm-node-versions) | caution, beta | `fnm uninstall {arg}` |
 
 ### android-ndk
@@ -381,6 +385,61 @@ Installed SDKs and tool versions.
   - An SDK anywhere but `~/Library/Android/sdk`, or reached through a symlink.
 - **Comes back:** Installing Android Studio, or sdkmanager from the command-line tools, downloads the SDK packages a build needs again. Cost: several GB of downloads; needs the network.
 - **Note:** Command-line Android builds (Gradle, React Native, Flutter) use the SDK without Studio, and emulators need its system images; the row says when ANDROID_HOME points here. Undo restores it from the Trash.
+
+### brew-cask-records
+
+**Homebrew casks whose app is gone** · caution · beta · [`rules/brew-cask-records.yaml`](../rules/brew-cask-records.yaml)
+
+- **Looks at:** `brew info --cask --json=v2 --installed` and `brew --caskroom` (with `HOMEBREW_NO_AUTO_UPDATE=1`); each cask's install record, `<Caskroom>/<token>/.metadata/config.json`, for the folder it put its apps in; whether each app is where brew put it, in `/Applications` or in `~/Applications`, or one folder down in any of those; whether each command, manual page or completion brew linked is there, and whether you can write its folder (before Homebrew 7, only a link whose place the cask names); the size of each listed cask's Caskroom folder.
+- **Removed by:** `/bin/sh -c 'brew uninstall --cask "$1" || exit; list=$(brew list --cask -1) || { echo "brew list failed after the uninstall" >&2; exit 1; }; if printf "%s\n" "$list" | grep -qxF -- "$1"; then echo "brew still lists cask $1 after its uninstall" >&2; exit 1; fi' sh {arg}`, once per item; `{arg}` is the item as the tool names it. It deletes for good: `regrow undo` cannot bring it back. Right before each removal, regrow asks brew about the cask again and leaves it installed unless its app is still gone and its uninstall still only quits the app and asks for no password.
+- **Keeps:**
+  - A cask with any of its apps in its app folder, `/Applications` or `~/Applications`, or one folder down in any of those, or one that cannot be checked there.
+  - A cask that installs no app: command-line tools, fonts, installer packages.
+  - A cask whose install record cannot be read, or whose app folder is not there (a disk not mounted).
+  - A cask whose uninstall may ask for a password or does more than quit the app: `brew-cask-records-sudo` shows it. That is any `uninstall` step but quitting the app, `uninstall_preflight_steps` and `uninstall_postflight_steps`, install steps marked sudo, a link in a folder you cannot write, an installer package, a script, or a kind regrow does not know.
+  - A cask whose app brew placed with `..` in its path, or in a folder that is not there (a disk not mounted).
+- **Comes back:** Reinstall the app with brew if you want it back: `brew install --cask <token>`. Cost: nothing; the app is already gone, and its data stays (no --zap).
+
+### brew-cask-records-sudo
+
+**Homebrew casks whose app is gone (uninstall in a terminal)** · surface-only · beta · [`rules/brew-cask-records-sudo.yaml`](../rules/brew-cask-records-sudo.yaml)
+
+- **Looks at:** the casks `brew-cask-records` reads, in the same pass.
+- **Removed by:** never: surface-only.
+- **Keeps:**
+  - Every cask `brew-cask-records` keeps, and every one it offers.
+- **Comes back:** Reinstall the app with brew if you want it back: `brew install --cask <token>`. Cost: n/a — regrow never runs the uninstall here.
+- **Note:** Uninstalling each of these casks may make brew ask for your password, or does more than quit the app: it stops a service, removes files or a login item, or signals the app. To remove one, in a terminal: `brew uninstall --cask <token>`. Then check it is gone: `brew list --cask`. If brew still lists it, run: `brew uninstall --cask --force <token>`.
+
+### codex-releases
+
+**Old Codex app server releases** · safe · beta · [`rules/codex-releases.yaml`](../rules/codex-releases.yaml)
+
+- **Looks at:** the folders in `~/.codex/packages/app-server-daemon/releases`, with each one's newest modification time; where the `current` link beside them leads; and your processes' working folders, command lines and the files they execute or map (`lsof`, `ps`).
+- **Removed by:** a move to the Trash, one per item; `regrow undo` puts it back. Right before each removal, regrow judges the build again, as the scan did, and leaves it in place if any reason to keep it holds now or the build in use cannot be told.
+- **Keeps:**
+  - The release the `current` link leads into.
+  - A release a running process executes or maps a file from, works in, or names on its command line.
+  - A release newer than the one in use, or one whose version cannot be ordered against it (no dotted version, or the same one under another name, such as a pre-release): an update may be waiting.
+  - A release with anything in it changed in the last day, and one that cannot all be read.
+  - Every release when `current` is missing, leads nowhere, or leads outside the folder, since the release in use cannot be told.
+  - Everything, when `lsof` or `ps` fails: the rule then shows an error and offers nothing.
+- **Comes back:** Codex downloads the release it needs when it updates; an old one is never run again. Cost: nothing unless you roll Codex back; then a download.
+
+### cursor-agent-versions
+
+**Old cursor-agent builds** · safe · beta · [`rules/cursor-agent-versions.yaml`](../rules/cursor-agent-versions.yaml)
+
+- **Looks at:** the folders in `~/.local/share/cursor-agent/versions`, with each one's newest modification time; where `~/.local/bin/cursor-agent` and `~/.local/bin/agent` lead; and your processes' working folders, command lines and the files they execute or map (`lsof`, `ps`).
+- **Removed by:** a move to the Trash, one per item; `regrow undo` puts it back. Right before each removal, regrow judges the build again, as the scan did, and leaves it in place if any reason to keep it holds now or the build in use cannot be told.
+- **Keeps:**
+  - Every build either link leads into.
+  - A build a running process executes or maps a file from, works in, or names on its command line.
+  - A build newer than the one in use, or one whose version cannot be ordered against it (no dated version, or the same date): an update may be waiting.
+  - A build with anything in it changed in the last day, and one that cannot all be read.
+  - Every build when neither link is there, or one leads nowhere or outside the folder, since the build in use cannot be told.
+  - Everything, when `lsof` or `ps` fails: the rule then shows an error and offers nothing.
+- **Comes back:** The cursor-agent installer downloads the build it needs; an old one is never run again. Cost: nothing unless you roll cursor-agent back; then a reinstall.
 
 ### fnm-node-versions
 
@@ -595,6 +654,7 @@ System caches, logs, downloads and the Trash.
 | [Aerial wallpaper videos](#aerial-wallpapers) | surface-only | never |
 | [App leftovers (no app has their id)](#app-leftovers) | caution, beta | Trash |
 | [App leftovers (kept)](#app-leftovers-kept) | surface-only, beta | never |
+| [Docker Desktop's unfinished update download](#docker-update-download) | caution, beta | Trash |
 | [Installers of installed apps](#downloaded-installers) | caution, beta | Trash |
 | [Local iOS device backups](#ios-backups) | surface-only | never |
 | [App caches (~/Library/Caches)](#library-caches) | surface-only | never |
@@ -644,6 +704,22 @@ System caches, logs, downloads and the Trash.
 - **Removed by:** never: surface-only.
 - **Comes back:** n/a — regrow never deletes these; check the row's reason, then delete a folder yourself if its app is gone. Cost: n/a.
 - **Note:** Each row says why it is not offered. A folder in use, or one that changed recently, moves to "App leftovers (no app has their id)" once nothing points into any folder of its maker and none of them changed for 90 days.
+
+### docker-update-download
+
+**Docker Desktop's unfinished update download** · caution · beta · [`rules/docker-update-download.yaml`](../rules/docker-update-download.yaml)
+
+- **Looks at:** `~/Library/Application Support/com.docker.install/in_progress`: its `Docker.app`'s `Info.plist` and that of the Docker.app in `/Applications` or `~/Applications`, the folder's newest modification time, and your processes' working folders, command lines and the files they execute or map (`lsof`, `ps`).
+- **Removed by:** a move to the Trash, one per item; `regrow undo` puts it back. Right before each removal, regrow judges the download again, as the scan did, and leaves it in place if any reason to keep it holds now.
+- **Keeps:**
+  - A staged Docker.app newer than the installed one: the update is waiting to install.
+  - A finished staged Docker.app when no Docker.app is installed to compare it with.
+  - A folder with anything in it changed in the last day: Docker Desktop may be downloading.
+  - A folder a running process executes or maps a file from, works in, or names on its command line.
+  - The folder while Docker Desktop runs (a process executes from a Docker.app, wherever it is): it may be downloading the update.
+  - A folder with no Docker.app in it, and one that cannot all be read.
+  - Everything, when an `Info.plist` cannot be read or names no version, or `lsof` or `ps` fails: the rule then shows an error and offers nothing.
+- **Comes back:** Docker Desktop downloads its update again when it next checks for one. Cost: a download of about 2 GB when Docker Desktop updates.
 
 ### downloaded-installers
 
