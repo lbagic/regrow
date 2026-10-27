@@ -12,15 +12,15 @@ import (
 // this alias keeps the TUI/CLI call sites stable.
 func HumanBytes(n int64) string { return engine.HumanBytes(n) }
 
-// ShellJoin renders argv for display, quoting args with spaces or
-// glob characters, so a pasted line means what the argv means.
+// ShellJoin renders argv for display, each word quoted as the plan's
+// regrow command is, and a leading ~ too, so a pasted line means what
+// the argv means.
 func ShellJoin(argv []string) string {
 	parts := make([]string, len(argv))
 	for i, a := range argv {
-		if strings.ContainsAny(a, " \t\"'*?[") {
-			parts[i] = fmt.Sprintf("%q", a)
-		} else {
-			parts[i] = a
+		parts[i] = engine.ShellQuote(a)
+		if parts[i] == a && strings.HasPrefix(a, "~") {
+			parts[i] = "'" + a + "'"
 		}
 	}
 	return strings.Join(parts, " ")

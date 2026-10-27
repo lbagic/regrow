@@ -43,6 +43,13 @@ final class Shell: ObservableObject {
     private var stopping = false
     private var instanceLock: InstanceLock?
     private var askingFinder = false
+    private var pageReady = false
+    /// A scan asked for before the page said it was ready.
+    private var scanAsked = false
+    /// The page was loaded again after its process ended, and lost what it showed.
+    private var pageReloaded = false
+    /// An execute was in flight when the reloaded page's process ended; it runs on.
+    private var reloadedMidRun = false
 
     private init() {
         log = LogFile(url: config.log)
@@ -103,7 +110,7 @@ final class Shell: ObservableObject {
             }
         }
         if config.openScan || reason == nil {
-            openScan()
+            showWindow(scan: config.openScan)
         }
     }
 
@@ -354,12 +361,19 @@ final class Shell: ObservableObject {
     /// The owner opened the app while it runs.
     func reopened() {
         log("opened again: showing the window")
-        openScan()
+        showWindow(scan: false)
     }
 
-    func openScan() {
+    /// Shows the window; with `scan`, the page also starts a scan.
+    func showWindow(scan: Bool) {
+        if scan {
+            log("scan asked for")
+        }
         if let window {
             window.show()
+            if scan {
+                askScan()
+            }
             return
         }
         guard FileManager.default.fileExists(atPath: config.page.path) else {
@@ -377,8 +391,11 @@ final class Shell: ObservableObject {
                 guard let self else { return }
                 self.apply(self.router.pageMessage(body))
             },
-            onPageGone: { [weak self] in
+            onPageGone: { [weak self] reloading in
                 guard let self else { return }
+                self.pageReady = false
+                self.pageReloaded = reloading
+                self.reloadedMidRun = reloading && self.router.executeInFlight
                 self.apply(self.router.pageClosed())
             },
             onClose: { [weak self] in
@@ -390,8 +407,20 @@ final class Shell: ObservableObject {
                 DispatchQueue.main.async { _ = closing }
             })
         self.window = window
+        pageReady = false
+        pageReloaded = false
+        reloadedMidRun = false
+        scanAsked = scan
         window.show()
         log("scan window opened, page \(config.page.path)")
+    }
+
+    private func askScan() {
+        if pageReady {
+            window?.deliver(Router.shellEvent("scan"))
+        } else {
+            scanAsked = true
+        }
     }
 
     private func pageCommand(_ name: String) {
@@ -403,6 +432,15 @@ final class Shell: ObservableObject {
                 standing.append(environmentLine(environmentFailure))
             }
             standing.forEach { window?.deliver($0) }
+            if pageReloaded {
+                pageReloaded = false
+                window?.deliver(Router.shellEvent("reloaded", ["running": reloadedMidRun]))
+            }
+            pageReady = true
+            if scanAsked {
+                scanAsked = false
+                window?.deliver(Router.shellEvent("scan"))
+            }
         case "automation":
             // One question at a time: macOS's dialog may still be open, and
             // its answer reaches whichever page is open then.

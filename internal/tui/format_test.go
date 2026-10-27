@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 
@@ -110,5 +112,20 @@ func TestLedgerLinesOfTheTUIFitEightyColumns(t *testing.T) {
 	}
 	if !strings.Contains(lines[0], "volume exports 999.0 GiB") {
 		t.Errorf("the TUI's ledger must show the volume exports, got %q", lines)
+	}
+}
+
+// A shell reading the plan's line gets the argv back, word for word.
+func TestShellJoinPastesAsTheArgv(t *testing.T) {
+	argv := []string{"/bin/sh", "-c", `"$1" runtime delete "$2" || exit; n=$((n+1)); out=$("$1" list)`, "sh",
+		"/Library/Developer/PrivateFrameworks/CoreSimulator.framework/Versions/A/Resources/bin/simctl", "AAAA-1111",
+		"it's", "*.mov", "a\\b", "`id`", "x;y", "~/x", ""}
+	line := ShellJoin(argv)
+	out, err := exec.Command("/bin/sh", "-c", `for w in `+line+`; do printf '%s\0' "$w"; done`).Output()
+	if err != nil {
+		t.Fatalf("%s: %v", line, err)
+	}
+	if got := strings.Split(strings.TrimSuffix(string(out), "\x00"), "\x00"); !slices.Equal(got, argv) {
+		t.Errorf("a shell reads %s\nas %q,\nwant %q", line, got, argv)
 	}
 }

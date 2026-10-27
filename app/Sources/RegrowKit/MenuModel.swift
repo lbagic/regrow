@@ -74,6 +74,7 @@ public enum MenuRow: Equatable {
     case figures(MenuFigures)
     case separator
     case open
+    case scan
     case autotrim(on: Bool)
     /// The engine's words under the switch: why autotrim did not run.
     case note(String)
@@ -95,7 +96,7 @@ public enum MenuModel {
         if let failed, !locked {
             rows += copy(in: failed, state)
         }
-        rows += [.separator, .open, .separator, .autotrim(on: state.autotrim)]
+        rows += [.separator, .open, .scan, .separator, .autotrim(on: state.autotrim)]
         var notes: [String] = []
         if let failed, locked {
             notes.append(failed)

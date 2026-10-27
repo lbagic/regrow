@@ -738,3 +738,17 @@ func TestSudoSkipNamesTheEngineItself(t *testing.T) {
 		}
 	}
 }
+
+func TestShellQuoteKeepsZshAndBashFromExpanding(t *testing.T) {
+	for in, want := range map[string]string{
+		"=ls":          "'=ls'",
+		"a=~/x":        "'a=~/x'",
+		"--flag=value": "--flag=value",
+		"":             "''",
+		"plain":        "plain",
+	} {
+		if got := ShellQuote(in); got != want {
+			t.Errorf("ShellQuote(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

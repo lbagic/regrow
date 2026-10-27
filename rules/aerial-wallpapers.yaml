@@ -3,20 +3,19 @@
 # system dir through macOS 15, wallpaper.agent container from 26.
 # A raw `find … -delete` as root has no Trash and no undo, which
 # invariants 2 and 4 keep regrow from running: surface-only, and the
-# row gives the command to run yourself.
+# row gives the command to run yourself. The aerial-videos query
+# (internal/scanner/tool_aerial.go) sizes the folder in two parts,
+# since a video the downloader's temp folder also links frees nothing
+# when only the folder's copy goes.
 id: aerial-wallpapers
 title: Aerial wallpaper videos
 category: macos
 risk: surface-only
-paths:
-  darwin:
-    - path: /Library/Application Support/com.apple.idleassetsd/Customer
-      os_max: "25"
-    - path: ~/Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches
-      os_min: "26"
-note: "The videos come back whenever System Settings ▸ Wallpaper is opened, even with a still wallpaper. To see how to stop the downloads: `regrow doctor`."
+tool_query: aerial-videos
+note: "The videos come back while an aerial is picked for the wallpaper or the screen saver, even after a still wallpaper replaced it. To see how to stop the downloads: `regrow doctor`."
+scans: "the files in `/Library/Application Support/com.apple.idleassetsd/Customer` (macOS 15 and earlier) or `~/Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches` (macOS 26 and later), with each file's link count; a file that has links outside the folder is counted apart, and a walk that misses part of the folder gives the folder alone, as a lower bound"
 regen:
-  story: 'macOS downloads the aerial catalogue again when System Settings ▸ Wallpaper is opened, and any aerial selected as wallpaper or screensaver. To remove the videos yourself on macOS 15 and earlier: `sudo find "/Library/Application Support/com.apple.idleassetsd/Customer" -type f -name ''*.mov'' -delete`. On macOS 26 and later: `sudo find ~/Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches -type f -name ''*.mov'' -delete`.'
+  story: 'macOS downloads videos again for each aerial category picked for the wallpaper or the screen saver (on macOS 15, at least 4 per category and more every day or two), and a still wallpaper chosen later leaves them picked. To remove the videos yourself on macOS 15 and earlier: `sudo find "/Library/Application Support/com.apple.idleassetsd/Customer" -type f -name ''*.mov'' -delete`. On macOS 26 and later: `sudo find ~/Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches -type f -name ''*.mov'' -delete`. A video the downloader''s temp folder also holds frees nothing until that copy goes too, and macOS 15 keeps those copies in a folder only root can read. To remove them (untested in this form): `sudo find /private/var/folders/zz -path ''*/T/com.apple.idleassetsd/CFNetworkDownload_*.tmp'' -delete`.'
   cost: n/a — regrow never deletes here; roughly 0.5 GB of download per video macOS fetches again
 sudo: false
 # Seen on macOS 15.7, where idleassetsd is the downloader; the row
@@ -25,13 +24,16 @@ causes:
   - check: aerial-downloads
     os_max: "25"
     title: Aerial video downloads
-    story: Opening System Settings ▸ Wallpaper makes idleassetsd download the aerial catalogue (about 137 videos of roughly 0.5 GB each), even with a still wallpaper selected, and quitting System Settings does not stop a batch that is already running. Seen on macOS 15.7 — the folder went from 5 MB to 27 GB in about 90 minutes.
+    story: idleassetsd downloads aerial videos for the categories, subcategories and videos picked for the wallpaper or the screen saver, which its database Aerial.sqlite keeps; at least 4 videos per picked category, and about 2 more every day or two, at roughly 0.5 GB each. Choosing a still wallpaper later leaves the picks in place, so deleting the videos only starts a refill. launchd starts it at each login and whenever a wallpaper or screen saver setting changes, whether or not it is disabled. Seen on macOS 15.7 — 32 videos, 20 GB, for 4 categories picked.
     fix:
-      - "Quit System Settings after visiting Wallpaper, so the open pane cannot start another batch."
-      - "A batch already running goes on, and the videos come back the next time the pane is opened. To stop the downloader itself:"
-      - "sudo launchctl disable system/com.apple.idleassetsd   (untested: System Integrity Protection may refuse it)"
-      - "sudo killall idleassetsd   (stops the batch that is running now)"
+      - "Clear the picks it downloads for, which a still wallpaper leaves in place (the table names are macOS 15.7's; where they differ, sqlite3 changes nothing): sudo sqlite3 -cmd '.timeout 5000' \"/Library/Application Support/com.apple.idleassetsd/Aerial.sqlite\" 'BEGIN IMMEDIATE; DELETE FROM Z_2ACTIVEFORUSERS; DELETE FROM Z_3ACTIVEFORUSERS; DELETE FROM Z_1PINNEDFORUSERS; COMMIT;'"
+      - "Then stop the downloader, which keeps the picks it read when it started; launchd starts a new one when it is next asked: sudo killall idleassetsd"
       - "Then remove the videos: sudo find \"/Library/Application Support/com.apple.idleassetsd/Customer\" -type f -name '*.mov' -delete"
+      - "A video the downloader's temp folder also holds frees nothing until that copy goes too (untested in this form): sudo find /private/var/folders/zz -path '*/T/com.apple.idleassetsd/CFNetworkDownload_*.tmp' -delete"
+      - "Picking an aerial in System Settings ▸ Wallpaper picks it again, and the downloads start again for it. sudo launchctl disable system/com.apple.idleassetsd does not stop them: launchd starts the downloader on demand while it is disabled."
 fixture:
-  files:
-    - /Library/Application Support/com.apple.idleassetsd/Customer/4KSDR240FPS/a.mov
+  items:
+    - path: /Library/Application Support/com.apple.idleassetsd/Customer
+      bytes: 23000000000
+    - label: "16 files a link outside the folder also holds, such as the downloader's temp copies: deleting them here frees nothing"
+      bytes: 11000000000
