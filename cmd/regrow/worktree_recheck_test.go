@@ -39,8 +39,10 @@ func (m noMover) Move(_ context.Context, path string) (trash.Receipt, error) {
 // sets, which would point it at the enclosing repository.
 func fixtureGit(t *testing.T, dir string, args ...string) {
 	t.Helper()
-	// A commit starts git's maintenance, which newer git runs in the
-	// background: its lock comes and goes in .git while a test walks it.
+	// A commit starts git's maintenance, which git 2.47 and later runs
+	// detached: its lock in .git/objects comes and goes, and the process
+	// works in the repository, while a test walks it or checks for
+	// processes there.
 	cmd := exec.Command("git", append([]string{"-C", dir, "-c", "maintenance.auto=false"}, args...)...)
 	for _, kv := range os.Environ() {
 		if !strings.HasPrefix(kv, "GIT_") {
