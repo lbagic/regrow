@@ -252,6 +252,8 @@ const S = {
   cut: null,          // a run the engine exited under: {id, done, of, moves}
   error: null,        // an error event that no other state explains
   opened: false,      // the Full Disk Access settings were opened from here
+  wantScan: false,    // the shell asked for a scan before the engine said hello
+  reloaded: null,     // the page's process ended and the page was loaded again, losing what it showed: {running}
   scan: null,         // see newScan
   known: false,       // the first plan has said what starts ticked
   ticked: new Set(),  // atoms, each one handed over in a finding's select
@@ -332,13 +334,22 @@ window.regrow = { receive(line) {
 } };
 
 const on = {
-  // Also sent when the engine starts again, always after engine_down: every id from before is dead. Without
+  // A first hello starts a scan only when the shell asked for one. Also sent when the engine starts again,
+  // always after engine_down: every id from before is dead, and a page that held a scan starts another. Without
   // one between, it is the shell's answer to ready repeating the hello the page has, and starts no scan.
-  hello(e) { if (S.hello && !S.down) return; asked.clear(); S.down = ''; S.hello = e; scan(); },
+  hello(e) {
+    if (S.hello && !S.down) return;
+    const again = !!S.down;
+    asked.clear(); S.down = ''; S.hello = e;
+    if (S.wantScan || (again && S.scan)) { S.wantScan = false; scan(); }
+  },
   tick(e) { S.tick = e; },
   shell(e) {
     if (e.state === 'environment') S.env = e.captured === false ? e.reason || 'no reason given' : '';
     if (e.state === 'automation') S.automation = e.allowed ? 'allowed' : 'denied';
+    // The menu's Scan, or a relaunch to apply Full Disk Access.
+    if (e.state === 'scan') { if (S.hello && !S.down) act.scan(); else S.wantScan = true; }
+    if (e.state === 'reloaded') S.reloaded = { running: e.running === true };
     if (e.state !== 'engine_down') return;
     if (S.run && !S.run.result) S.cut = { id: S.plan.id, done: S.plan.actions.filter((a) => stateOf(a).state === 'done').length, of: S.plan.actions.length, moves: S.plan.actions.length > S.plan.commands };
     asked.clear();
@@ -400,7 +411,7 @@ const on = {
 
 function scan() {
   counting = clearTimeout(counting);
-  Object.assign(S, { screen: 'findings', scan: newScan(), known: false, ticked: new Set(), tray: null, planning: '',
+  Object.assign(S, { screen: 'findings', scan: newScan(), reloaded: null, known: false, ticked: new Set(), tray: null, planning: '',
     plan: null, note: '', run: null, error: null, safeOpen: false, open: new Set() });
   S.scan.req = ask('scan', 'scan');
 }
@@ -537,8 +548,6 @@ function ago(t) {
 let home = null, homeDir = '';
 const tilde = (s) => (home ? String(s).replace(home, '$1~') : String(s));
 
-// tui.ShellJoin
-const shellJoin = (argv) => [].concat(argv || []).map((a) => (/[ \t"'*?[]/.test(a) ? JSON.stringify(a) : a)).join(' ');
 // One word as a shell reads it back, quoted as the engine's shellQuote quotes it.
 const shellWord = (s) => (/[ \t\n'"\\$`*?[\](){}<>|&;!#]/.test(s) ? "'" + s.replace(/'/g, "'\\''") + "'" : s);
 // A command as a shell reads it back, for the pasteboard, and as it is drawn: the home folder as ~ only in a
@@ -546,7 +555,10 @@ const shellWord = (s) => (/[ \t\n'"\\$`*?[\](){}<>|&;!#]/.test(s) ? "'" + s.repl
 const shellLine = (argv) => [].concat(argv || []).map(shellWord).join(' ');
 // A shell expands ~ only where it starts a word: after = or : it stays as written.
 const tildeWord = (w) => (homeDir && (w === homeDir || w.startsWith(homeDir + '/')) ? '~' + w.slice(homeDir.length) : w);
-const drawnLine = (argv) => [].concat(argv || []).map((w) => (shellWord(w) === w ? tildeWord(w) : shellWord(w))).join(' ');
+const drawnWord = (w) => (shellWord(w) === w ? tildeWord(w) : shellWord(w));
+const drawnLine = (argv) => [].concat(argv || []).map(drawnWord).join(' ');
+// A rule's command before an item fills it in, drawn as drawnLine draws it, a {path} or {arg} word as written.
+const ruleLine = (argv) => [].concat(argv || []).map((w) => (/^\{(path|arg)\}$/.test(w) ? w : drawnWord(w))).join(' ');
 // How regrow is started in Terminal, as the engine names itself: an app's engine goes by its path.
 const cli = () => shellWord((S.hello && S.hello.self) || 'regrow');
 
@@ -671,7 +683,9 @@ function notices(all) {
 
 function drawFindings() {
   const sc = S.scan;
-  if (!sc) return h`<section class="lead"><h2>${S.hello ? 'No scan to show.' : 'Waiting for regrow.'}</h2></section>${notices(false)}`;
+  if (!sc) {
+    return h`<section class="lead"><h2>${S.hello ? 'No scan to show.' : 'Waiting for regrow.'}</h2>${S.reloaded ? h`<p class="aside">This window's page stopped and was loaded again, so what it showed is gone.${S.reloaded.running ? h` A run was going when it stopped; <span class="mono">${cli()} history</span>${copy(cli() + ' history', 'command')} lists what it did.` : ''}</p>` : ''}</section>${notices(false)}`;
+  }
   const scanning = sc.phase === 'scanning', so = scanning ? ' so far' : '';
   const views = sc.rows.map(measure).sort((a, b) => b.own - a.own);
   const failed = views.filter((v) => v.row.error), found = views.filter((v) => !v.row.error && v.items.length);
@@ -739,9 +753,9 @@ function entry(v, scale, fresh, small) {
   }
   const open = S.open.has('r' + row.n), each = !!row.select && !row.whole;
   const kept = rule.risk !== 'safe' && rule.risk !== 'caution';
-  const command = shellJoin(rule.native_command), runnable = !/\{(path|arg)\}/.test(command);
+  const runnable = ![].concat(rule.native_command || []).some((w) => /\{(path|arg)\}/.test(w));
   const shown = runnable ? h`<span class="mono">${unbroken(drawnLine(rule.native_command))}</span>${copy(shellLine(rule.native_command), 'command')}`
-    : h`<span class="mono">${unbroken(command)}</span>`;
+    : h`<span class="mono">${unbroken(ruleLine(rule.native_command))}</span>`;
   const runs = row.bucket === 'after_trash' ? 'Goes to the Trash; regrow undo restores it.'
     : row.bucket === 'exported' ? h`Runs ${shown} after a tarball goes to regrow staging, no undo.`
     : row.bucket !== 'frees_now' ? '' : rule.native_command ? h`Runs ${shown}, no undo.` : 'A command frees it, with no undo.';
@@ -849,7 +863,7 @@ function drawResult() {
 
 function drawDown() {
   return h`<section class="lead"><h2>regrow's engine has stopped.</h2><p class="err mono">${S.down}</p>
-    <p class="aside">This page scans again as soon as the engine is back.</p></section>${notices(false)}`;
+    <p class="aside">${S.scan ? 'This page scans again as soon as the engine is back.' : S.wantScan ? 'The scan you asked for starts as soon as the engine is back.' : 'Scan once the engine is back.'}</p></section>${notices(false)}`;
 }
 
 const progress = (part, stop, stopping, label) => h`<span class="progress"><i style="width:${(part * 100).toFixed(1)}%"></i></span><button class="link" data-do="${stop}" ${stopping ? 'disabled' : ''}>${stopping ? 'Stopping' : label}</button>`;
@@ -870,7 +884,7 @@ function drawTop() {
     const failed = sc ? sc.rows.filter((r) => r.error).length : 0;
     status = !sc ? '' : sc.phase === 'canceled' ? `stopped after ${sc.rows.length} of ${num(sc.rules, 'rule')}`
       : `${num(sc.rules, 'rule')} scanned` + (failed ? `, ${failed} ended with an error` : '') + (sc.phase === 'stale' ? ', now out of date' : '');
-    right = S.hello ? h`<button class="link" data-do="scan">Scan again</button>` : '';
+    right = S.hello && sc ? h`<button class="link" data-do="scan">Scan again</button>` : '';
   }
   return h`<h1>regrow</h1><span class="status">${status}</span><span class="grow"></span>${right}`;
 }
@@ -893,7 +907,10 @@ function drawTray() {
   } else if (S.screen === 'result') {
     say = 'This scan is spent. Scan again to see the disk as it is now.';
     buttons = again;
-  } else if (!sc || sc.phase === 'scanning' || !S.known && sc.phase === 'done') {
+  } else if (!sc) {
+    say = S.hello ? 'A scan reads the disk and removes nothing.' : S.wantScan ? 'The scan starts once the engine is ready.' : 'Waiting for the engine to start.';
+    buttons = h`<button class="btn" data-do="scan" ${S.hello ? '' : 'disabled'}>Scan</button>`;
+  } else if (sc.phase === 'scanning' || !S.known && sc.phase === 'done') {
     say = sc && sc.phase === 'done' ? 'Working out what starts ticked.' : 'Findings arrive as each rule reports. The plan opens when the scan ends.';
     buttons = h`<button class="btn" disabled>Review plan</button>`;
   } else if (sc.phase !== 'done') {

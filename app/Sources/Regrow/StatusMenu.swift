@@ -42,7 +42,8 @@ final class StatusMenu: NSObject, NSMenuDelegate {
         menu.removeAllItems()
         let shell = shell
         let actions = MenuActions(
-            open: { shell.openScan() },
+            open: { shell.showWindow(scan: false) },
+            scan: { shell.showWindow(scan: true) },
             setAutotrim: { shell.autotrim = $0 },
             copy: { shell.copy($0) },
             openFullDiskAccess: { shell.openFullDiskAccess() },
