@@ -34,10 +34,10 @@ func RunNativeTo(ctx context.Context, argv []string, w io.Writer) error {
 
 func runCaptured(ctx context.Context, argv []string, stdout io.Writer) error {
 	if len(argv) == 0 {
-		return errors.New("empty command")
+		return notStarted{errors.New("empty command")}
 	}
 	if argv[0] == "sudo" {
-		return errors.New("needs administrator rights: the engine has no terminal for sudo")
+		return notStarted{errors.New("needs administrator rights: the engine has no terminal for sudo")}
 	}
 	out := &tail{max: nativeTailBytes}
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
@@ -53,7 +53,7 @@ func runCaptured(ctx context.Context, argv []string, stdout io.Writer) error {
 	if err == nil || errors.Is(err, exec.ErrWaitDelay) {
 		return nil
 	}
-	if cmd.ProcessState != nil && cmd.ProcessState.Success() {
+	if ctx.Err() != nil && cmd.ProcessState != nil && cmd.ProcessState.Success() {
 		// Once the context is done, Wait reports it even for an exit 0.
 		return nil
 	}

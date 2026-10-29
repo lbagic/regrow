@@ -1122,8 +1122,8 @@ type unstarted struct{ error }
 
 func (unstarted) Started() bool { return false }
 
-// A stop that lands as osascript exits 0 comes back as the context's
-// error: it gives no status, so off keeps the record of what it cleared.
+// A runner that reports a stop as the context's error, not as an exit,
+// gives no status, so off keeps the record of what it may have cleared.
 func TestAdminRunStoppedAsTheStepEnds(t *testing.T) {
 	f := newFixture(t)
 	f.a.Authorize = nil

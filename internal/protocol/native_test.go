@@ -46,6 +46,8 @@ func TestRunNativeMarksACommandThatNeverStarted(t *testing.T) {
 	}{
 		"a stop before it started": {stopped, []string{"/usr/bin/true"}},
 		"no such command":          {context.Background(), []string{"/nonexistent/regrow-test"}},
+		"an empty command":         {context.Background(), nil},
+		"sudo, refused":            {context.Background(), []string{"sudo", "true"}},
 	} {
 		var start interface{ Started() bool }
 		err := RunNative(c.ctx, c.argv)
@@ -71,11 +73,23 @@ func TestRunNativeExitZeroUnderAStopSucceeds(t *testing.T) {
 		err := RunNative(ctx, []string{"/usr/bin/true"})
 		var start interface{ Started() bool }
 		var exit *exec.ExitError
-		if err != nil && !errors.As(err, &exit) && !(errors.As(err, &start) && !start.Started()) {
+		if err != nil && !errors.As(err, &exit) && (!errors.As(err, &start) || start.Started()) {
 			t.Fatalf("run %d: %v, want nil, an exit, or a command that never started", i, err)
 		}
 	}
 }
+
+// An exit 0 is a success over an error only when a stop caused that
+// error: output that could not be copied still fails the command.
+func TestRunNativeToReportsAFailedCopy(t *testing.T) {
+	if err := RunNativeTo(context.Background(), sh("printf payload"), failingWriter{}); err == nil {
+		t.Error("a command whose output could not be written returned no error")
+	}
+}
+
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("no space left on device") }
 
 func TestRunNativeStdinIsEmpty(t *testing.T) {
 	// cat copies stdin to stdout: nothing may arrive, and it must end.
