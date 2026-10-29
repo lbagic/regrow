@@ -96,6 +96,7 @@ stop_app() {
 	for pid in $(pids_of "$app_exe"); do
 		say "Quitting the running Regrow..."
 		signal_if "$pid" "$app_exe" TERM
+		quit_app=yes
 		if ! gone_within "$pid" 45; then
 			app_note="Regrow is still running after 45 seconds; quit it from its menu and run this line again"
 			return 1
@@ -121,7 +122,7 @@ stop_app() {
 # through the new bundle's own --swap, and opens it; on a failure, sets
 # app_note to why and leaves no staged copy.
 install_app() {
-	staged=$HOME/Applications/.Regrow.app.staged
+	staging=yes
 	if ! mkdir -p "$HOME/Applications" || ! rm -rf "${staged:?}" || ! ditto "$tmp/app/Regrow.app" "$staged"; then
 		app_note="could not copy it to ~/Applications"
 		rm -rf "${staged:?}" || true
@@ -134,8 +135,9 @@ install_app() {
 	if ! "$staged/Contents/MacOS/Regrow" --swap "$staged" "$app_dest"; then
 		app_note="could not put it in ~/Applications"
 		rm -rf "${staged:?}" || true
-		# The Regrow it quit, if there was one, runs again.
-		open "$app_dest" 2>/dev/null || true
+		if [ "$quit_app" = yes ]; then
+			open "$app_dest" 2>/dev/null || true
+		fi
 		return 1
 	fi
 	# After a swap the old bundle is here.
@@ -168,7 +170,9 @@ main() {
 	app_dest=$HOME/Applications/Regrow.app
 
 	tmp=$(mktemp -d)
-	trap 'rm -rf "$tmp"' EXIT
+	# Before the swap the staged copy is the new app, after it the old one.
+	staged=$HOME/Applications/.Regrow.app.staged staging=no quit_app=no
+	trap 'rm -rf "$tmp"; if [ "$staging" = yes ]; then rm -rf "$staged"; fi' EXIT
 	trap 'exit 1' HUP INT TERM
 
 	say "Downloading regrow for $chip..."

@@ -131,7 +131,7 @@ probe() {
 	cp /usr/bin/true "$work/probe"
 	echo "Signing a scratch file with the new key. If a keychain dialog appears, choose \"Always Allow\"."
 	if ! codesign --force --sign "$sha1" "$work/probe"; then
-		echo "codesign could not use the new identity ($sha1). It stays in the keychain; run this again to sign with it once more." >&2
+		echo "codesign could not use the new identity ($sha1). It stays in the keychain, recorded; the keychain dialog comes back at the next \`just app\`: choose \"Always Allow\" there." >&2
 		exit 1
 	fi
 }
