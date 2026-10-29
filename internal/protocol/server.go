@@ -31,9 +31,9 @@ const (
 	// cancel reaches a goroutine stuck in one.
 	defaultMoveLimit = time.Minute
 	// defaultExitGrace bounds what shutdown waits for that cannot lose
-	// data: a canceled scan winding down, and a reader that stopped
-	// draining events. An execute or a tick is always waited for in
-	// full.
+	// data: a canceled scan winding down and a history being read, from
+	// one deadline, and a reader that stopped draining events. An
+	// execute or a tick is always waited for in full.
 	defaultExitGrace = 5 * time.Second
 )
 
@@ -158,8 +158,9 @@ type session struct {
 
 // Serve runs the protocol until in ends or ctx is canceled, then shuts
 // down: a scan in flight is canceled, an execute finishes and journals
-// its current action and stops there, a tick runs to its end. It returns in's read error, nil
-// at EOF.
+// its current action and stops there, a tick runs to its end, and a
+// history being read is answered if it ends within the exit grace. It
+// returns in's read error, nil at EOF.
 func (srv *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 	s := srv.newSession(out)
 
@@ -204,8 +205,10 @@ loop:
 	if grace == 0 {
 		grace = defaultExitGrace
 	}
+	answered := s.answered()
+	deadline := time.Now().Add(grace)
 	s.shutdown(grace)
-	s.waitAnswers(grace)
+	waitUntil(answered, deadline)
 	s.out.close(grace)
 	return err
 }
@@ -706,18 +709,22 @@ func (s *session) shutdown(grace time.Duration) {
 	}
 }
 
-// waitAnswers waits up to grace for the requests answered off the read
-// loop, so each still gets its terminal event.
-func (s *session) waitAnswers(grace time.Duration) {
-	answered := make(chan struct{})
+// answered is closed once the requests answered off the read loop
+// have their terminal events. The caller has stopped reading requests.
+func (s *session) answered() <-chan struct{} {
+	ch := make(chan struct{})
 	go func() {
 		s.answering.Wait()
-		close(answered)
+		close(ch)
 	}()
-	timer := time.NewTimer(grace)
+	return ch
+}
+
+func waitUntil(ch <-chan struct{}, deadline time.Time) {
+	timer := time.NewTimer(time.Until(deadline))
 	defer timer.Stop()
 	select {
-	case <-answered:
+	case <-ch:
 	case <-timer.C:
 	}
 }

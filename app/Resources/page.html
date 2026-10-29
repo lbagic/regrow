@@ -1112,7 +1112,8 @@ function split(r, scale) {
   return h`<span class="bar split" aria-hidden="true">${parts.map(([k, n]) => h`<i class="${k}" style="width:${Math.min(100, n / scale * 100).toFixed(2)}%"></i>`)}</span>`;
 }
 
-// Free space over the samples, one line on its own scale from zero, each run that cleaned something a dot on it.
+// Free space over the samples, one line on its own scale from zero, each run that cleaned something a dot on it:
+// a run after the last sample, as an autotrim prune always is, at the right edge.
 function chart(samples, runs) {
   const sm = samples.map((s) => [time(s.at), s.free]), t0 = sm[0][0], t1 = sm[sm.length - 1][0];
   const top = Math.max(...sm.map((s) => s[1])), quarter = Math.max(1, top / GIB / 4), unit = 10 ** Math.floor(Math.log10(quarter));
@@ -1121,9 +1122,9 @@ function chart(samples, runs) {
   const line = sm.map((s, i) => (i ? 'L' : 'M') + X(s[0]).toFixed(1) + ' ' + Y(s[1]).toFixed(1)).join('');
   const ticks = [];
   for (let v = 0; v <= y1; v += step) ticks.push(v);
-  const dots = runs.filter((r) => sizeOfRun(r) > 0 && time(r.start) >= t0 && time(r.start) <= t1).map((r) => {
-    const at = time(r.start), near = sm.reduce((a, b) => (Math.abs(b[0] - at) < Math.abs(a[0] - at) ? b : a));
-    return h`<span class="dot" style="left:${(X(at) / 10).toFixed(2)}%;top:${(Y(near[1]) / 1.5).toFixed(2)}%" title="${stamp(at)}: ${human(sizeOfRun(r))} cleaned"></span>`;
+  const dots = runs.filter((r) => sizeOfRun(r) > 0 && time(r.start) >= t0).map((r) => {
+    const at = Math.min(time(r.start), t1), near = sm.reduce((a, b) => (Math.abs(b[0] - at) < Math.abs(a[0] - at) ? b : a));
+    return h`<span class="dot" style="left:${(X(at) / 10).toFixed(2)}%;top:${(Y(near[1]) / 1.5).toFixed(2)}%" title="${stamp(time(r.start))}: ${human(sizeOfRun(r))} cleaned"></span>`;
   });
   const days = [0, 1, 2, 3, 4].map((i) => t0 + (t1 - t0) * i / 4);
   return h`<div class="chart"><div class="plot" data-t0="${t0}" data-t1="${t1}">

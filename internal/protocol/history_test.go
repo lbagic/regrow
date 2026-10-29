@@ -142,3 +142,26 @@ func TestHistoryReadAtShutdownIsAnswered(t *testing.T) {
 		t.Errorf("after stdin ended: %v, want [history/h done/h]", got)
 	}
 }
+
+// A history that outlasts the exit grace does not hold the engine up:
+// it goes unanswered, and the engine exits.
+func TestHistoryPastTheGraceDoesNotHoldTheExit(t *testing.T) {
+	srv := newMachine(t).server()
+	srv.exitGrace = 20 * time.Millisecond
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	srv.History = func() (History, error) {
+		<-release
+		return History{}, nil
+	}
+	p := start(t, srv)
+	p.expect("hello")
+	p.send(`{"type":"history","id":"h"}`)
+	rest, err := p.closeAndWait()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rest) != 0 {
+		t.Errorf("after stdin ended: %v, want nothing", rest)
+	}
+}

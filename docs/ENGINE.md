@@ -23,7 +23,7 @@ Protocol version: **1**.
 1. The engine starts and writes `hello` before it reads anything.
 2. The peer sends requests. Each request gets exactly one terminal event: `done` or `error`, with `re` set to the request's `id`.
 3. Only one **scan, execute or tick** is in flight at a time. Another one sent meanwhile is refused with `error{code:"busy"}` and changes nothing. `plan`, `cancel` and `history` are answered at any time.
-4. When stdin ends, or the process gets SIGINT or SIGTERM, the engine shuts down: a scan in flight is canceled, an execute finishes the action it is running, journals it and stops there, and a tick runs to its end, and a `history` being read is answered, as long as a scan's cancel is given. Their terminal events are still written. Then the engine exits 0. It waits for that action however long it takes, so a peer that cannot wait out a hung steward command sends SIGTERM twice: the first signal asks for the clean stop, the second kills the engine at once.
+4. When stdin ends, or the process gets SIGINT or SIGTERM, the engine shuts down: a scan in flight is canceled and given 5 s to wind down, an execute finishes the action it is running, journals it and stops there, and a tick runs to its end. Their terminal events are still written. A `history` being read is answered if its read ends within those 5 s, or before the execute or tick ends; one that takes longer gets no terminal event. Then the engine exits 0. It waits for that action however long it takes, so a peer that cannot wait out a hung steward command sends SIGTERM twice: the first signal asks for the clean stop, the second kills the engine at once.
 
 Request ids are the peer's own; the engine echoes them and does not check that they are unique.
 

@@ -1155,17 +1155,36 @@ struct Scenario {
             r.same(r.sent("history").count, asked + 1, "history requests once the one on its way has ended: one more, for the run")
             await r.shoot()
         },
-        Scenario(name: "stats-after-a-prune") { r in
+        Scenario(name: "stats-after-a-prune", play: Play(historyEvent: ["event": "history", "titles": [String: Any](), "samples": [
+            ["at": "2026-10-28T10:00:00Z", "total": 1e12, "free": 6e10, "purgeable": 0, "swap_used": 0],
+            ["at": "2026-10-29T10:00:00Z", "total": 1e12, "free": 5e10, "purgeable": 0, "swap_used": 0],
+        ], "runs": [
+            // The tick sampled before it pruned, so the prune starts after the last sample.
+            ["id": "20261029-100001-0123456789abcdef0123456789abcdef", "start": "2026-10-29T10:00:01Z", "done": 1, "failed": 0, "undone": 0, "restorable": 0,
+             "prune": true, "frees_now": 1_073_741_824, "after_trash": 0, "staged": 0, "exported": 0, "rules": ["go-build-cache": 1_073_741_824]],
+        ]])) { r in
             // A watch tick whose autotrim pruned is a run of its own: Stats, open, reads the history again.
             await results(r)
             await r.click("#nav-stats")
             let asked = r.sent("history").count
             var tick = r.transcript.event("tick", "tick")
-            tick["re"] = "shell-run-tick-1"
-            tick["pruned"] = ["rule_id": "go-build-cache", "run": "20261029-100000-0123456789abcdef0123456789abcdef", "files": 12, "bytes": 1_073_741_824]
+            tick["re"] = "shell-tick-2"
+            tick["pruned"] = ["rule_id": "go-build-cache", "run": "20261029-100001-0123456789abcdef0123456789abcdef", "files": 12, "bytes": 1_073_741_824]
             r.send(tick)
             await r.settle()
             r.same(r.sent("history").count, asked + 1, "history requests after a tick that pruned")
+            r.same(await r.count("#pane .chart .dot"), 1, "a dot for the prune, which started after the last sample")
+            r.same(await r.js("return Math.round(parseFloat(document.querySelector('#pane .chart .dot').style.left))") as? Int ?? 0, 100, "the prune's dot at the right edge, in percent")
+            await r.shoot()
+        },
+        Scenario(name: "stats-one-moment", play: Play(historyEvent: ["event": "history", "runs": [Any](), "titles": [String: Any](), "samples": [
+            ["at": "2026-10-29T09:00:00Z", "total": 1e12, "free": 6e10, "purgeable": 0, "swap_used": 0],
+            ["at": "2026-10-29T09:00:00Z", "total": 1e12, "free": 6e10, "purgeable": 0, "swap_used": 0],
+        ]])) { r in
+            await results(r)
+            await r.click("#nav-stats")
+            r.same(await r.count("#pane .chart"), 0, "no chart for samples that all share one time")
+            r.has(await r.text("#pane"), "Not enough samples yet", "what shows in its place")
             await r.shoot()
         },
         Scenario(name: "stats-down", play: Play(holdHello: true)) { r in
