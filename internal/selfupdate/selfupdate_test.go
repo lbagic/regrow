@@ -130,6 +130,7 @@ func installed(t *testing.T, current string, srv *httptest.Server) Updater {
 		LatestURL: srv.URL + "/latest",
 		OS:        "darwin",
 		Arch:      "arm64",
+		UID:       os.Geteuid(),
 		Client:    srv.Client(),
 		Now:       func() time.Time { return now },
 	}
@@ -256,6 +257,7 @@ func TestUpdateRefusesBinaryThatDoesNotRunOrLies(t *testing.T) {
 	for name, bin := range map[string][]byte{
 		"fails":         []byte("#!/bin/sh\nexit 1\n"),
 		"wrong version": script("0.2.0"),
+		"no version":    []byte("#!/bin/sh\necho regrow\n"),
 	} {
 		t.Run(name, func(t *testing.T) {
 			rel := newRelease(t, "v0.2.1", bin)
@@ -268,6 +270,15 @@ func TestUpdateRefusesBinaryThatDoesNotRunOrLies(t *testing.T) {
 			}
 			onlyBinary(t, u)
 		})
+	}
+}
+
+// A later release may say more after its version; it still installs.
+func TestUpdateAcceptsMoreAfterTheVersion(t *testing.T) {
+	rel := newRelease(t, "v0.2.1", []byte("#!/bin/sh\necho \"regrow 0.2.1 (abc1234)\"\necho built today\n"))
+	u := installed(t, "0.1.0", rel.serve(t))
+	if _, err := u.Update(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -304,6 +315,7 @@ func TestUpdateSkipsBinariesItDoesNotOwn(t *testing.T) {
 			}
 			u.Exe = real
 		},
+		"another user's file": func(t *testing.T, u *Updater) { u.UID = os.Geteuid() + 1 },
 		"non-writable folder": func(t *testing.T, u *Updater) {
 			if os.Geteuid() == 0 {
 				t.Skip("root writes any folder")

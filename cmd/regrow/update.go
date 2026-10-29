@@ -22,7 +22,12 @@ func startAutoUpdate(args []string) func() {
 		return func() {}
 	}
 	r := u.Start(context.Background())
-	return func() { r.Finish(os.Stderr, selfupdate.ExitGrace) }
+	return func() {
+		// The reader of a pipe may be gone by now; the line must not
+		// turn the command's exit into a SIGPIPE.
+		keepRunningOnEPIPE()
+		r.Finish(os.Stderr, selfupdate.ExitGrace)
+	}
 }
 
 func runUpdate(w io.Writer, ids []string) error {

@@ -59,7 +59,7 @@ const (
 
 	recordTimeout  = 30 * time.Second
 	archiveTimeout = 10 * time.Minute
-	runTimeout     = 10 * time.Second
+	runTimeout     = 5 * time.Second
 )
 
 // Updater checks for and installs a newer release over one binary.
@@ -70,6 +70,7 @@ type Updater struct {
 	StateDir  string
 	LatestURL string
 	OS, Arch  string
+	UID       int // the effective user, who must own the binary
 	Off       bool
 	Client    *http.Client
 	Now       func() time.Time
@@ -101,6 +102,7 @@ func FromEnv(current string) (Updater, error) {
 		LatestURL: latest,
 		OS:        runtime.GOOS,
 		Arch:      runtime.GOARCH,
+		UID:       os.Geteuid(),
 		Off:       os.Getenv(OffEnv) != "",
 		Client:    &http.Client{},
 		Now:       time.Now,
@@ -146,7 +148,7 @@ func (u Updater) Owned() (string, error) {
 	if !info.Mode().IsRegular() {
 		return "", fmt.Errorf("%s is not a plain file; it is left as it is", target)
 	}
-	if st, ok := info.Sys().(*syscall.Stat_t); !ok || int(st.Uid) != os.Geteuid() {
+	if st, ok := info.Sys().(*syscall.Stat_t); !ok || int(st.Uid) != u.UID {
 		return "", fmt.Errorf("%s belongs to another user; it is left as it is", target)
 	}
 	if err := unix.Access(dir, unix.W_OK); err != nil {
@@ -210,7 +212,7 @@ func (u Updater) Update(ctx context.Context) (Result, error) {
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
 	}
-	if err := install(context.WithoutCancel(ctx), target, bin, "regrow "+res.To); err != nil {
+	if err := install(context.WithoutCancel(ctx), target, bin, res.To); err != nil {
 		return Result{}, err
 	}
 	res.Status = Updated
@@ -324,9 +326,10 @@ func binaryFrom(archive []byte) ([]byte, error) {
 	}
 }
 
-// install writes bin beside target, checks that it runs and prints
-// want for `version`, then renames it over target: a running regrow
-// keeps the file it started from, and the next run starts the new one.
+// install writes bin beside target, checks that it runs and that its
+// `version` line starts "regrow <want>", then renames it over target: a
+// running regrow keeps the file it started from, and the next run
+// starts the new one.
 func install(ctx context.Context, target string, bin []byte, want string) (err error) {
 	f, err := os.CreateTemp(filepath.Dir(target), ".regrow-update-*")
 	if err != nil {
@@ -363,8 +366,9 @@ func install(ctx context.Context, target string, bin []byte, want string) (err e
 	if err != nil {
 		return fmt.Errorf("the downloaded regrow does not run on this Mac (%v); nothing was changed", err)
 	}
-	if got := strings.TrimSpace(string(out)); got != want {
-		return fmt.Errorf("the downloaded regrow says %q, not %q; nothing was changed", got, want)
+	line, _, _ := strings.Cut(string(out), "\n")
+	if f := strings.Fields(line); len(f) < 2 || f[0] != binaryName || f[1] != want {
+		return fmt.Errorf("the downloaded regrow says %q, not version %s; nothing was changed", strings.TrimSpace(line), want)
 	}
 	return os.Rename(tmp, target)
 }
