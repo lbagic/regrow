@@ -155,7 +155,6 @@ func TestHistoryPastTheGraceDoesNotHoldTheExit(t *testing.T) {
 		return History{}, nil
 	}
 	p := start(t, srv)
-	// Before the peer's cleanup, so the history's goroutine ends too.
 	t.Cleanup(func() { close(release) })
 	p.expect("hello")
 	p.send(`{"type":"history","id":"h"}`)

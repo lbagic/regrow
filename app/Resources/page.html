@@ -1112,8 +1112,8 @@ function split(r, scale) {
   return h`<span class="bar split" aria-hidden="true">${parts.map(([k, n]) => h`<i class="${k}" style="width:${Math.min(100, n / scale * 100).toFixed(2)}%"></i>`)}</span>`;
 }
 
-// Free space over the samples, one line on its own scale from zero, each run that cleaned something a dot on it,
-// a run after the last sample at the right edge.
+// Free space over the samples, one line on its own scale from zero, each run since the first sample that cleaned
+// something a dot on it, a run after the last sample at the right edge.
 function chart(samples, runs) {
   const sm = samples.map((s) => [time(s.at), s.free]), t0 = sm[0][0], t1 = sm[sm.length - 1][0];
   const top = Math.max(...sm.map((s) => s[1])), quarter = Math.max(1, top / GIB / 4), unit = 10 ** Math.floor(Math.log10(quarter));
