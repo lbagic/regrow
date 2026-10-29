@@ -200,7 +200,7 @@ The engine runs the whole catalog as `~/.config/regrow/config.yaml`'s `rules:` s
 
 | Event | Fields |
 |---|---|
-| `rules` | `catalog`: every rule of the catalog, beta ones included, each as `regrow rules --json` prints it plus `off` (the file turns it off) and `runs` (not off, and not beta while the beta rules are off); `beta`, the file's switch; `beta_flag`, true when the engine was started with `--beta-rules`; `config`, the file's path; `error`, present when the file does not load, no rule then running, `off` and `beta` as it last loaded and `unknown_off` absent; `unknown_off`, the ids `off` names that no rule has, absent when none |
+| `rules` | `catalog`: every rule of the catalog, beta ones included, each as `regrow rules --json` prints it plus `off` (the file turns it off) and `runs` (not off, and not beta while the beta rules are off); `beta`, the file's switch; `beta_flag`, true when the engine was started with `--beta-rules`; `config`, the file's path; `error`, present when the file does not load, no rule then running, `off` and `beta` as it last loaded, neither set if it has not loaded since the engine started, and `unknown_off` absent; `unknown_off`, the ids `off` names that no rule has, absent when none |
 | `done` | — |
 
 `set_rules` carries `rule` with `off`, or `beta`, never both: anything else is `bad_request`. A rule the catalog lacks, or a file that does not load, fails it with `rules_failed`, and the file is left as it was.
