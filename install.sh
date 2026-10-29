@@ -46,20 +46,27 @@ main() {
 	want=$(awk -v f="$asset" '$2 == f { print $1 }' "$tmp/checksums.txt")
 	[ -n "$want" ] || die "checksums.txt has no line for $asset; nothing was installed."
 	got=$(shasum -a 256 "$tmp/$asset" | awk '{ print $1 }')
+	[ -n "$got" ] || die "shasum could not read $asset; nothing was installed."
 	[ "$got" = "$want" ] ||
 		die "$asset does not match the release's checksums.txt; nothing was installed."
 
 	tar -xzf "$tmp/$asset" -C "$tmp" regrow || die "$asset holds no regrow binary."
 	chmod 755 "$tmp/regrow"
-	mkdir -p "$bin_dir"
-	mv -f "$tmp/regrow" "$bin_dir/regrow"
-	version=$("$bin_dir/regrow" version) ||
-		die "installed $bin_dir/regrow, but it does not run on this Mac."
+	version=$("$tmp/regrow" version) ||
+		die "the downloaded regrow does not run on this Mac (it needs macOS 12 or later); nothing was installed."
+	mkdir -p "$bin_dir" || die "could not create ~/.local/bin."
+	mv -f "$tmp/regrow" "$bin_dir/regrow" || die "could not write ~/.local/bin/regrow."
 	say "Installed $version to ~/.local/bin/regrow."
 
 	case :$PATH: in
 	*:"$bin_dir":*)
-		say "Next, run:  regrow"
+		found=$(command -v regrow || true)
+		if [ "$found" = "$bin_dir/regrow" ]; then
+			say "Next, run:  regrow"
+		else
+			say "Your PATH finds another regrow first, at $found."
+			say "Next, run:  ~/.local/bin/regrow"
+		fi
 		;;
 	*)
 		# shellcheck disable=SC2016 # expanded by the shell that reads the line
@@ -78,7 +85,11 @@ main() {
 			say "Next, run:  regrow  in a new Terminal window, or  ~/.local/bin/regrow  in this one."
 			;;
 		*)
-			say "~/.local/bin is not on your PATH. Add this line to your shell's startup file:"
+			case ${SHELL:-} in
+			*/bash) rc='~/.bash_profile' ;;
+			*) rc="your shell's startup file" ;;
+			esac
+			say "~/.local/bin is not on your PATH. Add this line to $rc:"
 			say "  $line"
 			say "Next, run:  ~/.local/bin/regrow"
 			;;

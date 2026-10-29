@@ -63,7 +63,7 @@ flowchart TD
     P0[Phase 0: Decisions<br/>name · repo · license] --> P1[Phase 1: Skeleton<br/>engine + TUI + 15 safe rules]
     P1 --> M1{{M1: USABLE FOR ME<br/>replaces the bash script daily}}
     M1 --> P2[Phase 2: Safety hardening<br/>trash/undo · golden tests · CI]
-    P2 --> M2{{M2: SHAREABLE<br/>brew tap, friends use it}}
+    P2 --> M2{{M2: SHAREABLE<br/>curl install, friends use it}}
     M2 --> P3[Phase 3: Wedge<br/>item identity · ML models · docker<br/>doctor · phantom space]
     P3 --> M3{{M3: LAUNCHABLE}}
     M3 --> P4[Phase 4: Launch<br/>README GIF · Show HN · socials]
@@ -105,7 +105,7 @@ Exit: name chosen, repo pushed, CI green on hello-world.
 
 Pre-done (2026-07-13, [architecture review](plans/2026-07-13-architecture-review.md)): per-rule golden coverage shipped; trash seam placed — `internal/trash` owns the mechanism (`PreviewCommand`), planner emits intent. Build Move/receipts/staging behind that seam; design their signatures with the executor, they were deliberately not stubbed. Also in scope now that commands execute: placeholder validation (review candidate 4 — a `{arg}` typo silently downgrades a per-item command; must fail at load, not execution).
 
-**M2 check:** friend installs via `brew install you/tap/name`, runs it, nothing scary happens. Issues template up.
+**M2 check:** friend installs with the README's curl line (the brew tap later), runs it, nothing scary happens. Issues template up.
 
 ## Phase 3 — Wedge → **M3: launchable**
 
