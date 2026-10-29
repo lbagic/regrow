@@ -9,11 +9,15 @@
 #                            ~/Applications/Regrow.app, launch it, then run
 #                            `scripts/app-smoke.sh all` against it. --no-check skips
 #                            the checks.
+#   scripts/app.sh release   the signed bundle for both chips, packed in
+#                            app/.build/dist/Regrow.app.zip as a release carries it.
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 BUNDLE="$ROOT/app/.build/bundle/Regrow.app"
 DEST="$HOME/Applications/Regrow.app"
+DIST="$ROOT/app/.build/dist"
+ZIP="$DIST/Regrow.app.zip"
 RECORD="$ROOT/.signing-identity"
 STATE="${XDG_STATE_HOME:-$HOME/.local/state}/regrow"
 SIGN_LIMIT=60
@@ -23,9 +27,9 @@ mode="${1:-}"
 check=yes
 case "$mode $*" in
 "install install --no-check") check=no ;;
-"build build" | "signed signed" | "install install") ;;
+"build build" | "signed signed" | "install install" | "release release") ;;
 *)
-	echo "usage: $0 build|signed|install [--no-check]" >&2
+	echo "usage: $0 build|signed|install|release [--no-check]" >&2
 	exit 64
 	;;
 esac
@@ -150,14 +154,31 @@ fi
 mkdir -p "$ROOT/app/.build"
 printf '%s\n' "$here" >"$built_in"
 
-swift build -c release --package-path "$ROOT/app"
-bin=$(swift build -c release --package-path "$ROOT/app" --show-bin-path)
-
 rm -rf "${BUNDLE:?}"
 mkdir -p "$BUNDLE/Contents/MacOS" "$BUNDLE/Contents/Resources"
-cp "$bin/Regrow" "$BUNDLE/Contents/MacOS/Regrow"
-CGO_ENABLED=0 go build -trimpath -ldflags "-X main.version=$version" \
-	-o "$BUNDLE/Contents/MacOS/regrow-engine" ./cmd/regrow
+if [ "$mode" = release ]; then
+	# A release runs on Intel Macs too: each executable holds both chips.
+	parts="$ROOT/app/.build/parts"
+	rm -rf "${parts:?}"
+	mkdir -p "$parts"
+	for arch in arm64 x86_64; do
+		swift build -c release --package-path "$ROOT/app" --triple "$arch-apple-macosx14.0"
+		bin=$(swift build -c release --package-path "$ROOT/app" --triple "$arch-apple-macosx14.0" --show-bin-path)
+		cp "$bin/Regrow" "$parts/Regrow-$arch"
+	done
+	for arch in arm64 amd64; do
+		CGO_ENABLED=0 GOOS=darwin GOARCH=$arch go build -trimpath -ldflags "-X main.version=$version" \
+			-o "$parts/regrow-engine-$arch" ./cmd/regrow
+	done
+	lipo -create -output "$BUNDLE/Contents/MacOS/Regrow" "$parts/Regrow-arm64" "$parts/Regrow-x86_64"
+	lipo -create -output "$BUNDLE/Contents/MacOS/regrow-engine" "$parts/regrow-engine-arm64" "$parts/regrow-engine-amd64"
+else
+	swift build -c release --package-path "$ROOT/app"
+	bin=$(swift build -c release --package-path "$ROOT/app" --show-bin-path)
+	cp "$bin/Regrow" "$BUNDLE/Contents/MacOS/Regrow"
+	CGO_ENABLED=0 go build -trimpath -ldflags "-X main.version=$version" \
+		-o "$BUNDLE/Contents/MacOS/regrow-engine" ./cmd/regrow
+fi
 cp "$ROOT/app/Resources/page.html" "$BUNDLE/Contents/Resources/page.html"
 cp -R "$ROOT/app/Resources/smoke" "$BUNDLE/Contents/Resources/smoke"
 cp "$ROOT/app/Resources/Info.plist" "$BUNDLE/Contents/Info.plist"
@@ -178,6 +199,26 @@ fi
 codesign -d -r- "$BUNDLE" 2>&1 | sed -n 's/^designated => /Signed as: /p'
 if [ "$mode" = signed ]; then
 	echo "Signed as the installed app is, and not installed."
+	exit 0
+fi
+
+if [ "$mode" = release ]; then
+	# No extended attributes: the AppleDouble files that would carry them
+	# land inside the bundle when another tool unpacks it, and break its seal.
+	rm -rf "${DIST:?}"
+	mkdir -p "$DIST"
+	ditto -c -k --norsrc --noextattr --noqtn --noacl --keepParent "$BUNDLE" "$ZIP"
+	unpacked=$(mktemp -d "${TMPDIR:-/tmp}/regrow-release.XXXXXX")
+	ditto -x -k "$ZIP" "$unpacked"
+	requirement="identifier \"com.github.lbagic.regrow\" and certificate leaf = H\"$identity\""
+	if ! codesign --verify --strict --deep -R="$requirement" "$unpacked/Regrow.app"; then
+		echo "The bundle unpacked from $ZIP does not verify as signed by $identity." >&2
+		exit 1
+	fi
+	codesign -dvv "$unpacked/Regrow.app" 2>&1 | grep -E '^(Identifier|Format|Authority|TeamIdentifier)='
+	echo "Executables: $(lipo -archs "$unpacked/Regrow.app/Contents/MacOS/Regrow"), engine $(lipo -archs "$unpacked/Regrow.app/Contents/MacOS/regrow-engine")"
+	rm -rf "${unpacked:?}"
+	echo "Packed $ZIP"
 	exit 0
 fi
 

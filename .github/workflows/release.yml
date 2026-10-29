@@ -3,6 +3,17 @@ name: release
 on:
   push:
     tags: ["v*"]
+  # A dry run on a pull request that touches the release: the app is
+  # built and signed, and goreleaser packs a snapshot it does not publish.
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - .goreleaser.yaml
+      - install.sh
+      - scripts/app.sh
+      - scripts/release-app.sh
+      - app/Resources/Info.plist
+      - app/Regrow.entitlements
 
 permissions:
   contents: write
@@ -10,6 +21,8 @@ permissions:
 
 jobs:
   goreleaser:
+    # A fork's pull request gets no secrets to sign with.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -19,10 +32,20 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go test ./...
+      # The signing key reaches this step alone, and its keychain is
+      # deleted when the step ends, before any other action runs.
+      - name: Build and sign Regrow.app
+        run: scripts/release-app.sh
+        env:
+          REGROW_SIGNING_P12: ${{ secrets.REGROW_SIGNING_P12 }}
+          REGROW_SIGNING_PASSWORD: ${{ secrets.REGROW_SIGNING_PASSWORD }}
       - uses: sigstore/cosign-installer@v3
+        if: github.event_name == 'push'
       - uses: goreleaser/goreleaser-action@v6
         with:
-          args: release --clean
+          args: ${{ github.event_name == 'push' && 'release --clean' || 'release --snapshot --clean --skip=sign' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+      - name: Checksums
+        run: cat dist/checksums.txt
