@@ -114,6 +114,7 @@ struct Play {
     var scanFirst = false                // the shell asks for a scan before it hands over the engine's hello
     var holdHello = false                // the engine has not said hello when the page is ready
     var settings: [String: Any]? = Play.installed  // the shell's settings event; nil: it has read none yet
+    var tickAfterRun: String?            // the section whose tick answers the page's ask for one once a run ends
 
     /// The settings of the installed app on a Mac that has granted it all but Control of Finder.
     static let installed: [String: Any] = [
@@ -466,6 +467,8 @@ final class Run: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHa
             if !play.opened && !play.scanFirst { send(["event": "shell", "state": "scan"]) }
         case "automation":
             if let allowed = play.automation { send(["event": "shell", "state": "automation", "allowed": allowed]) }
+        case "tick":
+            if let tick = play.tickAfterRun { send([answering(tick, "shell-2")[0]]) }
         case "open-full-disk-access", "relaunch", "login-item-on", "login-item-off", "login-item-settings", "notification-settings",
             "automation-settings", "show-log", "show-staging":
             break
@@ -1044,11 +1047,36 @@ struct Scenario {
             r.same(await r.text("[data-setting=fda] button"), "Open settings", "Full Disk Access's action while unknown")
             r.same(await r.text("#nav-general .fig"), "", "grants off beside General")
             r.same(await r.text("#pane .sec:nth-of-type(2) header span"), "", "the count of grants off")
-            r.same(await r.text("[data-setting=staging] .state"), "empty", "staging with no tick yet")
+            r.same(await r.text("[data-setting=staging] .state"), "…", "staging with no tick yet")
             r.same(await r.count("[data-setting=staging] button"), 0, "Show in Finder for staging with nothing there")
             r.send(["event": "shell", "state": "engine_down", "message": "the engine exited with status 1"])
             await r.settle()
             r.same(await r.text("#nav-scan .fig"), "stopped", "Scan's figure while the engine is down")
+            await r.shoot()
+        },
+        Scenario(name: "general-staged-after-run", play: Play(tick: "tick-steady", tickAfterRun: "tick")) { r in
+            await toRun(r)
+            await r.settle()
+            r.same(await r.screen(), "result", "the screen")
+            r.same(r.sentShell("tick"), 1, "ticks the page asked for once the run ended")
+            await r.click("#nav-general")
+            r.same(await r.text("[data-setting=staging] .state"), human(r.transcript.event("tick", "tick").int("staged_bytes")), "staging's size, from the tick after the run")
+            r.same(await r.count("[data-setting=staging] button"), 1, "Show in Finder for staging once the run put something there")
+            await r.shoot()
+        },
+        Scenario(name: "general-rescan-scroll") { r in
+            await results(r)
+            await r.js("document.getElementById('page').scrollTop = 400; return null")
+            await r.click("#nav-general")
+            r.send(["event": "shell", "state": "engine_down", "message": "the engine exited with status 2"])
+            await r.settle()
+            r.send([r.transcript.lines("hello")[0]])
+            await r.settle()
+            r.same(r.sent("scan").count, 2, "scans, the one after the engine came back included")
+            await r.click("#nav-scan")
+            await r.settle()
+            r.same(await r.phase(), "done", "the new scan's phase")
+            r.same(await r.js("return document.getElementById('page').scrollTop") as? Double ?? -1, 0, "a new scan's scroll, though the screen is the same")
             await r.shoot()
         },
         Scenario(name: "env-failed", play: Play(environment: "the login shell gave no answer within 5 s")) { r in

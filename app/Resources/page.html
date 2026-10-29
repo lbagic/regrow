@@ -453,7 +453,7 @@ const on = {
 function scan() {
   counting = clearTimeout(counting);
   Object.assign(S, { screen: 'findings', scan: newScan(), reloaded: null, known: false, ticked: new Set(), tray: null, planning: '',
-    plan: null, note: '', run: null, error: null, safeOpen: false, open: new Set() });
+    plan: null, note: '', run: null, error: null, safeOpen: false, open: new Set(), scanScreen: '' });
   S.scan.req = ask('scan', 'scan');
 }
 
@@ -464,9 +464,11 @@ function review(note) {
   S.planning = ask('plan', 'review', { scan_id: S.scan.id, select: [...S.ticked] });
 }
 
+// A run changed the disk and what regrow staging holds: the shell samples again, for the menu and for General.
 function ended(result, canceled, error) {
   Object.assign(S.run, { result: result || {}, canceled: !!canceled, error });
   S.screen = 'result';
+  post({ shell: 'tick' });
 }
 
 // Each change of a tick box is one plan request, sent once the clicking pauses; its answer fills the tray.
@@ -1022,7 +1024,7 @@ function permissions() {
     allowed: ['on', 'A Trash move goes through Finder, so Put Back works and emptying the Trash frees it.'],
     denied: ['off', 'Trash moves land in regrow staging, which emptying the Trash does not free; regrow undo puts them back.'],
     not_asked: ['not asked yet', 'macOS asks at the first confirm that holds a Trash move. Through Finder, Put Back works and emptying the Trash frees the space.'],
-    unknown: ['unknown', 'macOS did not say, as when Finder is not running. regrow asks again when this window comes to the front.'],
+    unknown: ['unknown', 'macOS did not say, as when Finder is not running. regrow reads it again when this window comes to the front.'],
   };
   const [word, text] = FINDER[finder] || ['…', ''];
   rows.push(setting('finder', 'Control of Finder', text, h`${state(word, finder === 'allowed')}${finder === 'denied' ? h`<button class="link" data-do="automationSettings">Open settings</button>` : ''}`));
@@ -1040,7 +1042,7 @@ function about() {
     S.hello && S.hello.self ? setting('engine', 'Engine', h`<span class="mono">${unbroken(tilde(S.hello.self))}</span>${copy(S.hello.self, 'path')}`, '') : '',
     st.log ? setting('log', 'Logs', h`<span class="mono">${unbroken(tilde(st.log))}</span>, with the engine's <span class="mono">engine.log</span> beside it`, h`<button class="link" data-do="showLog">Show in Finder</button>`) : '',
     st.staging ? setting('staging', 'Regrow staging', 'What a run moved there when Finder was not available, and the exports made before a docker volume is removed. Emptying the Trash does not free it.',
-      staged ? h`${state(human(staged))}<button class="link" data-do="showStaging">Show in Finder</button>` : state('empty')) : '',
+      staged ? h`${state(human(staged))}<button class="link" data-do="showStaging">Show in Finder</button>` : state(S.tick ? 'empty' : '…')) : '',
   ]);
 }
 

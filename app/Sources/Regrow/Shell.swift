@@ -39,8 +39,10 @@ final class Shell: ObservableObject {
     private var helloLine: String?
     /// The settings the page was last handed.
     private var settings: WindowSettings?
-    /// A read of the settings is under way; another asked meanwhile runs once it ends.
-    private var readingSettings = false
+    /// A read of the settings is under way since then; another asked
+    /// meanwhile runs once it ends, or at once after 10 s, in case macOS
+    /// never answers that one.
+    private var readingSettings: Date?
     private var readSettingsAgain = false
     private var tickLine: String?
     private var downLine: String?
@@ -181,11 +183,11 @@ final class Shell: ObservableObject {
     /// System Settings, so they are read again each time the window
     /// comes to the front.
     private func readSettings() {
-        guard !readingSettings else {
+        if let since = readingSettings, Date().timeIntervalSince(since) < 10 {
             readSettingsAgain = true
             return
         }
-        readingSettings = true
+        readingSettings = Date()
         let notifier = self.notifier, installed = Config.installed
         DispatchQueue.global(qos: .userInitiated).async {
             let finder = Automation.finderGrant()
@@ -210,7 +212,7 @@ final class Shell: ObservableObject {
     }
 
     private func settingsRead(notifications: WindowSettings.Grant, finder: WindowSettings.Grant) {
-        readingSettings = false
+        readingSettings = nil
         if readSettingsAgain {
             readSettingsAgain = false
             readSettings()
@@ -554,8 +556,15 @@ final class Shell: ObservableObject {
                     self.askingFinder = false
                     self.log("automation \(allowed ? "allowed" : "denied")")
                     self.window?.deliver(Router.shellEvent("automation", ["allowed": allowed]))
+                    // Finder can refuse a question with the grant given, as
+                    // when it times out: the page then hears the grant again.
+                    self.settings = nil
+                    self.readSettings()
                 }
             }
+        case "tick":
+            log("the page asked for a tick")
+            watch?.tickNow()
         case "open-full-disk-access":
             openFullDiskAccess()
         case "login-item-on":
