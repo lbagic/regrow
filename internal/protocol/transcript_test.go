@@ -42,6 +42,9 @@ const (
 	pageNonce       = "3fa9c1d2"
 	pagePlanDefault = "6f1d2c8a94b3e07d5a61c2f8930be4d7"
 	pagePlanAll     = "b82e41f7c09d3a65e1f4a7c20d9358b6"
+	// pagePlanAgain is the second run's plan in the history section, where
+	// it is a run of its own; everywhere else it is pagePlanAll.
+	pagePlanAgain = "4d07e9a1c35b8f2e6a19d0c7b84f3e52"
 )
 
 // pageSections are the transcript's sections, in file order.
@@ -648,6 +651,10 @@ func recordPage(t *testing.T) []string {
 		return line
 	}
 	rec.fix(func(section, line string) string {
+		if section == "history" {
+			id := planAgain[0].PlanID
+			line = strings.ReplaceAll(line, id, id[:len(id)-len(pagePlanAgain)]+pagePlanAgain)
+		}
 		line = fixIDs(line)
 		line = daysRe.ReplaceAllString(line, `"days_to_full":$1`)
 		// A scan ends a moment after its slowest rule.

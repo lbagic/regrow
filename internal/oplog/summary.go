@@ -9,9 +9,9 @@ import (
 
 // Summary is one run as `regrow history` counts it: an action once its
 // done line is in the journal, a prune at what it deleted, any other
-// action at its planned size; a failed or cut-short action counts
-// nothing. Its bytes are split by where the space went, as the run's
-// summary splits them.
+// action at its planned size; a failed or cut-short action, and a move
+// `regrow undo` put back, counts nothing. Its bytes are split by where
+// the space went, as the run's summary splits them.
 type Summary struct {
 	ID     string    `json:"id"`
 	Start  time.Time `json:"start"`
@@ -41,6 +41,12 @@ func (s Summary) Bytes() int64 { return s.FreesNow + s.AfterTrash + s.Staged + s
 // over the whole journal, as OnDisk is.
 func (r Run) Summary() Summary {
 	s := Summary{ID: r.ID, Start: r.Start, Rules: map[string]int64{}}
+	undone := map[int]bool{}
+	for _, e := range r.Entries {
+		if e.Event == EventUndo && e.Error == "" {
+			undone[e.Seq] = true
+		}
+	}
 	planned := map[int]Entry{}
 	prunes := 0
 	for _, e := range r.Entries {
@@ -61,6 +67,9 @@ func (r Run) Summary() Summary {
 			continue
 		case EventDone:
 			s.Done++
+			if undone[e.Seq] {
+				continue
+			}
 		default:
 			continue
 		}

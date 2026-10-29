@@ -27,13 +27,14 @@ func TestSummarySplitsByWhereTheSpaceWent(t *testing.T) {
 		{Run: "r1", Seq: 1, Event: EventUndo},
 	}
 	h := Runs(entries)[0].Summary()
-	if h.AfterTrash != 100 || h.Staged != 20 || h.Exported != 30 || h.FreesNow != 4+6 {
-		t.Errorf("split = trash %d, staged %d, exported %d, now %d; want 100, 20, 30, 10", h.AfterTrash, h.Staged, h.Exported, h.FreesNow)
+	// Seq 1's move was put back: it frees nothing.
+	if h.AfterTrash != 0 || h.Staged != 20 || h.Exported != 30 || h.FreesNow != 4+6 {
+		t.Errorf("split = trash %d, staged %d, exported %d, now %d; want 0, 20, 30, 10", h.AfterTrash, h.Staged, h.Exported, h.FreesNow)
 	}
 	if h.Done != 5 || h.Failed != 1 || h.Undone != 1 || h.Prune {
 		t.Errorf("counts = done %d, failed %d, undone %d, prune %v; want 5, 1, 1, false", h.Done, h.Failed, h.Undone, h.Prune)
 	}
-	want := map[string]int64{"caches": 120, "volumes": 30, "npm": 4, "gobuild": 6}
+	want := map[string]int64{"caches": 20, "volumes": 30, "npm": 4, "gobuild": 6}
 	for rule, bytes := range want {
 		if h.Rules[rule] != bytes {
 			t.Errorf("rules[%s] = %d, want %d (all: %v)", rule, h.Rules[rule], bytes, h.Rules)
@@ -42,8 +43,13 @@ func TestSummarySplitsByWhereTheSpaceWent(t *testing.T) {
 	if len(h.Rules) != len(want) {
 		t.Errorf("rules = %v, want only %v", h.Rules, want)
 	}
-	if got := h.Bytes(); got != 160 {
-		t.Errorf("Bytes = %d, want the split's sum 160", got)
+	if got := h.Bytes(); got != 60 {
+		t.Errorf("Bytes = %d, want the split's sum 60", got)
+	}
+
+	failedUndo := Runs(append(entries[:len(entries)-1:len(entries)-1], Entry{Run: "r1", Seq: 1, Event: EventUndo, Error: "the copy is gone"}))
+	if f := failedUndo[0].Summary(); f.AfterTrash != 100 || f.Undone != 0 {
+		t.Errorf("after an undo that failed = trash %d, undone %d; want 100, 0", f.AfterTrash, f.Undone)
 	}
 
 	prunes := Runs([]Entry{

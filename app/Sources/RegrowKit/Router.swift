@@ -47,7 +47,7 @@ public struct Router {
     /// The request in flight was sent by a page that has since gone.
     private var orphaned = false
     private var waiting: [Request] = []
-    /// `plan` and `cancel` sent while no engine was up.
+    /// `plan`, `cancel` and `history` sent while no engine was up.
     private var parked: [Request] = []
     private var serial = 0
     /// A run ended with the engine that held it, or the tick after a run

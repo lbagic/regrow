@@ -273,7 +273,7 @@ func (s *session) handle(l requestLine) {
 	case reqTick:
 		s.startTick(req)
 	case reqHistory:
-		s.history(req)
+		go s.history(req)
 	default:
 		s.emit(failure(req.ID, CodeUnknownRequest, fmt.Sprintf("unknown request type %q", req.Type)))
 	}
@@ -465,8 +465,9 @@ func (s *session) plan(req request) {
 	s.emit(done(req.ID))
 }
 
-// history answers at once, beside whatever is in flight: it only reads
-// the journal, which an execute appends to a whole line at a time.
+// history answers beside whatever is in flight, off the read loop, so a
+// long journal holds up no cancel: it only reads the journal, which an
+// execute appends to a whole line at a time.
 func (s *session) history(req request) {
 	if s.srv.History == nil {
 		s.emit(failure(req.ID, CodeHistoryFailed, "this engine reads no history"))

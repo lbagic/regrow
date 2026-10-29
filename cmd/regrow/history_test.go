@@ -53,9 +53,9 @@ func TestRunBytesCountsOnlyFinishedActions(t *testing.T) {
 		{"a prune cut short counts nothing", []oplog.Entry{pruneStart(1, 5*gib)}, 0},
 		{"a done prune with no measurement counts nothing", []oplog.Entry{pruneStart(1, 5*gib), done(1)}, 0},
 		{
-			"an undo line adds nothing",
-			[]oplog.Entry{trashStart(1, 100), done(1), {Run: "r1", Seq: 1, Event: oplog.EventUndo}},
-			100,
+			"a move regrow undo put back counts nothing",
+			[]oplog.Entry{trashStart(1, 100), done(1), trashStart(2, 50), done(2), {Run: "r1", Seq: 1, Event: oplog.EventUndo}},
+			50,
 		},
 		{
 			"a done line pairs with the start line of its own seq",

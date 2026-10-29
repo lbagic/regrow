@@ -315,6 +315,7 @@ const S = {
   finder: '',         // allowed | denied | not_asked | unknown: the last word on Control of Finder, the shell's or the confirm step's
   history: null,      // the engine's history event, or {failed: why} when it could not be read
   historyAsk: '',     // the id of the history request on its way
+  historyAgain: false, // something changed the history while that request was on its way: ask again on its end
   screen: 'findings', // findings | plan | confirm | running | result; an engine that is down is drawn over it
   hello: null,        // the engine's hello
   tick: null,         // the shell's latest tick: the forecast in the headline
@@ -464,6 +465,7 @@ const on = {
       ended(e.result, e.canceled, '');
     } else if (role === 'history') {
       S.historyAsk = '';
+      if (S.historyAgain) askHistory();
     }
   },
   error(e, role) {
@@ -474,6 +476,7 @@ const on = {
       if (S.screen !== 'running' && S.screen !== 'result') Object.assign(S, { screen: 'findings', planning: '', plan: null });
     } else if (role === 'history') {
       Object.assign(S, { history: { failed: e.message || e.code }, historyAsk: '' });
+      if (S.historyAgain) askHistory();
     } else if (role === 'run' && e.result) {
       ended(e.result, false, e.message || e.code);
     } else if (role === 'run') {
@@ -1090,7 +1093,10 @@ const drawGeneral = () => h`${section('Startup', '', '', startup())}${permission
 
 // ---------- Stats: what regrow has done on this Mac ----------
 
-const askHistory = () => { if (S.hello && !S.down && !S.historyAsk) S.historyAsk = ask('history', 'history'); };
+const askHistory = () => {
+  if (S.historyAsk) S.historyAgain = true;
+  else if (S.hello && !S.down) Object.assign(S, { historyAsk: ask('history', 'history'), historyAgain: false });
+};
 const sumOf = (runs, key) => runs.reduce((n, r) => n + (r[key] || 0), 0);
 const sizeOfRun = (r) => (r.frees_now || 0) + (r.after_trash || 0) + (r.staged || 0) + (r.exported || 0);
 const ruleTitle = (id) => (S.history.titles || {})[id] || id;
@@ -1108,8 +1114,9 @@ function split(r, scale) {
 // Free space over the samples, one line on its own scale from zero, each run that cleaned something a dot on it.
 function chart(samples, runs) {
   const sm = samples.map((s) => [time(s.at), s.free]), t0 = sm[0][0], t1 = sm[sm.length - 1][0];
-  const top = Math.max(...sm.map((s) => s[1])), step = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000].find((g) => g * GIB * 4 >= top) * GIB;
-  const y1 = Math.max(step, Math.ceil(top / step) * step), X = (t) => (t - t0) / (t1 - t0) * 1000, Y = (b) => 150 - b / y1 * 150;
+  const top = Math.max(...sm.map((s) => s[1])), quarter = Math.max(1, top / GIB / 4), unit = 10 ** Math.floor(Math.log10(quarter));
+  const step = [1, 2, 5, 10].find((m) => m * unit >= quarter) * unit * GIB;
+  const y1 = Math.max(step, Math.ceil(top / step) * step), X = (t) => (t1 > t0 ? (t - t0) / (t1 - t0) * 1000 : 500), Y = (b) => 150 - b / y1 * 150;
   const line = sm.map((s, i) => (i ? 'L' : 'M') + X(s[0]).toFixed(1) + ' ' + Y(s[1]).toFixed(1)).join('');
   const ticks = [];
   for (let v = 0; v <= y1; v += step) ticks.push(v);
@@ -1130,10 +1137,11 @@ function chart(samples, runs) {
 
 function drawStats() {
   const hi = S.history;
+  if (!hi && S.down) return h`<section class="lead"><h2>regrow's engine has stopped.</h2><p class="err mono">${S.down}</p><p class="aside">What regrow has done shows here once the engine is back.</p></section>`;
   if (!hi) return h`<section class="lead"><h2>Reading what regrow has done.</h2></section>`;
   if (hi.failed) {
     return h`<section class="lead"><h2>regrow's history could not be read.</h2><p class="err mono">${hi.failed}</p>
-      <p class="aside">The journal is never read past a line it cannot parse; <span class="mono">${cli()} history</span> in Terminal says the same.</p></section>`;
+      <p class="aside"><span class="mono">${cli()} history</span> in Terminal reads the same journal.</p></section>`;
   }
   const runs = hi.runs, samples = hi.samples || [];
   const freed = sumOf(runs, 'frees_now'), trash = sumOf(runs, 'after_trash'), staged = sumOf(runs, 'staged'), exported = sumOf(runs, 'exported');

@@ -126,8 +126,5 @@ func previewLines(r engine.Rule, p autopilot.Preview) []string {
 }
 
 // runBytes is what a run's finished actions cleaned, the size `regrow
-// history` prints: an action counts once its done line is in the journal,
-// by its start line's planned bytes, a prune by what its done line
-// measured. A failed action, and one with no done line (a run cut
-// short), counts nothing.
+// history` prints, as oplog.Run.Summary counts it.
 func runBytes(r oplog.Run) int64 { return r.Summary().Bytes() }

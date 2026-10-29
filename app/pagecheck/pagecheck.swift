@@ -117,6 +117,7 @@ struct Play {
     var tickAfterRun: String?            // the section whose tick the shell relays once a run ends, as the app does
     var historyEvent: [String: Any]?     // the history event in place of the transcript's
     var historyError: String?            // the history request fails with this message
+    var holdHistory = false              // history requests wait in heldHistory until the scenario answers them
 
     /// The settings of the installed app on a Mac that has granted it all but Control of Finder.
     static let installed: [String: Any] = [
@@ -137,6 +138,7 @@ final class Run: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHa
     let transcript: Transcript
     let out: URL
     var play: Play
+    var heldHistory: [String] = []
 
     private let webView: WKWebView
     private let window: NSWindow
@@ -441,7 +443,9 @@ final class Run: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHa
         case "execute": answer(execute: id, body)
         case "cancel": answer(cancel: id, body)
         case "history":
-            if let message = play.historyError {
+            if play.holdHistory {
+                heldHistory.append(id)
+            } else if let message = play.historyError {
                 send(["event": "error", "re": id, "code": "history_failed", "message": message])
             } else if var event = play.historyEvent {
                 event["re"] = id
@@ -1135,11 +1139,47 @@ struct Scenario {
             r.has(await r.text("#pane"), "Not enough samples yet", "the chart with no samples")
             await r.shoot()
         },
+        Scenario(name: "stats-run-ends-while-asking", play: Play(executeStops: true)) { r in
+            // Stats asks while the run's last lines are on their way: the answer it gets may predate the run's end.
+            await toRun(r)
+            r.play.holdHistory = true
+            await r.click("#nav-stats")
+            let asked = r.sent("history").count
+            let lines = r.answering("execute", r.executeRequest)
+            r.send(Array(lines.suffix(from: lines.count / 2)))
+            await r.settle()
+            r.same(r.sent("history").count, asked, "history requests while one is on its way")
+            r.play.holdHistory = false
+            for id in r.heldHistory { r.send(r.answering("history", id)) }
+            await r.settle()
+            r.same(r.sent("history").count, asked + 1, "history requests once the one on its way has ended: one more, for the run")
+            await r.shoot()
+        },
+        Scenario(name: "stats-down", play: Play(holdHello: true)) { r in
+            r.send(["event": "shell", "state": "engine_down", "message": "the engine exited with status 2"])
+            await r.settle()
+            await r.click("#nav-stats")
+            r.same(await r.text("#pane .lead h2"), "regrow's engine has stopped.", "Stats while the engine is down")
+            r.same(await r.text("#pane .lead .err"), "the engine exited with status 2", "the engine's reason")
+            await r.shoot()
+        },
+        Scenario(name: "stats-large-disk", play: Play(historyEvent: ["event": "history", "runs": [Any](), "titles": [String: Any](), "samples": [
+            ["at": "2026-10-28T09:00:00Z", "total": 8e12, "free": 4.5e12, "purgeable": 0, "swap_used": 0],
+            ["at": "2026-10-29T09:00:00Z", "total": 8e12, "free": 4.4e12, "purgeable": 0, "swap_used": 0],
+        ]])) { r in
+            await results(r)
+            await r.click("#nav-stats")
+            r.same(await r.js("return document.querySelector('#pane .chart path.line').getAttribute('d').includes('NaN')") as? Bool ?? true, false, "the free-space line past 4000 GiB")
+            r.same(await r.text("#pane .chart .y"), "0 GiB", "the chart's lowest gridline")
+            r.has(await r.text("#pane .chart"), "6000 GiB", "the gridline above the samples, at a step of 2000 GiB")
+            await r.shoot()
+        },
         Scenario(name: "stats-failed", play: Play(historyError: "oplog.jsonl: line 7: invalid character 'x' looking for beginning of value")) { r in
             await results(r)
             await r.click("#nav-stats")
             r.same(await r.text("#pane .lead h2"), "regrow's history could not be read.", "the headline")
             r.same(await r.text("#pane .lead .err"), "oplog.jsonl: line 7: invalid character 'x' looking for beginning of value", "the engine's reason")
+            r.has(await r.text("#pane .lead .aside"), "history in Terminal reads the same journal.", "what else reads it, with no guess at the cause")
             r.same(await r.count(".note"), 0, "notices on the scan for a history that failed")
             await r.shoot()
         },
