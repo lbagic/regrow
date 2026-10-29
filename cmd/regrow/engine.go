@@ -65,10 +65,11 @@ func engineSelf(executable func() (string, error), lookPath func(string) (string
 	return self
 }
 
-// keepRunningOnEPIPE makes a write to a closed stdout fail with EPIPE
-// instead of killing the process: an execute in flight still has to
-// journal its current action. Notify, unlike Ignore, leaves child
-// processes the default disposition.
+// keepRunningOnEPIPE makes a write to a closed stdout or stderr fail
+// with EPIPE instead of killing the process: an execute in flight still
+// has to journal its current action, and a command that has finished
+// keeps its exit status. Notify, unlike Ignore, leaves child processes
+// the default disposition.
 func keepRunningOnEPIPE() {
 	signal.Notify(make(chan os.Signal, 1), syscall.SIGPIPE)
 }

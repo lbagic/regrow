@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/lbagic/regrow/internal/selfupdate"
 )
 
 func TestUpdateRefusesADevBuild(t *testing.T) {
@@ -20,15 +22,13 @@ func TestUpdateRefusesADevBuild(t *testing.T) {
 	}
 }
 
-// An installed release checks a new one by the first two words of its
-// `regrow version` line before it installs it.
 func TestVersionLineIsWhatAnUpdateChecks(t *testing.T) {
 	out := stdoutOf(t, func() {
 		if err := run([]string{"version"}); err != nil {
 			t.Fatal(err)
 		}
 	})
-	if f := strings.Fields(out); len(f) < 2 || f[0] != "regrow" || f[1] != version {
+	if !selfupdate.SaysVersion(out, version) {
 		t.Fatalf("regrow version printed %q; an installed release would refuse it", out)
 	}
 }

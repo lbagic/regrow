@@ -37,8 +37,8 @@ const (
 	// DefaultLatestURL is GitHub's record of the latest release, which
 	// never names a draft or a prerelease.
 	DefaultLatestURL = "https://api.github.com/repos/lbagic/regrow/releases/latest"
-	// OffEnv set to any value turns the automatic check off; `regrow
-	// update` still runs.
+	// OffEnv set to any non-empty value turns the automatic check off;
+	// `regrow update` still runs.
 	OffEnv = "REGROW_NO_AUTO_UPDATE"
 	// URLEnv replaces DefaultLatestURL, for a local fake release.
 	URLEnv = "REGROW_UPDATE_URL"
@@ -363,14 +363,27 @@ func install(ctx context.Context, target string, bin []byte, want string) (err e
 	cmd.Env = append(os.Environ(), OffEnv+"=1")
 	cmd.WaitDelay = time.Second
 	out, err := cmd.Output()
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return fmt.Errorf("the downloaded regrow did not answer `version` within %v; nothing was changed", runTimeout)
+	}
 	if err != nil {
 		return fmt.Errorf("the downloaded regrow does not run on this Mac (%v); nothing was changed", err)
 	}
-	line, _, _ := strings.Cut(string(out), "\n")
-	if f := strings.Fields(line); len(f) < 2 || f[0] != binaryName || f[1] != want {
+	if !SaysVersion(string(out), want) {
+		line, _, _ := strings.Cut(string(out), "\n")
 		return fmt.Errorf("the downloaded regrow says %q, not version %s; nothing was changed", strings.TrimSpace(line), want)
 	}
 	return os.Rename(tmp, target)
+}
+
+// SaysVersion reports whether out, what `regrow version` printed, names
+// version v: the first two words of its first line are "regrow" and v.
+// Every installed release checks a new one this way, so a later release
+// may add words after these two but never change them.
+func SaysVersion(out, v string) bool {
+	line, _, _ := strings.Cut(out, "\n")
+	words := strings.Fields(line)
+	return len(words) >= 2 && words[0] == binaryName && words[1] == v
 }
 
 // Run is an automatic check started by Start.
@@ -467,7 +480,7 @@ func parseVersion(s string) (version, bool) {
 		return v, false
 	}
 	for i, p := range parts {
-		if p == "" || strings.TrimLeft(p, "0123456789") != "" {
+		if p == "" || strings.TrimLeft(p, "0123456789") != "" || (len(p) > 1 && p[0] == '0') {
 			return v, false
 		}
 		n, err := strconv.Atoi(p)

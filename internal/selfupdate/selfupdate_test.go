@@ -432,6 +432,9 @@ func TestFromEnv(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if u.UID != os.Geteuid() {
+		t.Fatalf("UID = %d, want the effective user %d", u.UID, os.Geteuid())
+	}
 	if !u.Off || u.LatestURL != "http://127.0.0.1:1/latest" {
 		t.Fatalf("Off = %v, LatestURL = %q", u.Off, u.LatestURL)
 	}
@@ -445,10 +448,26 @@ func TestFromEnv(t *testing.T) {
 	}
 }
 
+func TestSaysVersion(t *testing.T) {
+	for out, want := range map[string]bool{
+		"regrow 0.2.1\n":               true,
+		"regrow 0.2.1 (abc1234)\nmore": true,
+		"regrow\n0.2.1\n":              false,
+		"regrow 0.2.10\n":              false,
+		"regrow 0.2.1-rc1\n":           false,
+		"regrown 0.2.1\n":              false,
+		"":                             false,
+	} {
+		if got := SaysVersion(out, "0.2.1"); got != want {
+			t.Errorf("SaysVersion(%q) = %v, want %v", out, got, want)
+		}
+	}
+}
+
 func TestParseVersion(t *testing.T) {
 	for s, want := range map[string]bool{
 		"0.1.0": true, "1.20.3": true,
-		"0.0.0-dev": false, "0.2.0-rc1": false, "v0.1.0": false, "0.1": false, "0.1.0.1": false, "0.+1.0": false, "": false,
+		"0.0.0-dev": false, "0.2.0-rc1": false, "0.2.01": false, "v0.1.0": false, "0.1": false, "0.1.0.1": false, "0.+1.0": false, "": false,
 	} {
 		if _, ok := parseVersion(s); ok != want {
 			t.Errorf("parseVersion(%q) ok = %v, want %v", s, ok, want)
