@@ -12,7 +12,7 @@ import (
 
 var switchCatalog = []engine.Rule{
 	{ID: "npm-cache", Title: "npm cache"},
-	{ID: "go-build-cache", Title: "Go build cache"},
+	{ID: "go-build-cache", Title: "Go build cache", Prune: &engine.Prune{}},
 	{ID: "fresh-rule", Title: "A beta rule", Beta: true},
 }
 
@@ -22,6 +22,16 @@ func ids(rules []engine.Rule) string {
 		out[i] = r.ID
 	}
 	return strings.Join(out, " ")
+}
+
+// runs is what a scan starting now runs.
+func runs(t *testing.T, s *ruleSwitch) string {
+	t.Helper()
+	catalog, err := s.Catalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ids(catalog)
 }
 
 func TestCommandCatalogLeavesOutOffAndBetaRules(t *testing.T) {
@@ -70,8 +80,8 @@ func TestCommandCatalogRefusesAnOffRuleByName(t *testing.T) {
 
 func TestRuleSwitchWritesTheConfigAndReadsItBack(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "regrow", "config.yaml")
-	s := newRuleSwitch(switchCatalog, false, path, config.Rules{})
-	if got := ids(s.Catalog()); got != "npm-cache go-build-cache" {
+	s := newRuleSwitch(switchCatalog, false, path, config.Rules{}, nil)
+	if got := runs(t, s); got != "npm-cache go-build-cache" {
 		t.Fatalf("catalog = %q", got)
 	}
 	yes, no := true, false
@@ -82,7 +92,7 @@ func TestRuleSwitchWritesTheConfigAndReadsItBack(t *testing.T) {
 	if !st.Rules[0].Off || st.Rules[0].Runs || !st.Rules[1].Runs || st.Rules[2].Runs || st.Config != path {
 		t.Errorf("state after npm-cache off = %+v", st)
 	}
-	if got := ids(s.Catalog()); got != "go-build-cache" {
+	if got := runs(t, s); got != "go-build-cache" {
 		t.Errorf("catalog after npm-cache off = %q", got)
 	}
 	if st, err = s.Set("", nil, &yes); err != nil || !st.Beta || !st.Rules[2].Runs {
@@ -91,7 +101,7 @@ func TestRuleSwitchWritesTheConfigAndReadsItBack(t *testing.T) {
 	if st, err = s.Set("npm-cache", &no, nil); err != nil || st.Rules[0].Off {
 		t.Fatalf("npm-cache on: %+v, %v", st, err)
 	}
-	if got := ids(s.Catalog()); got != "npm-cache go-build-cache fresh-rule" {
+	if got := runs(t, s); got != "npm-cache go-build-cache fresh-rule" {
 		t.Errorf("catalog = %q", got)
 	}
 	if c, err := config.LoadFile(path); err != nil || !c.Rules.Beta || len(c.Rules.Off) != 0 {
@@ -105,13 +115,13 @@ func TestRuleSwitchWritesTheConfigAndReadsItBack(t *testing.T) {
 	if err := os.WriteFile(path, []byte("rules:\n  off: [go-build-cache]\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if got := ids(s.Catalog()); got != "npm-cache" {
+	if got := runs(t, s); got != "npm-cache" {
 		t.Errorf("catalog after an edit by hand = %q", got)
 	}
 	if err := os.WriteFile(path, []byte("rules:\n  of: [npm-cache]\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if got := ids(s.Catalog()); got != "npm-cache" {
+	if got := runs(t, s); got != "npm-cache" {
 		t.Errorf("catalog with a broken file = %q, want the last that loaded", got)
 	}
 	if st := s.State(); st.Error == "" {
@@ -119,5 +129,38 @@ func TestRuleSwitchWritesTheConfigAndReadsItBack(t *testing.T) {
 	}
 	if _, err := s.Set("npm-cache", &yes, nil); err == nil {
 		t.Error("a change to a file that does not load must fail")
+	}
+}
+
+func TestRuleSwitchRunsNothingUntilTheConfigLoads(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("docker:\n  kep: [x]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := config.LoadFile(path)
+	s := newRuleSwitch(switchCatalog, false, path, config.Rules{}, err)
+	if catalog, err := s.Catalog(); err == nil || catalog != nil {
+		t.Fatalf("catalog = %v, %v; want none and the load's error", catalog, err)
+	}
+	if st := s.State(); st.Error == "" || st.Rules[1].Runs {
+		t.Errorf("state = %+v; want the load's error and no rule running", st)
+	}
+	if err := os.WriteFile(path, []byte("rules:\n  off: [npm-cache]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := runs(t, s); got != "go-build-cache" {
+		t.Errorf("catalog once the file loads = %q", got)
+	}
+}
+
+func TestUnknownOff(t *testing.T) {
+	got := unknownOff(switchCatalog, config.Rules{Off: []string{"npm-cahce", "npm-cache", "fresh-rule"}})
+	if strings.Join(got, " ") != "npm-cahce" {
+		t.Errorf("unknown = %v, want the typo alone (a beta rule is known)", got)
+	}
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	s := newRuleSwitch(switchCatalog, false, path, config.Rules{Off: []string{"npm-cahce"}}, nil)
+	if st := s.state(); strings.Join(st.UnknownOff, " ") != "npm-cahce" {
+		t.Errorf("state's unknown_off = %v", st.UnknownOff)
 	}
 }

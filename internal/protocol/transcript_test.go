@@ -688,7 +688,7 @@ type pageSwitch struct{ catalog []engine.Rule }
 
 const pageOffRule = "pip-cache"
 
-func (p pageSwitch) Catalog() []engine.Rule { return p.catalog }
+func (p pageSwitch) Catalog() ([]engine.Rule, error) { return p.catalog, nil }
 
 func (p pageSwitch) State() Rules {
 	st := Rules{Config: pageHome + "/.config/regrow/config.yaml"}

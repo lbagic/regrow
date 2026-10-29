@@ -223,12 +223,16 @@ loop:
 // stopped them: a stream cut short has no done line, and its reader
 // must hear so.
 func (srv *Server) ScanOnce(ctx context.Context, out io.Writer) error {
+	rules, err := srv.catalog()
+	if err != nil {
+		return err
+	}
 	s := srv.newSession(out)
 	ctx, cancel := context.WithCancel(ctx)
 	s.mu.Lock()
 	op, sc := s.beginScan(request{Type: reqScan}, cancel)
 	s.mu.Unlock()
-	s.runScan(ctx, cancel, op, sc)
+	s.runScan(ctx, cancel, op, sc, rules)
 	s.out.close(0)
 	return s.out.writeErr()
 }
@@ -344,11 +348,17 @@ func (s *session) startScan(req request) {
 		s.mu.Unlock()
 		return
 	}
+	rules, err := s.srv.catalog()
+	if err != nil {
+		s.mu.Unlock()
+		s.emit(failure(req.ID, CodeRulesFailed, err.Error()))
+		return
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	op, sc := s.beginScan(req, cancel)
 	s.mu.Unlock()
 
-	go s.runScan(ctx, cancel, op, sc)
+	go s.runScan(ctx, cancel, op, sc, rules)
 }
 
 // beginScan makes a new scan the current one. The caller holds s.mu
@@ -365,7 +375,7 @@ func (s *session) beginScan(req request, cancel context.CancelFunc) (*operation,
 	return op, sc
 }
 
-func (s *session) runScan(ctx context.Context, cancel context.CancelFunc, op *operation, sc *scanState) {
+func (s *session) runScan(ctx context.Context, cancel context.CancelFunc, op *operation, sc *scanState, rules []engine.Rule) {
 	defer cancel()
 	began := time.Now()
 	if s.srv.Headroom != nil {
@@ -373,7 +383,6 @@ func (s *session) runScan(ctx context.Context, cancel context.CancelFunc, op *op
 			s.emit(inlineEvent{head{"headroom", op.re}, sample})
 		}
 	}
-	rules := s.srv.catalog()
 	s.emit(startEvent{head{"start", op.re}, sc.id, len(rules)})
 
 	findings := make([]engine.Finding, len(rules))
@@ -438,6 +447,9 @@ func (s *session) plan(req request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sc, code, message := s.scanFor(req.ScanID)
+	if code == "" {
+		code, message = s.srv.turnedOff(sc.findings)
+	}
 	if code != "" {
 		s.emit(failure(req.ID, code, message))
 		return
@@ -526,11 +538,35 @@ func (s *session) history(req request) {
 }
 
 // catalog is what a scan starting now runs.
-func (srv *Server) catalog() []engine.Rule {
+func (srv *Server) catalog() ([]engine.Rule, error) {
 	if srv.Switch != nil {
 		return srv.Switch.Catalog()
 	}
-	return srv.Catalog
+	return srv.Catalog, nil
+}
+
+// turnedOff refuses findings of a rule that no longer runs, config.yaml
+// having turned it off, or the beta rules, since the scan: off means
+// regrow does not look there, and a scan already shown is no way round
+// that.
+func (srv *Server) turnedOff(findings []engine.Finding) (code, message string) {
+	if srv.Switch == nil {
+		return "", ""
+	}
+	catalog, err := srv.Switch.Catalog()
+	if err != nil {
+		return CodeRulesFailed, err.Error()
+	}
+	runs := make(map[string]bool, len(catalog))
+	for _, r := range catalog {
+		runs[r.ID] = true
+	}
+	for _, f := range findings {
+		if !runs[f.Rule.ID] {
+			return CodeRulesChanged, fmt.Sprintf("%s no longer runs, as config.yaml's rules now say: scan again", f.Rule.ID)
+		}
+	}
+	return "", ""
 }
 
 // rules answers at once: a change applies from the next scan or tick,
@@ -587,6 +623,10 @@ func (s *session) startExecute(req request) {
 	delete(s.plans, req.PlanID)
 	if s.expired(held, s.now()) {
 		s.emit(failure(req.ID, CodePlanExpired, fmt.Sprintf("plan %s expired: plan again", req.PlanID)))
+		return
+	}
+	if code, message := s.srv.turnedOff(held.scan.findings); code != "" {
+		s.emit(failure(req.ID, code, message))
 		return
 	}
 	stopped := new(atomic.Bool)

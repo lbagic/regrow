@@ -13,11 +13,16 @@ import (
 )
 
 // SetRules writes r as the file's `rules:` and keeps the rest of the
-// file, its comments included. Empty rules drop the key. The new file
-// must load before it replaces the old one, which it does in one
-// rename.
+// file, its comments included; the `rules:` key itself is written whole.
+// Empty rules drop the key. The new file must load before it replaces
+// the old one, which it does in one rename; a link is written through
+// to the file it names.
 func SetRules(path string, r Rules) error {
+	if real, err := filepath.EvalSymlinks(path); err == nil {
+		path = real
+	}
 	data, err := os.ReadFile(path)
+	existed := err == nil
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
@@ -25,7 +30,11 @@ func SetRules(path string, r Rules) error {
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		return fmt.Errorf("%s: %w", path, err)
 	}
-	if doc.Kind == 0 {
+	// A file of comments alone, or of "---", holds no mapping: its text
+	// stays as it is, and the keys follow it.
+	var kept []byte
+	if doc.Kind == 0 || len(doc.Content) == 0 || doc.Content[0].Tag == "!!null" {
+		kept = bytes.TrimRight(data, " \t\n")
 		doc = yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{{Kind: yaml.MappingNode, Tag: "!!map"}}}
 	}
 	top := doc.Content[0]
@@ -58,6 +67,10 @@ func SetRules(path string, r Rules) error {
 		}
 	}
 	var out bytes.Buffer
+	if len(kept) > 0 {
+		out.Write(kept)
+		out.WriteByte('\n')
+	}
 	if len(top.Content) > 0 || top.HeadComment != "" || top.FootComment != "" {
 		enc := yaml.NewEncoder(&out)
 		enc.SetIndent(2)
@@ -67,6 +80,14 @@ func SetRules(path string, r Rules) error {
 		if err := enc.Close(); err != nil {
 			return err
 		}
+	}
+	if out.Len() == 0 {
+		if !existed {
+			return nil
+		}
+		// A regrow older than the rules key stops on an empty file with a
+		// bare EOF.
+		out.WriteString("{}\n")
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err

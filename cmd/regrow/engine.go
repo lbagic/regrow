@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -87,7 +88,7 @@ func newEngineServer(host engine.Host, catalog []engine.Rule, flags []string) *p
 		Scan:       scanStream(host),
 		Account:    engine.Account,
 		Headroom:   headroom.Take,
-		Tick:       tickFor(host, func() []engine.Rule { return catalog }),
+		Tick:       tickFor(host, func() ([]engine.Rule, error) { return catalog, nil }),
 		Staged:     stagedBytes,
 		History:    engineHistory,
 		NewExecutor: func(runID string) (*executor.Executor, func(), error) {
@@ -104,13 +105,20 @@ func newEngineServer(host engine.Host, catalog []engine.Rule, flags []string) *p
 }
 
 // tickFor is the tick over the catalog as it stands when the tick starts.
-func tickFor(host engine.Host, catalog func() []engine.Rule) func(context.Context, bool) (headroom.Tick, error) {
+func tickFor(host engine.Host, catalog func() ([]engine.Rule, error)) func(context.Context, bool) (headroom.Tick, error) {
 	return func(ctx context.Context, autotrim bool) (headroom.Tick, error) {
-		ap, err := engineAutopilot(host, catalog())
+		// With no rules to go by, a tick still samples and alerts, and
+		// prunes nothing.
+		rules, rulesErr := catalog()
+		ap, err := engineAutopilot(host, rules)
 		if err != nil {
 			return headroom.Tick{}, err
 		}
-		return ap.Tick(ctx, autotrim)
+		tick, err := ap.Tick(ctx, autotrim && rulesErr == nil)
+		if err == nil && autotrim && rulesErr != nil {
+			err = fmt.Errorf("autotrim did not run: %w", rulesErr)
+		}
+		return tick, err
 	}
 }
 

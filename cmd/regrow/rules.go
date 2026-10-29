@@ -2,9 +2,9 @@ package main
 
 import (
 	"fmt"
-	"strings"
 	"sync"
 
+	"github.com/lbagic/regrow/internal/autopilot"
 	"github.com/lbagic/regrow/internal/config"
 	"github.com/lbagic/regrow/internal/engine"
 	"github.com/lbagic/regrow/internal/protocol"
@@ -22,26 +22,40 @@ type listedRule struct {
 // turns off. A command that names an off rule is refused: off means
 // regrow does not look there, and naming the rule is no way round that.
 func commandCatalog(cmd string, ids []string, betaFlag bool, catalog []engine.Rule, rules config.Rules, path string) ([]engine.Rule, error) {
-	if !betaFlag && !rules.Beta {
-		catalog = engine.WithoutBeta(catalog)
-	}
 	for _, id := range ids {
 		var named string
 		switch cmd {
 		case "clean", "plan":
-			named, _, _ = strings.Cut(id, "/")
+			named, _, _ = engine.SplitItemID(id)
 		case "prune":
-			for _, off := range rules.Off {
-				if id == off || id == strings.TrimSuffix(off, "-cache") {
-					named = off
-				}
+			if r, ok := autopilot.FindRule(catalog, id); ok {
+				named = r.ID
 			}
 		}
 		if named != "" && rules.IsOff(named) {
 			return nil, fmt.Errorf("%s is turned off in %s (rules: off): turn it on there, or in the app's Rules", named, path)
 		}
 	}
+	if !betaFlag && !rules.Beta {
+		catalog = engine.WithoutBeta(catalog)
+	}
 	return withoutOff(catalog, rules), nil
+}
+
+// unknownOff lists the ids config.yaml turns off that no rule of the
+// catalog has: a typo leaves the rule meant running.
+func unknownOff(catalog []engine.Rule, rules config.Rules) []string {
+	var out []string
+	for _, id := range rules.Off {
+		known := false
+		for _, r := range catalog {
+			known = known || r.ID == id
+		}
+		if !known {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 // withoutOff drops the rules config.yaml turns off.
@@ -77,19 +91,23 @@ func printRules(catalog []engine.Rule, rules config.Rules, asJSON bool) error {
 // included, run as config.yaml's `rules:` says. It reads the file again
 // whenever a scan or tick starts, so an edit by hand counts as one made
 // in the app; a file that stops loading leaves the rules as it last
-// loaded and says why.
+// loaded and says why, and one that has not loaded since the engine
+// started runs no rule.
 type ruleSwitch struct {
 	all      []engine.Rule
 	betaFlag bool
 	path     string
 
-	mu    sync.Mutex
-	rules config.Rules
-	err   error
+	mu     sync.Mutex
+	rules  config.Rules
+	loaded bool
+	err    error
 }
 
-func newRuleSwitch(all []engine.Rule, betaFlag bool, path string, rules config.Rules) *ruleSwitch {
-	return &ruleSwitch{all: all, betaFlag: betaFlag, path: path, rules: rules}
+// newRuleSwitch starts from the file as the command read it, err its
+// load's error.
+func newRuleSwitch(all []engine.Rule, betaFlag bool, path string, rules config.Rules, err error) *ruleSwitch {
+	return &ruleSwitch{all: all, betaFlag: betaFlag, path: path, rules: rules, loaded: err == nil, err: err}
 }
 
 // read takes the file as it is now. The caller holds mu.
@@ -97,16 +115,18 @@ func (s *ruleSwitch) read() {
 	c, err := config.LoadFile(s.path)
 	s.err = err
 	if err == nil {
-		s.rules = c.Rules
+		s.rules, s.loaded = c.Rules, true
 	}
 }
 
-func (s *ruleSwitch) Catalog() []engine.Rule {
+func (s *ruleSwitch) Catalog() ([]engine.Rule, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.read()
-	catalog, _ := commandCatalog("engine", nil, s.betaFlag, s.all, s.rules, s.path)
-	return catalog
+	if !s.loaded {
+		return nil, s.err
+	}
+	return commandCatalog("engine", nil, s.betaFlag, s.all, s.rules, s.path)
 }
 
 func (s *ruleSwitch) State() protocol.Rules {
@@ -118,10 +138,10 @@ func (s *ruleSwitch) State() protocol.Rules {
 
 // state is the rules as they stand. The caller holds mu.
 func (s *ruleSwitch) state() protocol.Rules {
-	st := protocol.Rules{Rules: make([]protocol.RuleState, len(s.all)), Beta: s.rules.Beta, BetaFlag: s.betaFlag, Config: s.path}
+	st := protocol.Rules{Rules: make([]protocol.RuleState, len(s.all)), Beta: s.rules.Beta, BetaFlag: s.betaFlag, Config: s.path, UnknownOff: unknownOff(s.all, s.rules)}
 	for i, r := range s.all {
 		off := s.rules.IsOff(r.ID)
-		st.Rules[i] = protocol.RuleState{Rule: r, Off: off, Runs: !off && (!r.Beta || s.betaFlag || s.rules.Beta)}
+		st.Rules[i] = protocol.RuleState{Rule: r, Off: off, Runs: s.loaded && !off && (!r.Beta || s.betaFlag || s.rules.Beta)}
 	}
 	if s.err != nil {
 		st.Error = s.err.Error()

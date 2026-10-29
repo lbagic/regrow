@@ -119,6 +119,7 @@ struct Play {
     var historyError: String?            // the history request fails with this message
     var holdHistory = false              // history requests wait in heldHistory until the scenario answers them
     var rulesError: String?              // a set_rules request fails with this message
+    var rulesUnloaded: String?           // the rules file has not loaded since the engine started, for this reason
 
     /// The settings of the installed app on a Mac that has granted it all but Control of Finder.
     static let installed: [String: Any] = [
@@ -446,7 +447,13 @@ final class Run: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHa
         case "execute": answer(execute: id, body)
         case "cancel": answer(cancel: id, body)
         case "rules":
-            send(answering("rules", id))
+            guard let why = play.rulesUnloaded else { return send(answering("rules", id)) }
+            var event = parse(answering("rules", id)[0])
+            event["catalog"] = event.objs("catalog").map { rule -> [String: Any] in var rule = rule; rule["runs"] = false; return rule }
+            event["error"] = why
+            event["unknown_off"] = ["npm-cahce"]
+            send(event)
+            send(["event": "done", "re": id])
         case "set_rules":
             if let message = play.rulesError {
                 return send(["event": "error", "re": id, "code": "rules_failed", "message": message])
@@ -1277,6 +1284,33 @@ struct Scenario {
             r.same(await r.count("#pane .set[data-rule]:not([hidden])"), 2, "rows that are off: the one the transcript holds, and npm-cache")
             await r.click("#nav-scan")
             r.same(await r.screen(), "findings", "the scan, kept while Rules showed")
+        },
+        Scenario(name: "rules-off-since-the-scan") { r in
+            await results(r)
+            await r.click("#nav-rules")
+            await r.click("#sw-npm-cache")
+            await r.settle()
+            await r.click("#nav-scan")
+            r.play.planError = ("rules_changed", "npm-cache no longer runs, as config.yaml's rules now say: scan again")
+            await r.click("[data-do=review]")
+            r.same(await r.screen(), "findings", "the screen")
+            let tray = await r.text(".tray .say")
+            r.has(tray, "This scan is out of date", "the tray")
+            r.has(tray, "npm-cache no longer runs", "the engine's message")
+            r.same(await r.text(".tray .btn"), "Scan again", "the tray's action")
+            await r.shoot()
+        },
+        Scenario(name: "rules-unloaded", play: Play(settings: Play.installed.merging(["autotrim": true]) { $1 },
+                                                    rulesUnloaded: "/Users/dev/.config/regrow/config.yaml: yaml: unmarshal errors: line 2: field kep not found in type config.Docker")) { r in
+            await results(r)
+            await r.click("#nav-rules")
+            let catalog = r.transcript.event("rules", "rules").objs("catalog")
+            r.same(await r.text("#pane .lead h2"), "0 of \(catalog.count) rules run.", "the headline")
+            r.has(await r.text("#pane .lead"), "so no rule runs until it does", "the note on a file that has not loaded")
+            r.has(await r.text("#pane .lead"), "field kep not found", "the engine's reason")
+            r.has(await r.text("#pane .lead"), "turns off npm-cahce, which no rule is called", "the id no rule has")
+            r.has(await r.text("[data-setting=autotrim]"), "The Go build cache rule is off below, so it prunes nothing.", "autotrim with its rule not running")
+            await r.shoot()
         },
         Scenario(name: "rules-refused", play: Play(rulesError: "/Users/dev/.config/regrow/config.yaml: yaml: line 2: field of not found in type config.Rules")) { r in
             await results(r)

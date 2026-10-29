@@ -196,11 +196,11 @@ A run counts as `regrow history` counts it: an action once its done line is in t
 {"type":"set_rules","id":"r3","beta":true}
 ```
 
-The engine runs the whole catalog as `~/.config/regrow/config.yaml`'s `rules:` says, read again as each scan or tick starts: `off`, the rules it does not look at, and `beta`, whether the rules still in staged rollout run. `--beta-rules` runs them whatever the file says. `set_rules` turns one rule off or on, or the beta rules, by rewriting that key alone and keeping the rest of the file; a change applies from the next scan, and the scan held keeps its findings.
+The engine runs the whole catalog as `~/.config/regrow/config.yaml`'s `rules:` says, read again as each scan or tick starts: `off`, the rules it does not look at, and `beta`, whether the rules still in staged rollout run. `--beta-rules` runs them whatever the file says. `set_rules` turns one rule off or on, or the beta rules, by rewriting that key alone and keeping the rest of the file; a change applies from the next scan, and the scan held keeps its findings, but a `plan` or `execute` against it is refused with `rules_changed` while it holds findings of a rule that no longer runs. While the file has not loaded since the engine started, no rule runs: a scan fails with `rules_failed`, and a tick with `autotrim` samples and then fails with `tick_failed`, having pruned nothing.
 
 | Event | Fields |
 |---|---|
-| `rules` | `catalog`: every rule of the catalog, beta ones included, each as `regrow rules --json` prints it plus `off` (the file turns it off) and `runs` (not off, and not beta while the beta rules are off); `beta`, the file's switch; `beta_flag`, true when the engine was started with `--beta-rules`; `config`, the file's path; `error`, present when the file no longer loads, the rules then standing as it last loaded |
+| `rules` | `catalog`: every rule of the catalog, beta ones included, each as `regrow rules --json` prints it plus `off` (the file turns it off) and `runs` (not off, and not beta while the beta rules are off); `beta`, the file's switch; `beta_flag`, true when the engine was started with `--beta-rules`; `config`, the file's path; `error`, present when the file no longer loads, the rules then standing as it last loaded, or none running if it has not loaded since the engine started; `unknown_off`, the ids `off` names that no rule has, absent when none |
 | `done` | — |
 
 `set_rules` carries `rule` with `off`, or `beta`, never both: anything else is `bad_request`. A rule the catalog lacks, or a file that does not load, fails it with `rules_failed`, and the file is left as it was.
@@ -231,7 +231,8 @@ The engine runs the whole catalog as `~/.config/regrow/config.yaml`'s `rules:` s
 | `unknown_plan`, `plan_expired`, `execute_failed` | see execute |
 | `autotrim_locked`, `tick_failed` | see tick |
 | `history_failed` | see history |
-| `rules_failed` | see rules and set_rules |
+| `rules_failed` | see rules and set_rules; also a scan while the rules file has not loaded |
+| `rules_changed` | a plan or execute against a scan holding findings of a rule that no longer runs; see rules and set_rules |
 
 `message` is for people; peers branch on `code`. An `unmatched` error also lists the selectors in `unmatched`, and an `execute_failed` that ran something carries its `result`.
 

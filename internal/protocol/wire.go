@@ -47,6 +47,7 @@ const (
 	CodeExecuteFailed  = "execute_failed"
 	CodeHistoryFailed  = "history_failed"
 	CodeRulesFailed    = "rules_failed"
+	CodeRulesChanged   = "rules_changed"
 )
 
 type request struct {
@@ -197,8 +198,11 @@ type Rules struct {
 	// Config is the file's path.
 	Config string `json:"config"`
 	// Error says the file no longer loads: the rules as it last loaded
-	// stand until it does.
+	// stand until it does, and none runs if it has not loaded since the
+	// engine started.
 	Error string `json:"error,omitempty"`
+	// UnknownOff lists the ids `rules: off` names that no rule has.
+	UnknownOff []string `json:"unknown_off,omitempty"`
 }
 
 // RuleState is one rule, whether config.yaml turns it off, and whether
@@ -211,8 +215,9 @@ type RuleState struct {
 
 // RuleSwitch is the engine's say over which rules run.
 type RuleSwitch interface {
-	// Catalog is what a scan or tick starting now runs.
-	Catalog() []engine.Rule
+	// Catalog is what a scan or tick starting now runs; an error when
+	// config.yaml has not loaded since the engine started.
+	Catalog() ([]engine.Rule, error)
 	State() Rules
 	// Set turns one rule off or on (rule and off), or the beta rules
 	// (beta), in config.yaml.

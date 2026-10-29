@@ -403,7 +403,7 @@ function ask(type, role, fields) {
   return id;
 }
 
-const OUT_OF_DATE = { scan_spent: 1, scan_superseded: 1, scan_canceled: 1, unknown_scan: 1 };
+const OUT_OF_DATE = { scan_spent: 1, scan_superseded: 1, scan_canceled: 1, unknown_scan: 1, rules_changed: 1 };
 
 window.regrow = { receive(line) {
   try {
@@ -1254,15 +1254,17 @@ function drawRules() {
   if (rs.failed) return h`<section class="lead"><h2>The rules could not be read.</h2><p class="err mono">${rs.failed}</p></section>`;
   const all = rs.catalog, running = all.filter((r) => r.runs).length, beta = all.filter((r) => r.beta).length;
   const betaOn = rs.beta || rs.beta_flag, at = S.settings && typeof S.settings.autotrim === 'boolean' ? S.settings.autotrim : null;
+  const goBuild = all.find((r) => r.id === 'go-build-cache'), trimsNothing = at && goBuild && !goBuild.runs;
   const cats = [...new Set(all.map((r) => r.category))];
   const counts = { all: all.length, on: running, off: all.filter((r) => r.off).length, beta };
   return h`<section class="lead"><h2>${running} of ${num(all.length, 'rule')} run.</h2>
       <p class="say">${betaOn ? (rs.beta_flag ? 'This engine runs with --beta-rules, so the beta rules run too.' : 'The beta rules, still in staged rollout, run too.') : beta === 1 ? 'The other is beta, still in staged rollout, and runs only with --beta-rules or the switch below.' : `The other ${beta} are beta, still in staged rollout, and run only with --beta-rules or the switch below.`}
         A rule turned off is off for regrow in Terminal too: both read <span class="mono">${unbroken(tilde(rs.config))}</span>${copy(rs.config, 'path')}. A change applies from the next scan.</p>
-      ${rs.error ? h`<div class="note">${ICON.caution}<span>The config file does not load, so the rules stand as it last loaded: <span class="err mono">${rs.error}</span></span></div>` : ''}
+      ${rs.error ? h`<div class="note">${ICON.caution}<span>The config file does not load, so ${running ? 'the rules stand as it last loaded' : 'no rule runs until it does'}: <span class="err mono">${rs.error}</span></span></div>` : ''}
+      ${rs.unknown_off && rs.unknown_off.length ? h`<div class="note">${ICON.caution}<span>The config file turns off <span class="mono">${rs.unknown_off.join(', ')}</span>, which no rule is called: a rule meant there still runs.</span></div>` : ''}
       ${S.rulesNote ? h`<div class="note">${ICON.caution}<span>That change did not take: <span class="err mono">${S.rulesNote}</span></span></div>` : ''}</section>
     ${section('Preferences', '', '', [
-      setting('autotrim', 'Trim the Go build cache when space is low', h`Runs <span class="mono">regrow prune go-build</span> by itself while free space is low, once one <span class="mono">regrow prune go-build --yes</span> has completed. The same switch as the menu's.`,
+      setting('autotrim', 'Trim the Go build cache when space is low', h`Runs <span class="mono">regrow prune go-build</span> by itself while free space is low, once one <span class="mono">regrow prune go-build --yes</span> has completed. The same switch as the menu's.${trimsNothing ? ' The Go build cache rule is off below, so it prunes nothing.' : ''}`,
         at == null ? state('…') : h`${state(at ? 'on' : 'off')}${switchOf(at, 'autotrim', 'Trim the Go build cache when space is low')}`),
       setting('beta', 'Scan beta rules', `${num(beta, 'rule')} still in staged rollout. Each still goes through the plan and your confirm.`,
         rs.beta_flag ? state('on, by --beta-rules') : h`${state(rs.beta ? 'on' : 'off')}${switchOf(rs.beta, 'beta', 'Scan beta rules')}`),

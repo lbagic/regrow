@@ -14,9 +14,16 @@ type fakeSwitch struct {
 	catalog []engine.Rule
 	set     []string
 	err     error
+	// unloaded: config.yaml has not loaded since the engine started.
+	unloaded error
 }
 
-func (f *fakeSwitch) Catalog() []engine.Rule { return f.catalog }
+func (f *fakeSwitch) Catalog() ([]engine.Rule, error) {
+	if f.unloaded != nil {
+		return nil, f.unloaded
+	}
+	return f.catalog, nil
+}
 
 func (f *fakeSwitch) State() Rules {
 	st := Rules{Config: "/home/dev/.config/regrow/config.yaml"}
@@ -100,4 +107,56 @@ func TestAScanRunsTheSwitchsCatalog(t *testing.T) {
 	if strings.Join(scanned, " ") != "only-this" {
 		t.Errorf("scanned %v, want the switch's catalog", scanned)
 	}
+}
+
+func TestARuleTurnedOffSinceTheScanIsNeitherPlannedNorRun(t *testing.T) {
+	m := newMachine(t)
+	srv := m.server()
+	sw := &fakeSwitch{catalog: srv.Catalog}
+	srv.Switch = sw
+	// A finding for each rule the scan runs, as a real scan reports.
+	all := m.findings()
+	srv.Scan = func(_ context.Context, rules []engine.Rule, emit func(int, engine.Finding, time.Duration)) {
+		for i, r := range rules {
+			for _, f := range all {
+				if f.Rule.ID == r.ID {
+					emit(i, f, time.Millisecond)
+				}
+			}
+		}
+	}
+	p := start(t, srv)
+	p.expect("hello")
+	scanID := p.scanned("s", 2)
+	planned := p.planned("p1", scanID, bothRules)
+
+	sw.catalog = srv.Catalog[:1]
+	off := srv.Catalog[1].ID
+	p.send(`{"type":"plan","id":"p2","scan_id":"` + scanID + `"}`)
+	if e := p.expectError("p2", CodeRulesChanged); !strings.Contains(e.Message, off) {
+		t.Errorf("plan's refusal = %s, want it to name %s", e.raw, off)
+	}
+	p.send(`{"type":"execute","id":"x","plan_id":"` + planned.PlanID + `"}`)
+	p.expectError("x", CodeRulesChanged)
+	if j := m.journal(); len(j) != 0 {
+		t.Errorf("journal = %v, want nothing run", j)
+	}
+
+	again := p.scanned("s2", 1)
+	p.planned("p3", again, "")
+}
+
+func TestAScanWaitsForAConfigThatLoads(t *testing.T) {
+	m := newMachine(t)
+	srv := m.server()
+	sw := &fakeSwitch{catalog: srv.Catalog, unloaded: errors.New("config.yaml: field kep not found")}
+	srv.Switch = sw
+	p := start(t, srv)
+	p.expect("hello")
+	p.send(`{"type":"scan","id":"s1"}`)
+	if e := p.expectError("s1", CodeRulesFailed); !strings.Contains(e.Message, "field kep not found") {
+		t.Errorf("scan's refusal = %s", e.raw)
+	}
+	sw.unloaded = nil
+	p.scanned("s2", 2)
 }

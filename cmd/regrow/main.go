@@ -142,18 +142,23 @@ func run(args []string) error {
 		return err
 	}
 	// A config that does not load stops every command that runs rules: a
-	// typo must never mean that a rule turned off runs.
+	// typo must never mean that a rule turned off runs. The engine starts
+	// regardless, so the app's alerts go on; it runs no rule until the
+	// file loads.
 	cfgPath, err := config.DefaultPath()
 	if err != nil {
 		return err
 	}
 	cfg, err := config.LoadFile(cfgPath)
+	host := engine.DetectHost()
+	if cmd == "engine" {
+		return runEngine(host, newRuleSwitch(all, opts.betaRules, cfgPath, cfg.Rules, err), opts)
+	}
 	if err != nil {
 		return err
 	}
-	host := engine.DetectHost()
-	if cmd == "engine" {
-		return runEngine(host, newRuleSwitch(all, opts.betaRules, cfgPath, cfg.Rules), opts)
+	if unknown := unknownOff(all, cfg.Rules); len(unknown) > 0 {
+		fmt.Fprintf(os.Stderr, "regrow: %s: rules: off names %s, which no rule has\n", cfgPath, strings.Join(unknown, ", "))
 	}
 	if cmd == "rules" {
 		if !opts.betaRules && !cfg.Rules.Beta {

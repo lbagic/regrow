@@ -29,7 +29,7 @@ func TestSetRulesKeepsTheRestOfTheFile(t *testing.T) {
 	p := writeConfig(t, `# my regrow settings
 docker:
   keep:
-    - dune_* # the dune databases
+    - myproj_* # the project databases
   volume_export_cap: 2GiB
 rules:
   off: [npm-cache] # for now
@@ -41,7 +41,7 @@ rules:
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"# my regrow settings", "dune_* # the dune databases", "volume_export_cap: 2GiB", "pip-cache", "beta: true"} {
+	for _, want := range []string{"# my regrow settings", "myproj_* # the project databases", "volume_export_cap: 2GiB", "pip-cache", "beta: true"} {
 		if !strings.Contains(string(data), want) {
 			t.Errorf("the file lacks %q:\n%s", want, data)
 		}
@@ -53,14 +53,14 @@ rules:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !c.Docker.Keeps("dune_db", "") || !c.Rules.Beta || !c.Rules.IsOff("pip-cache") {
+	if !c.Docker.Keeps("myproj_db", "") || !c.Rules.Beta || !c.Rules.IsOff("pip-cache") {
 		t.Errorf("config = %+v", c)
 	}
 
 	if err := SetRules(p, Rules{}); err != nil {
 		t.Fatal(err)
 	}
-	if data, _ := os.ReadFile(p); strings.Contains(string(data), "rules") || !strings.Contains(string(data), "dune_*") {
+	if data, _ := os.ReadFile(p); strings.Contains(string(data), "rules") || !strings.Contains(string(data), "myproj_*") {
 		t.Errorf("empty rules must drop only the key:\n%s", data)
 	}
 }
@@ -72,6 +72,58 @@ func TestSetRulesToNothingLeavesAFileThatLoads(t *testing.T) {
 	}
 	if c, err := LoadFile(p); err != nil || len(c.Rules.Off) != 0 {
 		t.Fatalf("config = %+v, %v; want the defaults", c, err)
+	}
+	// Not empty: a regrow older than the rules key fails on that with a bare EOF.
+	if data, _ := os.ReadFile(p); string(data) != "{}\n" {
+		t.Errorf("file = %q, want {}", data)
+	}
+
+	none := filepath.Join(t.TempDir(), "config.yaml")
+	if err := SetRules(none, Rules{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(none); err == nil {
+		t.Error("nothing to write must leave no file")
+	}
+}
+
+func TestSetRulesKeepsAFileOfCommentsAlone(t *testing.T) {
+	for _, body := range []string{"# docker:\n#   keep: [myproj_*]\n", "---\n", "--- # regrow\n"} {
+		p := writeConfig(t, body)
+		if err := SetRules(p, Rules{Off: []string{"npm-cache"}}); err != nil {
+			t.Fatalf("%q: %v", body, err)
+		}
+		data, _ := os.ReadFile(p)
+		if !strings.HasPrefix(string(data), strings.TrimRight(body, "\n")) {
+			t.Errorf("%q became %q: its text must stay", body, data)
+		}
+		if c, err := LoadFile(p); err != nil || !c.Rules.IsOff("npm-cache") {
+			t.Errorf("%q: config = %+v, %v", body, c.Rules, err)
+		}
+	}
+}
+
+func TestSetRulesWritesThroughALink(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "dotfiles", "regrow.yaml")
+	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("docker:\n  volume_export_cap: 2GiB\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "config.yaml")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetRules(link, Rules{Off: []string{"npm-cache"}}); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Lstat(link); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("config.yaml is no longer a link: %v, %v", info, err)
+	}
+	if c, err := LoadFile(target); err != nil || !c.Rules.IsOff("npm-cache") || c.Docker.VolumeExportCap != "2GiB" {
+		t.Errorf("the linked file = %+v, %v", c, err)
 	}
 }
 
