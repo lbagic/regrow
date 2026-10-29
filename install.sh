@@ -33,6 +33,9 @@ main() {
 	x86_64) arch=amd64 chip=Intel ;;
 	*) die "there is no regrow build for this Mac's chip ($machine)." ;;
 	esac
+	macos=$(sw_vers -productVersion 2>/dev/null || true)
+	[ "${macos%%.*}" -ge 12 ] 2>/dev/null ||
+		die "regrow needs macOS 12 or later; this Mac has macOS $macos."
 	asset=regrow_darwin_$arch.tar.gz
 	bin_dir=$HOME/.local/bin
 
@@ -50,52 +53,56 @@ main() {
 	[ "$got" = "$want" ] ||
 		die "$asset does not match the release's checksums.txt; nothing was installed."
 
-	tar -xzf "$tmp/$asset" -C "$tmp" regrow || die "$asset holds no regrow binary."
+	tar -xzf "$tmp/$asset" -C "$tmp" regrow ||
+		die "could not unpack $asset; nothing was installed."
 	chmod 755 "$tmp/regrow"
 	version=$("$tmp/regrow" version) ||
-		die "the downloaded regrow does not run on this Mac (it needs macOS 12 or later); nothing was installed."
-	mkdir -p "$bin_dir" || die "could not create ~/.local/bin."
+		die "the downloaded regrow does not run on this Mac; nothing was installed."
+	mkdir -p "$bin_dir" || die "could not create ~/.local/bin; nothing was installed."
 	mv -f "$tmp/regrow" "$bin_dir/regrow" || die "could not write ~/.local/bin/regrow."
 	say "Installed $version to ~/.local/bin/regrow."
 
+	next='~/.local/bin/regrow'
 	case :$PATH: in
 	*:"$bin_dir":*)
-		found=$(command -v regrow || true)
-		if [ "$found" = "$bin_dir/regrow" ]; then
-			say "Next, run:  regrow"
-		else
-			say "Your PATH finds another regrow first, at $found."
-			say "Next, run:  ~/.local/bin/regrow"
-		fi
+		next=regrow
 		;;
 	*)
 		# shellcheck disable=SC2016 # expanded by the shell that reads the line
 		line='export PATH="$HOME/.local/bin:$PATH"'
-		profile=$HOME/.zprofile
+		rc=
 		case ${SHELL:-} in
-		*/zsh)
-			if [ -f "$profile" ] && grep -qxF "$line" "$profile"; then
-				say "~/.zprofile already adds ~/.local/bin to PATH."
-			else
-				say "Adding ~/.local/bin to PATH in ~/.zprofile:"
-				say "  $line"
-				printf '\n%s\n' "$line" >>"$profile" ||
-					die "could not write ~/.zprofile; add the line above to it yourself."
-			fi
-			say "Next, run:  regrow  in a new Terminal window, or  ~/.local/bin/regrow  in this one."
-			;;
-		*)
-			case ${SHELL:-} in
-			*/bash) rc='~/.bash_profile' ;;
-			*) rc="your shell's startup file" ;;
-			esac
-			say "~/.local/bin is not on your PATH. Add this line to $rc:"
-			say "  $line"
-			say "Next, run:  ~/.local/bin/regrow"
+		*/zsh) rc=.zprofile ;;
+		*/bash)
+			# A bash login shell reads only the first of these that exists.
+			for rc in .bash_profile .bash_login .profile; do
+				if [ -e "$HOME/$rc" ]; then break; fi
+			done
+			[ -e "$HOME/$rc" ] || rc=.bash_profile
 			;;
 		esac
+		if [ -z "$rc" ]; then
+			say "~/.local/bin is not on your PATH. Add this line to your shell's startup file:"
+			say "  $line"
+		else
+			if [ -f "$HOME/$rc" ] && grep -qxF "$line" "$HOME/$rc"; then
+				say "~/$rc already adds ~/.local/bin to PATH."
+			else
+				say "Adding ~/.local/bin to PATH in ~/$rc:"
+				say "  $line"
+				printf '\n%s\n' "$line" >>"$HOME/$rc" ||
+					die "could not write ~/$rc; add the line above to it yourself."
+			fi
+			next='regrow  in a new Terminal window, or  ~/.local/bin/regrow  in this one'
+		fi
 		;;
 	esac
+	found=$(command -v regrow || true)
+	if [ -n "$found" ] && [ "$found" != "$bin_dir/regrow" ]; then
+		say "Another regrow, at $found, is on your PATH and may run instead of this one; remove it, or run ~/.local/bin/regrow."
+		next='~/.local/bin/regrow'
+	fi
+	say "Next, run:  $next"
 	say "It shows what fills your disk and removes nothing until you confirm."
 }
 
