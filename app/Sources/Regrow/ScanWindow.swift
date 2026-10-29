@@ -16,6 +16,7 @@ final class ScanWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, WKScri
     private let onMessage: (Any) -> Void
     private let onPageGone: (_ reloading: Bool) -> Void
     private let onClose: () -> Void
+    private let onKey: () -> Void
 
     private var firstLoadAllowed = false
     private var lastReload = Date.distantPast
@@ -27,18 +28,20 @@ final class ScanWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, WKScri
         page: URL, log: LogFile,
         onMessage: @escaping (Any) -> Void,
         onPageGone: @escaping (_ reloading: Bool) -> Void,
-        onClose: @escaping () -> Void
+        onClose: @escaping () -> Void,
+        onKey: @escaping () -> Void
     ) {
         self.page = page
         self.log = log
         self.onMessage = onMessage
         self.onPageGone = onPageGone
         self.onClose = onClose
+        self.onKey = onKey
 
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .nonPersistent()
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
-        let frame = NSRect(x: 0, y: 0, width: 900, height: 640)
+        let frame = NSRect(x: 0, y: 0, width: 1096, height: 640)
         webView = WKWebView(frame: frame, configuration: configuration)
         window = KeyWindow(
             contentRect: frame, styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -50,7 +53,7 @@ final class ScanWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, WKScri
         webView.navigationDelegate = self
         webView.configuration.userContentController.add(self, name: Self.handler)
         window.title = "regrow"
-        window.contentMinSize = NSSize(width: 720, height: 520)
+        window.contentMinSize = NSSize(width: 916, height: 520)
         window.isReleasedWhenClosed = false
         window.delegate = self
         window.contentView = webView
@@ -134,6 +137,10 @@ final class ScanWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, WKScri
         sender.orderOut(nil)
         log("scan window hidden")
         return false
+    }
+
+    func windowDidBecomeKey(_ notification: Notification) {
+        onKey()
     }
 
     func windowWillClose(_ notification: Notification) {

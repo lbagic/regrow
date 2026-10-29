@@ -85,8 +85,9 @@ public enum MenuRow: Equatable {
     case note(String)
     /// The command the line above quotes, as Terminal takes it.
     case copy(String)
-    case fullDiskAccess(String)
-    case openFullDiskAccess
+    /// Full Disk Access and its state; while it is not granted, choosing
+    /// the row opens its pane in System Settings.
+    case fullDiskAccess(String, opensSettings: Bool)
     case relaunch
     case staging(Int64)
     case environment(String)
@@ -115,9 +116,10 @@ public enum MenuModel {
         if let loginItem = state.loginItem {
             rows.append(.loginItem(loginItem))
         }
-        rows += [.separator, .fullDiskAccess(MenuText.fullDiskAccess(state.fda))]
-        if let fda = state.fda, fda != "granted" {
-            rows += [.openFullDiskAccess, .relaunch]
+        let off = state.fda.map { $0 != "granted" } ?? false
+        rows += [.separator, .fullDiskAccess(MenuText.fullDiskAccess(state.fda), opensSettings: off)]
+        if off {
+            rows.append(.relaunch)
         }
         if let staged = state.tick?.stagedBytes, staged > 0 {
             rows.append(.staging(staged))

@@ -48,6 +48,23 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate, @unchecked Sen
         }
     }
 
+    /// The grant as the window's General section shows it. `answer` is
+    /// called off the main thread.
+    func grant(_ answer: @escaping (WindowSettings.Grant) -> Void) {
+        guard let center else {
+            answer(.unknown)
+            return
+        }
+        center.getNotificationSettings { settings in
+            switch settings.authorizationStatus {
+            case .authorized, .provisional: answer(.allowed)
+            case .denied: answer(.denied)
+            case .notDetermined: answer(.notAsked)
+            default: answer(.unknown)
+            }
+        }
+    }
+
     /// `taken` says whether the centre accepted the notice; it is
     /// called off the main thread.
     func post(_ notice: Notice, taken: ((Bool) -> Void)? = nil) {

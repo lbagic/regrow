@@ -37,6 +37,8 @@ final class Shell: ObservableObject {
     private var window: ScanWindow?
     private var stateDirectory: URL?
     private var helloLine: String?
+    /// The settings the page was last handed.
+    private var settings: WindowSettings?
     private var tickLine: String?
     private var downLine: String?
     private var lockNoticed = false
@@ -145,6 +147,11 @@ final class Shell: ObservableObject {
     }
 
     func chooseLoginItem(_ choice: LoginItemChoice) {
+        // A copy outside ~/Applications would register that copy.
+        guard Config.installed else {
+            log("not ~/Applications/Regrow.app: no login item to change")
+            return
+        }
         // Either way the owner has chosen, so the launch does not register again.
         UserDefaults.standard.set(true, forKey: Self.loginItemKey)
         do {
@@ -163,6 +170,36 @@ final class Shell: ObservableObject {
             log("could not change the login item: \(error.localizedDescription)")
         }
         objectWillChange.send()
+        readSettings()
+    }
+
+    /// Reads the grants off the main thread and hands the page the
+    /// settings when they changed. The owner may change any of them in
+    /// System Settings, so they are read again each time the window
+    /// comes to the front.
+    private func readSettings() {
+        let notifier = self.notifier
+        DispatchQueue.global(qos: .userInitiated).async {
+            let finder = Automation.finderGrant()
+            notifier.grant { notifications in
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        self.settingsRead(notifications: notifications, finder: finder)
+                    }
+                }
+            }
+        }
+    }
+
+    private func settingsRead(notifications: WindowSettings.Grant, finder: WindowSettings.Grant) {
+        let read = WindowSettings(
+            loginItem: loginItemState, notifications: notifications, finder: finder, log: config.log.path,
+            staging: stateDirectory?.appendingPathComponent("staging").path)
+        guard read != settings else { return }
+        settings = read
+        if pageReady {
+            window?.deliver(read.line)
+        }
     }
 
     private func environmentRead(_ captured: Result<[String: String], LoginEnvironment.Failure>) {
@@ -326,6 +363,7 @@ final class Shell: ObservableObject {
             downLine = nil
             log("hello: protocol \(hello.protocol), engine \(hello.version), fda \(hello.fda)")
             startWatch()
+            readSettings()
         case "tick":
             guard let tick = Wire.decode(Wire.Tick.self, from: line) else { return }
             self.tick = tick
@@ -439,6 +477,9 @@ final class Shell: ObservableObject {
                 let closing = self.window
                 self.window = nil
                 DispatchQueue.main.async { _ = closing }
+            },
+            onKey: { [weak self] in
+                self?.readSettings()
             })
         self.window = window
         pageReady = false
@@ -461,7 +502,7 @@ final class Shell: ObservableObject {
         switch name {
         case "ready":
             log("page ready")
-            var standing = [helloLine, tickLine, downLine].compactMap { $0 }
+            var standing = [helloLine, tickLine, downLine, settings?.line].compactMap { $0 }
             if let environmentFailure {
                 standing.append(environmentLine(environmentFailure))
             }
@@ -471,6 +512,7 @@ final class Shell: ObservableObject {
                 window?.deliver(Router.shellEvent("reloaded", ["running": reloadedMidRun]))
             }
             pageReady = true
+            readSettings()
             if scanAsked {
                 scanAsked = false
                 window?.deliver(Router.shellEvent("scan"))
@@ -493,6 +535,23 @@ final class Shell: ObservableObject {
             }
         case "open-full-disk-access":
             openFullDiskAccess()
+        case "login-item-on":
+            chooseLoginItem(.register)
+        case "login-item-off":
+            chooseLoginItem(.unregister)
+        case "login-item-settings":
+            chooseLoginItem(.openSettings)
+        case "notification-settings":
+            openNotificationSettings()
+        case "automation-settings":
+            log("opening Automation settings")
+            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation") {
+                NSWorkspace.shared.open(url)
+            }
+        case "show-log":
+            NSWorkspace.shared.activateFileViewerSelecting([config.log])
+        case "show-staging":
+            showStaging()
         case "relaunch":
             relaunch()
         default:
@@ -509,6 +568,14 @@ final class Shell: ObservableObject {
     func openFullDiskAccess() {
         log("opening Full Disk Access settings")
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    private func openNotificationSettings() {
+        log("opening Notifications settings")
+        let id = Bundle.main.bundleIdentifier.map { "?id=\($0)" } ?? ""
+        if let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension\(id)") {
             NSWorkspace.shared.open(url)
         }
     }

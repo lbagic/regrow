@@ -338,3 +338,23 @@ struct LoginSessionTests {
         #expect(LoginSession.consoleStart(user: "regrow-no-such-user") == nil)
     }
 }
+
+@Suite("Window settings")
+struct WindowSettingsTests {
+    @Test("the settings event names each grant as the page reads it, and leaves out what is not known")
+    func line() throws {
+        let full = WindowSettings(
+            loginItem: .needsApproval, notifications: .allowed, finder: .notAsked,
+            log: "/Users/dev/Library/Logs/regrow/app.log", staging: "/Users/dev/.local/state/regrow/staging")
+        let fields = try #require(JSONSerialization.jsonObject(with: Data(full.line.utf8)) as? [String: String])
+        #expect(fields == [
+            "event": "shell", "state": "settings", "login_item": "needs_approval", "notifications": "allowed",
+            "finder": "not_asked", "log": "/Users/dev/Library/Logs/regrow/app.log",
+            "staging": "/Users/dev/.local/state/regrow/staging",
+        ])
+        let bare = WindowSettings(loginItem: nil, notifications: .unknown, finder: .denied, log: "/l", staging: nil)
+        let some = try #require(JSONSerialization.jsonObject(with: Data(bare.line.utf8)) as? [String: String])
+        #expect(some["login_item"] == nil && some["staging"] == nil)
+        #expect(some["notifications"] == "unknown" && some["finder"] == "denied")
+    }
+}
