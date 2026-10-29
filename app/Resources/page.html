@@ -464,11 +464,9 @@ function review(note) {
   S.planning = ask('plan', 'review', { scan_id: S.scan.id, select: [...S.ticked] });
 }
 
-// A run changed the disk and what regrow staging holds: the shell samples again, for the menu and for General.
 function ended(result, canceled, error) {
   Object.assign(S.run, { result: result || {}, canceled: !!canceled, error });
   S.screen = 'result';
-  post({ shell: 'tick' });
 }
 
 // Each change of a tick box is one plan request, sent once the clicking pauses; its answer fills the tray.

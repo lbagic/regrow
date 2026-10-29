@@ -17,6 +17,8 @@ public final class Watch {
     private var serial = 0
     private var out = false
     private var again = false
+    /// The next tick goes without autotrim, whatever the setting.
+    private var noTrim = false
     private var last: Date?
     private var lastBeforeThis: Date?
 
@@ -57,7 +59,11 @@ public final class Watch {
 
     /// Ticks as soon as the engine can take one: now, or right after
     /// the tick that is out, which was sent with the setting as it was.
-    public func tickNow() {
+    /// With `autotrim` false that tick goes without autotrim.
+    public func tickNow(autotrim allowed: Bool = true) {
+        if !allowed {
+            noTrim = true
+        }
         if out {
             again = true
         } else {
@@ -90,6 +96,7 @@ public final class Watch {
         lastBeforeThis = last
         last = now()
         serial += 1
-        send("shell-tick-\(serial)", autotrim())
+        send("shell-tick-\(serial)", autotrim() && !noTrim)
+        noTrim = false
     }
 }

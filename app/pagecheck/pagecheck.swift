@@ -114,7 +114,7 @@ struct Play {
     var scanFirst = false                // the shell asks for a scan before it hands over the engine's hello
     var holdHello = false                // the engine has not said hello when the page is ready
     var settings: [String: Any]? = Play.installed  // the shell's settings event; nil: it has read none yet
-    var tickAfterRun: String?            // the section whose tick answers the page's ask for one once a run ends
+    var tickAfterRun: String?            // the section whose tick the shell relays once a run ends, as the app does
 
     /// The settings of the installed app on a Mac that has granted it all but Control of Finder.
     static let installed: [String: Any] = [
@@ -467,8 +467,6 @@ final class Run: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHa
             if !play.opened && !play.scanFirst { send(["event": "shell", "state": "scan"]) }
         case "automation":
             if let allowed = play.automation { send(["event": "shell", "state": "automation", "allowed": allowed]) }
-        case "tick":
-            if let tick = play.tickAfterRun { send([answering(tick, "shell-2")[0]]) }
         case "open-full-disk-access", "relaunch", "login-item-on", "login-item-off", "login-item-settings", "notification-settings",
             "automation-settings", "show-log", "show-staging":
             break
@@ -549,6 +547,10 @@ final class Run: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHa
         }
         let lines = answering(play.execute, id)
         send(play.executeStops ? Array(lines.prefix(lines.count / 2)) : play.executeLines.map { Array(lines.prefix($0)) } ?? lines)
+        // The shell ticks once a run has ended, and hands the page that tick.
+        if !play.executeStops, play.executeLines == nil, let tick = play.tickAfterRun {
+            send([answering(tick, "shell-2")[0]])
+        }
     }
 
     private func answer(cancel id: String, _ body: [String: Any]) {
@@ -1058,7 +1060,7 @@ struct Scenario {
             await toRun(r)
             await r.settle()
             r.same(await r.screen(), "result", "the screen")
-            r.same(r.sentShell("tick"), 1, "ticks the page asked for once the run ended")
+            r.same(r.sentShell("tick"), 0, "ticks the page asked for: the shell ticks by itself")
             await r.click("#nav-general")
             r.same(await r.text("[data-setting=staging] .state"), human(r.transcript.event("tick", "tick").int("staged_bytes")), "staging's size, from the tick after the run")
             r.same(await r.count("[data-setting=staging] button"), 1, "Show in Finder for staging once the run put something there")

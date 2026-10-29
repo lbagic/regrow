@@ -41,9 +41,10 @@ final class Shell: ObservableObject {
     private var settings: WindowSettings?
     /// A read of the settings is under way since then; another asked
     /// meanwhile runs once it ends, or at once after 10 s, in case macOS
-    /// never answers that one.
+    /// never answers that one. Only the newest read counts.
     private var readingSettings: Date?
     private var readSettingsAgain = false
+    private var settingsSerial = 0
     private var tickLine: String?
     private var downLine: String?
     private var lockNoticed = false
@@ -188,6 +189,8 @@ final class Shell: ObservableObject {
             return
         }
         readingSettings = Date()
+        settingsSerial += 1
+        let serial = settingsSerial
         let notifier = self.notifier, installed = Config.installed
         DispatchQueue.global(qos: .userInitiated).async {
             let finder = Automation.finderGrant()
@@ -196,7 +199,7 @@ final class Shell: ObservableObject {
             guard installed else {
                 DispatchQueue.main.async {
                     MainActor.assumeIsolated {
-                        self.settingsRead(notifications: .unknown, finder: finder)
+                        self.settingsRead(serial, notifications: .unknown, finder: finder)
                     }
                 }
                 return
@@ -204,14 +207,15 @@ final class Shell: ObservableObject {
             notifier.grant { notifications in
                 DispatchQueue.main.async {
                     MainActor.assumeIsolated {
-                        self.settingsRead(notifications: notifications, finder: finder)
+                        self.settingsRead(serial, notifications: notifications, finder: finder)
                     }
                 }
             }
         }
     }
 
-    private func settingsRead(notifications: WindowSettings.Grant, finder: WindowSettings.Grant) {
+    private func settingsRead(_ serial: Int, notifications: WindowSettings.Grant, finder: WindowSettings.Grant) {
+        guard serial == settingsSerial else { return }
         readingSettings = nil
         if readSettingsAgain {
             readSettingsAgain = false
@@ -334,7 +338,14 @@ final class Shell: ObservableObject {
             let code = head.code.map { " \($0): \(head.message ?? "")" } ?? ""
             log("← \(head.event ?? "") re=\(head.re ?? "-")\(code)")
         }
+        let executing = router.executeInFlight
         apply(router.engineEvent(head, line: String(decoding: line, as: UTF8.self)))
+        // A run changed the disk and what regrow staging holds: the menu
+        // and General sample them again, whether or not a page saw it end.
+        // Not with autotrim: a prune would hold the engine right after.
+        if executing && !router.executeInFlight {
+            watch?.tickNow(autotrim: false)
+        }
     }
 
     private func engineWentDown(_ down: EngineSupervisor.Down) {
@@ -562,9 +573,6 @@ final class Shell: ObservableObject {
                     self.readSettings()
                 }
             }
-        case "tick":
-            log("the page asked for a tick")
-            watch?.tickNow()
         case "open-full-disk-access":
             openFullDiskAccess()
         case "login-item-on":

@@ -294,6 +294,21 @@ struct WatchTests {
         #expect(sent.autotrim == [false, true])
     }
 
+    @Test("a tick asked for without autotrim goes without it, and the next one with the setting again")
+    func withoutAutotrim() {
+        let clock = Clock()
+        let sent = Sent()
+        let watch = watch(clock, sent, autotrim: { true })
+        defer { watch.stop() }
+
+        watch.start()
+        watch.tickNow(autotrim: false)
+        watch.settled()
+        watch.settled()
+        watch.tickNow()
+        #expect(sent.autotrim == [true, false, true])
+    }
+
     @Test("a tick dropped with the engine does not count as the last one")
     func dropped() {
         let clock = Clock()
