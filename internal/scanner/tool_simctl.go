@@ -13,8 +13,9 @@ import (
 
 // CoreSimulator is simctl-only territory (docs/research/02 §6): raw
 // deletion desyncs the simdiskimaged DB. These queries enumerate what
-// `simctl delete` / `simctl runtime delete` can address. simctl
-// failing (no Xcode, only CLT) means the rules do not apply.
+// `simctl delete` / `simctl runtime delete` can address. No developer
+// tools, or simctl failing (no Xcode, only CLT), means the rules do
+// not apply.
 
 func querySimctlDevices(ctx context.Context) ([]engine.Item, error) {
 	available, _, err := simctlDevices(ctx)
@@ -27,6 +28,9 @@ func querySimctlDevicesUnavailable(ctx context.Context) ([]engine.Item, error) {
 }
 
 func simctlDevices(ctx context.Context) (available, unavailable []engine.Item, err error) {
+	if !developerTools(ctx) {
+		return nil, nil, nil
+	}
 	out, ok, runErr := runTool(ctx, "xcrun", "simctl", "list", "devices", "-j")
 	if !ok || runErr != nil {
 		return nil, nil, nil
@@ -35,6 +39,9 @@ func simctlDevices(ctx context.Context) (available, unavailable []engine.Item, e
 }
 
 func querySimctlRuntimes(ctx context.Context) ([]engine.Item, error) {
+	if !developerTools(ctx) {
+		return nil, nil
+	}
 	out, ok, err := runTool(ctx, "xcrun", "simctl", "runtime", "list", "-j")
 	if !ok || err != nil {
 		return nil, nil

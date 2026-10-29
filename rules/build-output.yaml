@@ -18,7 +18,7 @@ tool_query: build-output
 # The folder is judged again right before each Trash move.
 pre_action: build-output-recheck
 note: A project is left out while a file in its folder changed in the last 30 days or a process works in it; a deletion or a rename alone does not count. A tool you run without changing it reads as idle - check the list before removing its dist or .venv.
-scans: "folders named `.next`, `dist`, `.turbo` and `.venv`, up to 10 levels below `~/workspace`, `~/dev`, `~/projects`, `~/src` and `~/code`, without entering `.git`, `.Trash`, `Library` or `node_modules`. For each project: what git says (`rev-parse`, `check-ignore`, `ls-files`, all with `--no-optional-locks`), its files' change times and those of git's `HEAD`, and the working folders and command lines of your processes (`lsof`, `ps`)"
+scans: "nothing when the first git on `PATH` is macOS's `/usr/bin/git` and the developer tools `xcode-select` points at, Xcode or the Command Line Tools, are not installed (it would ask to install them); otherwise folders named `.next`, `dist`, `.turbo` and `.venv`, up to 10 levels below `~/workspace`, `~/dev`, `~/projects`, `~/src` and `~/code`, without entering `.git`, `.Trash`, `Library` or `node_modules`. For each project: what git says (`rev-parse`, `check-ignore`, `ls-files`, all with `--no-optional-locks`), its files' change times and those of git's `HEAD`, and the working folders and command lines of your processes (`lsof`, `ps`)"
 keeps:
   - "a folder git tracks a file in, one no ignore rule names by its own name, or one beside which git tracks nothing"
   - "a `.venv` without a `pyvenv.cfg`, and a folder that holds a git repository of its own"
