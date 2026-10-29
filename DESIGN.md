@@ -64,7 +64,7 @@ A size is the figure and its unit set apart: the unit at regular weight in `--in
 
 ## The sidebar
 
-The name, serif 600 17 in the top bar's 42px; one 30px line per section: a 14px icon, the name in sans 13, and on the right, sans 12 `--ink-2`, what needs you there: "scanning" or "running" beside Scan while it is busy, the caution icon and how many grants are off beside General. "Settings", sans 600 11 in capitals and `--ink-3`, heads the sections that set the app up. The current section is filled `--accent-soft`, its name `--ink` 650, its icon `--accent`. At the foot: free space (sans 650 15) of the total, the disk meter, and the forecast in words. Another section and back leaves the scan as it was, scrolled where it was.
+The name, serif 600 17 in the top bar's 42px; one 30px line per section: a 14px icon, the name in sans 13, and on the right, sans 12 `--ink-2`, what needs you there: "scanning" or "running" beside Scan while it is busy, "stopped" while the engine is down, the caution icon and how many grants are off beside General. "Settings", sans 600 11 in capitals and `--ink-3`, heads the sections that set the app up. The current section is filled `--accent-soft`, its name `--ink` 650, its icon `--accent`. At the foot: free space (sans 650 15) of the total, the disk meter, and the forecast in words. Another section and back leaves the scan as it was, scrolled where it was.
 
 ## The page, top to bottom
 
@@ -104,7 +104,9 @@ Startup, Permissions, About. A setting is a row: on the left its name (sans 650 
 
 - **Start with Mac**: a switch, as the menu's row; "needs approval" with a link to Login Items settings; outside `~/Applications`, a sentence and no control.
 - **Permissions**, its header counting those off: Full Disk Access (the lock beside its name while off, what that cost the last scan, "Open settings", then "Relaunch to apply"); Control of Finder; Notifications. A grant that is off links to its pane in System Settings, and Notifications on does too.
-- **About**: the version, the engine's path with Copy, the logs and regrow staging with "Show in Finder", staging with its size.
+- **About**: the version, the engine's path with Copy, the logs with "Show in Finder", and regrow staging, its size and "Show in Finder" once something is there.
+
+A grant macOS did not report, Full Disk Access or Control of Finder "unknown", is said so and not counted as off.
 
 ## Wording
 

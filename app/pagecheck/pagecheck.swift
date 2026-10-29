@@ -6,7 +6,7 @@
 //
 // Each scenario loads the page fresh in an offscreen web view, answers what the page asks with the section of
 // the transcript the scenario names, waits for the page to settle, asserts on the DOM and on what the page
-// sent, and writes a PNG of the 900×640 window. It exits 1 with a line per failure. Two things in the
+// sent, and writes a PNG of the 1096×640 window. It exits 1 with a line per failure. Two things in the
 // environment are for a closer look: PAGECHECK_ONLY, a comma-separated list of scenario names, runs only
 // those; PAGECHECK_SIZE, as 916x520, draws the window at another size.
 //
@@ -94,6 +94,7 @@ struct Transcript {
 
 struct Play {
     var fdaDenied = false
+    var fdaWord: String?                 // the hello's fda in place of the recorded one, as fdaDenied does for denied
     var tick: String? = "tick"           // the section whose tick the shell relays; nil when it has none yet
     var environment: String?             // the reason the shell could not read the login environment
     var scan = "scan"
@@ -416,7 +417,7 @@ final class Run: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHa
         pumping = false
     }
 
-    private func answering(_ section: String, _ id: String) -> [String] {
+    func answering(_ section: String, _ id: String) -> [String] {
         transcript.lines(section).map { line in
             if !line.contains("\"re\":\"REQ\"") { fail("a line of \(section) has no REQ to replace") }
             return line.replacingOccurrences(of: "\"re\":\"REQ\"", with: "\"re\":\(json(["v": id]).dropFirst(5).dropLast(1))")
@@ -448,9 +449,9 @@ final class Run: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHa
             pasted.append(pasteboard.string(forType: .string) ?? "")
         case "ready":
             var hello = transcript.lines("hello")[0]
-            if play.fdaDenied {
-                expect(hello.contains("\"fda\":\"granted\""), "the recorded hello has no fda to deny")
-                hello = hello.replacingOccurrences(of: "\"fda\":\"granted\"", with: "\"fda\":\"denied\"")
+            if let word = play.fdaWord ?? (play.fdaDenied ? "denied" : nil) {
+                expect(hello.contains("\"fda\":\"granted\""), "the recorded hello has no fda to replace")
+                hello = hello.replacingOccurrences(of: "\"fda\":\"granted\"", with: "\"fda\":\"\(word)\"")
             }
             if let path = play.helloSelf {
                 var event = parse(hello)
@@ -986,6 +987,68 @@ struct Scenario {
             r.same(await r.text("[data-setting=notifications] .ctl"), "not available in this copy", "Notifications without a bundle")
             r.same(await r.count("[data-setting=staging]"), 0, "the staging row before the engine named its folder")
             r.same(await r.text("[data-setting=log] .mono"), "/tmp/regrow/app.log", "a log outside the home")
+            await r.shoot()
+        },
+        Scenario(name: "general-latest-word") { r in
+            await results(r)
+            // The confirm step heard no; then the owner allowed it in System Settings, and the shell read that.
+            r.send(["event": "shell", "state": "automation", "allowed": false])
+            var allowed = Play.installed
+            allowed["finder"] = "allowed"
+            r.send(allowed)
+            await r.settle()
+            await r.click("#nav-general")
+            r.same(await r.text("[data-setting=finder] .state"), "on", "Control of Finder, by the shell's later read")
+            r.same(await r.count("[data-setting=finder] button"), 0, "Control of Finder's link while it is on")
+            r.same(await r.text("#nav-general .fig"), "", "grants off beside General")
+            r.send(["event": "shell", "state": "automation", "allowed": false])
+            await r.settle()
+            r.same(await r.text("[data-setting=finder] .state"), "off", "Control of Finder, by the confirm step's later answer")
+            var unknown = Play.installed
+            unknown["finder"] = "unknown"
+            r.send(unknown)
+            await r.settle()
+            r.same(await r.text("[data-setting=finder] .state"), "unknown", "Control of Finder macOS did not report")
+            r.has(await r.text("[data-setting=finder] p"), "macOS did not say", "why it is unknown")
+            r.same(await r.text("#nav-general .fig"), "", "a grant macOS did not report, counted as off")
+            r.same(await r.text("[data-setting=staging] .state"), human(r.transcript.event("tick", "tick").int("staged_bytes")), "staging's size, from the tick")
+            r.same(await r.count("[data-setting=staging] button"), 1, "Show in Finder for staging with something there")
+            await r.shoot()
+        },
+        Scenario(name: "general-scan-asked") { r in
+            await results(r)
+            await r.click("#nav-general")
+            r.send(["event": "shell", "state": "scan"])
+            await r.settle()
+            r.same(await r.js("return document.documentElement.dataset.pane") as? String ?? "", "scan", "the section the menu's Scan shows")
+            r.same(r.sent("scan").count, 2, "scans, the menu's included")
+            await r.shoot()
+        },
+        Scenario(name: "general-run-ended", play: Play(executeStops: true)) { r in
+            await toRun(r)
+            await r.js("document.getElementById('page').scrollTop = 400; return null")
+            await r.click("#nav-general")
+            let lines = r.answering("execute", r.executeRequest)
+            r.send(Array(lines.suffix(from: lines.count / 2)))
+            await r.settle()
+            r.same(await r.text("#nav-scan .fig"), "", "Scan's figure once the run has ended")
+            await r.click("#nav-scan")
+            r.same(await r.screen(), "result", "the screen once the run has ended")
+            r.same(await r.js("return document.getElementById('page').scrollTop") as? Double ?? -1, 0, "the result's scroll, on a screen new since the scan was left")
+            await r.shoot()
+        },
+        Scenario(name: "general-unknown", play: Play(fdaWord: "unknown", tick: nil)) { r in
+            await results(r)
+            await r.click("#nav-general")
+            r.same(await r.text("[data-setting=fda] .state"), "unknown", "Full Disk Access macOS did not report")
+            r.same(await r.text("[data-setting=fda] button"), "Open settings", "Full Disk Access's action while unknown")
+            r.same(await r.text("#nav-general .fig"), "", "grants off beside General")
+            r.same(await r.text("#pane .sec:nth-of-type(2) header span"), "", "the count of grants off")
+            r.same(await r.text("[data-setting=staging] .state"), "empty", "staging with no tick yet")
+            r.same(await r.count("[data-setting=staging] button"), 0, "Show in Finder for staging with nothing there")
+            r.send(["event": "shell", "state": "engine_down", "message": "the engine exited with status 1"])
+            await r.settle()
+            r.same(await r.text("#nav-scan .fig"), "stopped", "Scan's figure while the engine is down")
             await r.shoot()
         },
         Scenario(name: "env-failed", play: Play(environment: "the login shell gave no answer within 5 s")) { r in

@@ -39,6 +39,9 @@ final class Shell: ObservableObject {
     private var helloLine: String?
     /// The settings the page was last handed.
     private var settings: WindowSettings?
+    /// A read of the settings is under way; another asked meanwhile runs once it ends.
+    private var readingSettings = false
+    private var readSettingsAgain = false
     private var tickLine: String?
     private var downLine: String?
     private var lockNoticed = false
@@ -178,9 +181,24 @@ final class Shell: ObservableObject {
     /// System Settings, so they are read again each time the window
     /// comes to the front.
     private func readSettings() {
-        let notifier = self.notifier
+        guard !readingSettings else {
+            readSettingsAgain = true
+            return
+        }
+        readingSettings = true
+        let notifier = self.notifier, installed = Config.installed
         DispatchQueue.global(qos: .userInitiated).async {
             let finder = Automation.finderGrant()
+            // A copy elsewhere shares the installed app's bundle id, and with
+            // it the grant, but posts nothing.
+            guard installed else {
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        self.settingsRead(notifications: .unknown, finder: finder)
+                    }
+                }
+                return
+            }
             notifier.grant { notifications in
                 DispatchQueue.main.async {
                     MainActor.assumeIsolated {
@@ -192,6 +210,11 @@ final class Shell: ObservableObject {
     }
 
     private func settingsRead(notifications: WindowSettings.Grant, finder: WindowSettings.Grant) {
+        readingSettings = false
+        if readSettingsAgain {
+            readSettingsAgain = false
+            readSettings()
+        }
         let read = WindowSettings(
             loginItem: loginItemState, notifications: notifications, finder: finder, log: config.log.path,
             staging: stateDirectory?.appendingPathComponent("staging").path)
