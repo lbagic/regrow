@@ -60,6 +60,9 @@ type Server struct {
 	// autopilot.Autopilot.Tick, autotrim gate included. Nil refuses
 	// tick requests.
 	Tick func(ctx context.Context, autotrim bool) (headroom.Tick, error)
+	// History reads the oplog and the headroom history for a history
+	// request. Nil refuses history requests.
+	History func() (History, error)
 	// Staged measures what regrow's staging directory holds, for a
 	// tick's staged_bytes: a lower bound where part of it cannot be
 	// read. Nil omits the field.
@@ -269,6 +272,8 @@ func (s *session) handle(l requestLine) {
 		s.cancel(req)
 	case reqTick:
 		s.startTick(req)
+	case reqHistory:
+		s.history(req)
 	default:
 		s.emit(failure(req.ID, CodeUnknownRequest, fmt.Sprintf("unknown request type %q", req.Type)))
 	}
@@ -457,6 +462,40 @@ func (s *session) plan(req request) {
 	id := newPlanID(now)
 	s.plans[id] = heldPlan{plan: plan, scan: sc, created: now}
 	s.emit(planEvent{head{"plan", req.ID}, id, now.Add(s.planTTL()).UTC(), atoms, plan, plan.Totals()})
+	s.emit(done(req.ID))
+}
+
+// history answers at once, beside whatever is in flight: it only reads
+// the journal, which an execute appends to a whole line at a time.
+func (s *session) history(req request) {
+	if s.srv.History == nil {
+		s.emit(failure(req.ID, CodeHistoryFailed, "this engine reads no history"))
+		return
+	}
+	h, err := s.srv.History()
+	if err != nil {
+		s.emit(failure(req.ID, CodeHistoryFailed, err.Error()))
+		return
+	}
+	if h.Runs == nil {
+		h.Runs = []oplog.Summary{}
+	}
+	if h.Samples == nil {
+		h.Samples = []headroom.Sample{}
+	}
+	titles := make(map[string]string, len(s.srv.Catalog))
+	for _, r := range s.srv.Catalog {
+		titles[r.ID] = r.Title
+	}
+	h.Titles = map[string]string{}
+	for _, run := range h.Runs {
+		for id := range run.Rules {
+			if title, ok := titles[id]; ok {
+				h.Titles[id] = title
+			}
+		}
+	}
+	s.emit(historyEvent{head{"history", req.ID}, h})
 	s.emit(done(req.ID))
 }
 

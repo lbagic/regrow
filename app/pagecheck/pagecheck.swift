@@ -115,6 +115,8 @@ struct Play {
     var holdHello = false                // the engine has not said hello when the page is ready
     var settings: [String: Any]? = Play.installed  // the shell's settings event; nil: it has read none yet
     var tickAfterRun: String?            // the section whose tick the shell relays once a run ends, as the app does
+    var historyEvent: [String: Any]?     // the history event in place of the transcript's
+    var historyError: String?            // the history request fails with this message
 
     /// The settings of the installed app on a Mac that has granted it all but Control of Finder.
     static let installed: [String: Any] = [
@@ -438,6 +440,16 @@ final class Run: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHa
         case "plan": answer(plan: id, body)
         case "execute": answer(execute: id, body)
         case "cancel": answer(cancel: id, body)
+        case "history":
+            if let message = play.historyError {
+                send(["event": "error", "re": id, "code": "history_failed", "message": message])
+            } else if var event = play.historyEvent {
+                event["re"] = id
+                send(event)
+                send(["event": "done", "re": id])
+            } else {
+                send(answering("history", id))
+            }
         default: fail("the page sent a request the shell refuses: \(body)")
         }
     }
@@ -1081,6 +1093,56 @@ struct Scenario {
             r.same(await r.js("return document.getElementById('page').scrollTop") as? Double ?? -1, 0, "a new scan's scroll, though the screen is the same")
             await r.shoot()
         },
+        Scenario(name: "stats") { r in
+            await results(r)
+            r.same(r.sent("history").count, 1, "history requests once the engine said hello")
+            let history = r.transcript.event("history", "history"), runs = history.objs("runs")
+            let freed = runs.reduce(Int64(0)) { $0 + $1.int("frees_now") }
+            r.same(await r.text("#nav-stats .fig"), human(freed), "Stats' figure in the sidebar: what runs freed")
+            await r.click("#nav-stats")
+            r.same(r.sent("history").count, 2, "history requests once Stats was opened")
+            r.same(await r.text(".top h1"), "Stats", "the top bar's title")
+            r.has(await r.text("#pane .lead h2"), "regrow has freed \(human(freed)) on this Mac since", "the headline")
+            r.has(await r.text("#pane .lead .say"), "In \(runs.count) runs, \(runs.filter { $0.int("failed") > 0 }.count) with an action that failed.", "the runs, and those with a failure")
+            r.same(await r.js("return [...document.querySelectorAll('#pane .four .t')].map((t) => t.dataset.bucket)") as? [String] ?? [], ["frees_now", "after_trash", "exported"], "the totals")
+            r.same(await r.text("#pane .four [data-bucket=after_trash] b"), human(runs.reduce(Int64(0)) { $0 + $1.int("after_trash") }), "moved to the Trash")
+            r.has(await r.text("#pane .apart"), "went to regrow staging", "what went to staging")
+            r.same(await r.count("#pane .chart .dot"), runs.count, "a dot for each run")
+            r.same(await r.count("#pane .run"), runs.count, "runs")
+            let rules = Set(runs.flatMap { $0.obj("rules").keys })
+            r.same(await r.count("#pane .entry[data-rule]"), min(8, rules.count), "rules, at most eight")
+            r.same(await r.text("#pane .entry[data-rule=go-build-cache] h4"), history.obj("titles").str("go-build-cache"), "a rule by its title")
+            let largest = runs.flatMap { $0.obj("rules").map { ($0.key, ($0.value as? NSNumber)?.int64Value ?? 0) } }
+                .reduce(into: [String: Int64]()) { $0[$1.0, default: 0] += $1.1 }.max { $0.value < $1.value }
+            r.same(await r.js("return document.querySelector('#pane .entry[data-rule]').dataset.rule") as? String ?? "", largest?.key ?? "", "the first rule, the largest")
+            r.same(await r.count("#pane .run .tag.bad"), runs.filter { $0.int("failed") > 0 }.count, "runs marked with their failures")
+            await r.js("""
+                const plot = document.querySelector('#pane .plot').getBoundingClientRect();
+                document.dispatchEvent(new MouseEvent('mousemove', { clientX: plot.left + plot.width / 2, clientY: plot.top + 40 }));
+                return null
+                """)
+            r.has(await r.text("#pane .tip"), "free", "the crosshair's tip")
+            await r.shoot()
+            await r.click("#nav-scan")
+            r.same(await r.screen(), "findings", "the scan, kept while Stats showed")
+        },
+        Scenario(name: "stats-empty", play: Play(historyEvent: ["event": "history", "runs": [Any](), "samples": [Any](), "titles": [String: Any]()])) { r in
+            await results(r)
+            r.same(await r.text("#nav-stats .fig"), "", "Stats' figure with nothing run")
+            await r.click("#nav-stats")
+            r.same(await r.text("#pane .lead h2"), "Nothing has run on this Mac yet.", "the headline")
+            r.same(await r.count("#pane .four, #pane .run, #pane .entry"), 0, "totals, runs and rules with nothing run")
+            r.has(await r.text("#pane"), "Not enough samples yet", "the chart with no samples")
+            await r.shoot()
+        },
+        Scenario(name: "stats-failed", play: Play(historyError: "oplog.jsonl: line 7: invalid character 'x' looking for beginning of value")) { r in
+            await results(r)
+            await r.click("#nav-stats")
+            r.same(await r.text("#pane .lead h2"), "regrow's history could not be read.", "the headline")
+            r.same(await r.text("#pane .lead .err"), "oplog.jsonl: line 7: invalid character 'x' looking for beginning of value", "the engine's reason")
+            r.same(await r.count(".note"), 0, "notices on the scan for a history that failed")
+            await r.shoot()
+        },
         Scenario(name: "env-failed", play: Play(environment: "the login shell gave no answer within 5 s")) { r in
             r.has(await r.text(".note"), "could not read your login shell's environment", "the notice")
             r.has(await r.text(".note"), "the login shell gave no answer within 5 s", "the notice's reason")
@@ -1633,7 +1695,7 @@ struct Scenario {
         },
     ]
     // Results, plan and confirm also in dark.
-    return lit + lit.filter { ["results", "plan", "confirm", "general"].contains($0.name) }.map { var dark = $0; dark.dark = true; return dark }
+    return lit + lit.filter { ["results", "plan", "confirm", "general", "stats"].contains($0.name) }.map { var dark = $0; dark.dark = true; return dark }
 }()
 
 // MARK: - Main

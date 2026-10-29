@@ -1,6 +1,6 @@
 # Design
 
-The look of regrow's window (`app/Resources/page.html`): a sidebar of its sections; the scan, with the findings, the plan, the confirm step, the run and its result; and General, the app's start, grants and whereabouts. The scan is a reading list: the consequence as a headline, the safe findings folded into one line, and each decision that is the owner's as a short text with its size drawn beside it.
+The look of regrow's window (`app/Resources/page.html`): a sidebar of its sections; the scan, with the findings, the plan, the confirm step, the run and its result; Stats, what regrow has done on this Mac; and General, the app's start, grants and whereabouts. The scan is a reading list: the consequence as a headline, the safe findings folded into one line, and each decision that is the owner's as a short text with its size drawn beside it.
 
 ## Tokens
 
@@ -32,7 +32,7 @@ The page follows `prefers-color-scheme`; `data-theme="light|dark"` on `<html>` o
 - `--accent` is the one action colour: links, the primary button, the progress bar, the current step, a tick box, a switch that is on.
 - `--danger` marks what cannot be undone or did not work: the run button and its tick box, the "Not scanned" heading, error text. `--caution` colours an icon only, never a fill.
 - The five `--b-*` colours each stand for one total, on every mark of that total and on nothing else: its swatch, its rule, its size bars, its meter segment. `--b-now` frees now, `--b-trash` after the Trash is emptied, `--b-export` kept as tarballs until they are deleted (a docker volume's export; it appears only when a scan or plan holds one), `--b-shown` shown only, `--b-macos` macOS-managed. They hold apart for every pair, also under protanopia and deuteranopia, only at these values: a change to one is checked against the other four in both themes. `--b-export` was added by that check: simulated with the Machado matrices, its CIE76 distance to each other colour is at least 36 in the light theme and 39 in the dark one under protanopia and deuteranopia, where the closest pair of the other four is 13.8 (`--b-trash` and `--b-macos`, deuteranopia, light).
-- `--taken`, `--purge` and `--track` draw the disk meter: taken, purgeable, free.
+- `--taken`, `--purge` and `--track` draw the disk meter: taken, purgeable, free. `--track` also fills the area under Stats' free-space line, and `--ink-3` the bars of Stats' By rule and a run's part in regrow staging, which are no total.
 - Every surface is flat `--paper`. `--panel` fills only the sidebar, the tray and a notice; `--accent-soft` only the sidebar's current section, a row that arrived a moment ago, a finished step, and the plan's group whose action is running.
 
 ## Type
@@ -64,7 +64,7 @@ A size is the figure and its unit set apart: the unit at regular weight in `--in
 
 ## The sidebar
 
-The name, serif 600 17 in the top bar's 42px; one 30px line per section: a 14px icon, the name in sans 13, and on the right, sans 12 `--ink-2`, what needs you there: "scanning" or "running" beside Scan while it is busy, "stopped" while the engine is down, the caution icon and how many grants are off beside General. "Settings", sans 600 11 in capitals and `--ink-3`, heads the sections that set the app up. The current section is filled `--accent-soft`, its name `--ink` 650, its icon `--accent`. At the foot: free space (sans 650 15) of the total, the disk meter, and the forecast in words. Another section and back leaves the scan as it was, scrolled where it was.
+The name, serif 600 17 in the top bar's 42px; one 30px line per section: a 14px icon, the name in sans 13, and on the right, sans 12 `--ink-2`, what needs you there: "scanning" or "running" beside Scan while it is busy, "stopped" while the engine is down, what runs have freed beside Stats, the caution icon and how many grants are off beside General. "Settings", sans 600 11 in capitals and `--ink-3`, heads the sections that set the app up. The current section is filled `--accent-soft`, its name `--ink` 650, its icon `--accent`. At the foot: free space (sans 650 15) of the total, the disk meter, and the forecast in words. Another section and back leaves the scan as it was, scrolled where it was.
 
 ## The page, top to bottom
 
@@ -98,6 +98,16 @@ A 6px bar on a 1px `--line-strong` hairline the full width of its column; the fi
 - **The run**: the plan's list stays, every line of each group shown and marked by a 14px icon: a ring waiting, a filled dot running, a tick done in `--accent`, a cross failed in `--danger` with its error in mono `--danger` under it, a dash skipped. The running group takes `--accent-soft`, and its size column says in words what became of its lines ("2 done, running"). The top bar holds the progress and "Stop after this action"; the tray has no button.
 - **The result**: a headline counting what was done, failed and skipped; a paragraph with swatches on what is free now, what is in the Trash and what is in regrow staging; `regrow undo <run id>` in selectable mono whenever anything went to the Trash or staging, `regrow` being the command the engine's `hello` names (an app's engine by its path), quoted for a shell; under it, the run's folder in regrow staging, as the run's `done` names it, whenever anything is there. "Failed" comes first, as a `--danger` section, then the list as it ran, marked. "Scan again" is the one way on.
 
+## Stats
+
+From the engine's `history`: the oplog's runs and the free-space samples. Asked for when the engine says hello, when a run ends and when Stats is opened.
+
+- **Headline**: what runs freed as commands ran, since the first run; under it, how many runs, how many had a failure, and what Go build cache prunes freed of it. With no run yet, "Nothing has run on this Mac yet."
+- **Totals**, as the scan's, never added up: freed as commands ran, moved to the Trash, kept as docker volume tarballs, each only when there is some (freed always); what went to regrow staging, in words under them.
+- **Free space**: one 2px `--ink-2` line over the samples on a scale from zero, its area `--track`, gridlines `--line` with their figures in `--ink-3` 11; a 9px `--b-now` dot with a 2px `--paper` ring where a run that cleaned something ran; dates under it, with times for a span under four days; a crosshair and a tip on hover; a legend for the line and the dots. Too few samples, or a history that cannot be read, is a sentence.
+- **By rule**: the eight largest, each a compact row with its title, a bar on the list's scale and its size.
+- **Runs**, the latest first: when, then how many actions (a run of prunes is "Go build cache prune"), a `--danger` tag for failures, the `regrow undo` line with Copy while a move can be put back; on the right a bar split into its totals, on the list's scale, and the run's size.
+
 ## General
 
 Startup, Permissions, About. A setting is a row: on the left its name (sans 650 13.5) and a sentence on what it does or what being off costs (12.5 `--ink-2`); on the right its state in words, then its control, a switch, a link, or the small filled button when that is the one thing to do. The switch is 32×19, `--line-strong` off, `--accent` on, a `--paper` knob; it moves when the shell says the setting changed, not on the click.
@@ -125,4 +135,4 @@ The menu bar item is the drive symbol and the free space. Its menu is native, dr
 
 ## Checking a change
 
-`just page-check` draws every state through WebKit, the engine the app's web view uses, at 1096×640, from the recorded engine transcript, and writes a PNG of each: results, plan, confirm and General in light and dark, every other state in light. Hold each against this file.
+`just page-check` draws every state through WebKit, the engine the app's web view uses, at 1096×640, from the recorded engine transcript, and writes a PNG of each: results, plan, confirm, Stats and General in light and dark, every other state in light. Hold each against this file.

@@ -28,7 +28,7 @@ public struct Router {
     /// The engine discards a longer request line, unanswered by id.
     public static let maxLine = 1 << 20
 
-    private static let pageTypes: Set<String> = ["scan", "plan", "execute", "cancel"]
+    private static let pageTypes: Set<String> = ["scan", "plan", "execute", "cancel", "history"]
     private static let slotTypes: Set<String> = ["scan", "execute", "tick"]
 
     private enum Origin { case page, shell }
@@ -84,7 +84,7 @@ public struct Router {
         }
         let id = fields["id"] as? String
         guard let type = fields["type"] as? String, Self.pageTypes.contains(type) else {
-            return [.page(Self.error(re: id, code: "unknown_request", message: "the page may send scan, plan, execute and cancel"))]
+            return [.page(Self.error(re: id, code: "unknown_request", message: "the page may send scan, plan, execute, cancel and history"))]
         }
         guard let id, !id.isEmpty else {
             return [.page(Self.error(re: nil, code: "bad_request", message: "a request needs a string id"))]

@@ -130,23 +130,4 @@ func previewLines(r engine.Rule, p autopilot.Preview) []string {
 // by its start line's planned bytes, a prune by what its done line
 // measured. A failed action, and one with no done line (a run cut
 // short), counts nothing.
-func runBytes(r oplog.Run) int64 {
-	planned := map[int]oplog.Entry{}
-	var total int64
-	for _, e := range r.Entries {
-		if e.Event == oplog.EventStart {
-			planned[e.Seq] = e
-		}
-		if e.Event != oplog.EventDone {
-			continue
-		}
-		start := planned[e.Seq]
-		switch {
-		case e.Pruned != nil:
-			total += e.Pruned.Bytes
-		case start.Kind != string(engine.ActionPrune):
-			total += start.Bytes
-		}
-	}
-	return total
-}
+func runBytes(r oplog.Run) int64 { return r.Summary().Bytes() }

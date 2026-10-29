@@ -264,6 +264,35 @@ input[type="checkbox"] { accent-color: var(--accent); margin: 0; width: 15px; he
 .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 15px; height: 15px; border-radius: 50%; background: var(--paper); box-shadow: 0 1px 2px rgba(0, 0, 0, .25); }
 .switch[aria-checked="true"] { background: var(--accent); }
 .switch[aria-checked="true"]::after { left: 15px; }
+
+/* Stats: the free-space chart, the runs */
+.chart { margin-top: 14px; }
+.chart .plot { position: relative; margin-left: 54px; }
+.chart svg { display: block; width: 100%; height: 150px; overflow: visible; }
+.chart .grid { stroke: var(--line); stroke-width: 1; }
+.chart .area { fill: var(--track); }
+.chart .line { fill: none; stroke: var(--ink-2); stroke-width: 2; stroke-linejoin: round; }
+.chart .dot { position: absolute; width: 9px; height: 9px; margin: -4.5px 0 0 -4.5px; border-radius: 50%; background: var(--b-now); box-shadow: 0 0 0 2px var(--paper); }
+.chart .y { position: absolute; left: -54px; width: 46px; text-align: right; transform: translateY(-50%); color: var(--ink-3); font-size: 11px; font-variant-numeric: tabular-nums; }
+.chart .x { display: flex; justify-content: space-between; margin: 5px 0 0 54px; color: var(--ink-3); font-size: 11px; }
+.chart .legend { display: flex; gap: 16px; margin: 6px 0 0 54px; color: var(--ink-2); font-size: 12px; }
+.chart .legend i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+.chart .legend i.ln { width: 12px; height: 2px; border-radius: 1px; background: var(--ink-2); vertical-align: 3px; }
+.chart .cross { position: absolute; top: 0; height: 150px; width: 1px; background: var(--ink-3); }
+.chart .tip { position: absolute; top: -30px; padding: 4px 8px; border-radius: 6px; background: var(--ink); color: var(--paper); font-size: 12px; white-space: nowrap; pointer-events: none; }
+.ruled { background: var(--ink-3); }
+.bar.split { display: flex; gap: 2px; }
+.bar.split i { flex: none; border-radius: 0; box-shadow: none; }
+.bar.split i:last-child { border-radius: 0 3px 3px 0; }
+.bar.split .staged { background: var(--ink-3); }
+.run { display: grid; grid-template-columns: 112px minmax(0, 1fr) 246px; padding: 9px 0 10px; border-bottom: 1px solid var(--line); }
+.run > .when { padding-top: 1px; color: var(--ink-2); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.run > .text { padding-right: 24px; }
+.run h4 { display: flex; align-items: center; gap: 7px; font: 650 13.5px/1.35 var(--sans); }
+.run p { margin-top: 2px; color: var(--ink-2); font-size: 12.5px; }
+.run p .mono { color: var(--ink); }
+.tag { padding: 0 5px; border: 1px solid var(--line-strong); border-radius: 3px; color: var(--ink-2); font: 500 11px/16px var(--sans); }
+.tag.bad { color: var(--danger); border-color: var(--danger); }
 </style>
 </head>
 <body>
@@ -284,6 +313,8 @@ const S = {
   scanScreen: '',     // the scroll position holds only for that screen
   settings: null,     // the shell's settings event: login_item, notifications, finder, log, staging
   finder: '',         // allowed | denied | not_asked | unknown: the last word on Control of Finder, the shell's or the confirm step's
+  history: null,      // the engine's history event, or {failed: why} when it could not be read
+  historyAsk: '',     // the id of the history request on its way
   screen: 'findings', // findings | plan | confirm | running | result; an engine that is down is drawn over it
   hello: null,        // the engine's hello
   tick: null,         // the shell's latest tick: the forecast in the headline
@@ -365,8 +396,10 @@ window.regrow = { receive(line) {
     const e = JSON.parse(line), from = asked.get(e.re);
     if (e.event === 'done' || e.event === 'error') asked.delete(e.re);
     // An answer about a scan that is no longer shown changes nothing; an error it has no word for is still shown.
-    if (from && from.scan !== S.scan && (e.event !== 'error' || OUT_OF_DATE[e.code])) return;
-    if (on[e.event]) on[e.event](e, from && from.scan === S.scan ? from.role : '');
+    // The history is about no scan.
+    const current = !!from && (from.scan === S.scan || from.role === 'history');
+    if (from && !current && (e.event !== 'error' || OUT_OF_DATE[e.code])) return;
+    if (on[e.event]) on[e.event](e, current ? from.role : '');
   } catch (err) {
     S.error = { message: 'the page could not read a line from the app: ' + err.message };
   }
@@ -380,9 +413,11 @@ const on = {
   hello(e) {
     if (S.hello && !S.down) return;
     const again = !!S.down;
-    asked.clear(); S.down = ''; S.hello = e;
+    asked.clear(); S.down = ''; S.hello = e; S.historyAsk = '';
     if (S.wantScan || (again && S.scan)) { S.wantScan = false; scan(); }
+    askHistory();
   },
+  history(e, role) { if (role === 'history') S.history = e; },
   tick(e) { S.tick = e; },
   shell(e) {
     if (e.state === 'settings') { S.settings = e; S.finder = e.finder || ''; }
@@ -394,6 +429,7 @@ const on = {
     if (e.state !== 'engine_down') return;
     if (S.run && !S.run.result) S.cut = { id: S.plan.id, done: S.plan.actions.filter((a) => stateOf(a).state === 'done').length, of: S.plan.actions.length, moves: S.plan.actions.length > S.plan.commands };
     asked.clear();
+    S.historyAsk = '';
     counting = clearTimeout(counting);
     S.down = e.message || 'no reason given';
   },
@@ -426,6 +462,8 @@ const on = {
     } else if (role === 'run') {
       S.run.staging = e.staging_dir || '';
       ended(e.result, e.canceled, '');
+    } else if (role === 'history') {
+      S.historyAsk = '';
     }
   },
   error(e, role) {
@@ -434,6 +472,8 @@ const on = {
       S.scan.why = e.message || '';
       // A run and its result keep their plan: the scan was spent by that run.
       if (S.screen !== 'running' && S.screen !== 'result') Object.assign(S, { screen: 'findings', planning: '', plan: null });
+    } else if (role === 'history') {
+      Object.assign(S, { history: { failed: e.message || e.code }, historyAsk: '' });
     } else if (role === 'run' && e.result) {
       ended(e.result, false, e.message || e.code);
     } else if (role === 'run') {
@@ -467,6 +507,7 @@ function review(note) {
 function ended(result, canceled, error) {
   Object.assign(S.run, { result: result || {}, canceled: !!canceled, error });
   S.screen = 'result';
+  askHistory();
 }
 
 // Each change of a tick box is one plan request, sent once the clicking pauses; its answer fills the tray.
@@ -543,6 +584,7 @@ const act = {
     if (S.pane === 'scan') Object.assign(S, { scanTop: $('page').scrollTop, scanScreen: root.dataset.screen });
     S.pane = el.dataset.pane;
     $('pane').scrollTop = 0;
+    if (S.pane === 'stats') askHistory();
   },
   login() {
     const item = S.settings && S.settings.login_item;
@@ -1046,10 +1088,99 @@ function about() {
 
 const drawGeneral = () => h`${section('Startup', '', '', startup())}${permissions()}${about()}`;
 
+// ---------- Stats: what regrow has done on this Mac ----------
+
+const askHistory = () => { if (S.hello && !S.down && !S.historyAsk) S.historyAsk = ask('history', 'history'); };
+const sumOf = (runs, key) => runs.reduce((n, r) => n + (r[key] || 0), 0);
+const sizeOfRun = (r) => (r.frees_now || 0) + (r.after_trash || 0) + (r.staged || 0) + (r.exported || 0);
+const ruleTitle = (id) => (S.history.titles || {})[id] || id;
+const year = (t) => (new Date(t).getFullYear() === new Date().getFullYear() ? {} : { year: 'numeric' });
+const day = (t) => new Date(t).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', ...year(t) });
+const stamp = (t) => new Date(t).toLocaleString('en-GB', { day: 'numeric', month: 'short', ...year(t), hour: '2-digit', minute: '2-digit' });
+const GIB = 1024 ** 3;
+
+// A run's bytes on a bar of its own: a segment per total, in its colour, on the list's shared scale.
+function split(r, scale) {
+  const parts = [['frees_now', r.frees_now], ['after_trash', r.after_trash], ['staged', r.staged], ['exported', r.exported]].filter(([, n]) => n > 0);
+  return h`<span class="bar split" aria-hidden="true">${parts.map(([k, n]) => h`<i class="${k}" style="width:${Math.min(100, n / scale * 100).toFixed(2)}%"></i>`)}</span>`;
+}
+
+// Free space over the samples, one line on its own scale from zero, each run that cleaned something a dot on it.
+function chart(samples, runs) {
+  const sm = samples.map((s) => [time(s.at), s.free]), t0 = sm[0][0], t1 = sm[sm.length - 1][0];
+  const top = Math.max(...sm.map((s) => s[1])), step = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000].find((g) => g * GIB * 4 >= top) * GIB;
+  const y1 = Math.max(step, Math.ceil(top / step) * step), X = (t) => (t - t0) / (t1 - t0) * 1000, Y = (b) => 150 - b / y1 * 150;
+  const line = sm.map((s, i) => (i ? 'L' : 'M') + X(s[0]).toFixed(1) + ' ' + Y(s[1]).toFixed(1)).join('');
+  const ticks = [];
+  for (let v = 0; v <= y1; v += step) ticks.push(v);
+  const dots = runs.filter((r) => sizeOfRun(r) > 0 && time(r.start) >= t0 && time(r.start) <= t1).map((r) => {
+    const at = time(r.start), near = sm.reduce((a, b) => (Math.abs(b[0] - at) < Math.abs(a[0] - at) ? b : a));
+    return h`<span class="dot" style="left:${(X(at) / 10).toFixed(2)}%;top:${(Y(near[1]) / 1.5).toFixed(2)}%" title="${stamp(at)}: ${human(sizeOfRun(r))} cleaned"></span>`;
+  });
+  const days = [0, 1, 2, 3, 4].map((i) => t0 + (t1 - t0) * i / 4);
+  return h`<div class="chart"><div class="plot" data-t0="${t0}" data-t1="${t1}">
+      <svg viewBox="0 0 1000 150" preserveAspectRatio="none" aria-label="Free space over time">${new Markup(
+        ticks.map((v) => `<line class="grid" x1="0" x2="1000" y1="${Y(v)}" y2="${Y(v)}" vector-effect="non-scaling-stroke"/>`).join('')
+        + `<path class="area" d="${line}L${X(t1).toFixed(1)} 150L0 150Z"/><path class="line" d="${line}" vector-effect="non-scaling-stroke"/>`)}</svg>
+      ${dots}${ticks.map((v) => h`<span class="y" style="top:${(Y(v) / 1.5).toFixed(2)}%">${Math.round(v / GIB)} GiB</span>`)}
+      <span class="cross" hidden></span><span class="tip" hidden></span></div>
+    <div class="x">${days.map((d) => h`<span>${t1 - t0 < 4 * 864e5 ? stamp(d) : day(d)}</span>`)}</div>
+    <div class="legend"><span><i class="ln"></i>free space</span>${dots.length ? h`<span><i class="frees_now"></i>a run that cleaned something</span>` : ''}</div></div>`;
+}
+
+function drawStats() {
+  const hi = S.history;
+  if (!hi) return h`<section class="lead"><h2>Reading what regrow has done.</h2></section>`;
+  if (hi.failed) {
+    return h`<section class="lead"><h2>regrow's history could not be read.</h2><p class="err mono">${hi.failed}</p>
+      <p class="aside">The journal is never read past a line it cannot parse; <span class="mono">${cli()} history</span> in Terminal says the same.</p></section>`;
+  }
+  const runs = hi.runs, samples = hi.samples || [];
+  const freed = sumOf(runs, 'frees_now'), trash = sumOf(runs, 'after_trash'), staged = sumOf(runs, 'staged'), exported = sumOf(runs, 'exported');
+  const failed = runs.filter((r) => r.failed).length, prunes = runs.filter((r) => r.prune);
+  const lead = runs.length
+    ? h`<section class="lead"><h2>regrow has freed ${human(freed)} on this Mac since ${day(time(runs[0].start))}.</h2>
+      <p class="say">In ${num(runs.length, 'run')}${failed ? `, ${failed} with an action that failed` : ''}.${prunes.length ? ` ${num(prunes.length, 'prune')} of the Go build cache freed ${human(sumOf(prunes, 'frees_now'))} of it.` : ''}</p></section>`
+    : h`<section class="lead"><h2>Nothing has run on this Mac yet.</h2><p class="say">What a run frees shows here once one has run, from this window or from <span class="mono">${cli()} clean</span> in Terminal.</p></section>`;
+  const totals = [['frees_now', freed, 'freed as commands ran'], ['after_trash', trash, 'moved to the Trash, free once it is emptied'], ['exported', exported, 'kept as docker volume tarballs']].filter(([k, n]) => k === 'frees_now' || n > 0);
+  const most = Math.max(1, ...totals.map(([, n]) => n));
+  const four = runs.length ? h`<section class="four" style="grid-template-columns:repeat(${totals.length}, minmax(0, 1fr))">${totals.map(([k, n, name]) => h`<div class="t" data-bucket="${k}">
+      <div class="rule"><i class="${k}" style="width:${(n / most * 100).toFixed(1)}%"></i></div><b>${size(n)}</b><span class="name"><i class="sw ${k}"></i>${name}</span></div>`)}</section>
+    <p class="apart">${totals.length > 1 ? 'Never added up: each came back at a different time, or not at all. ' : ''}${staged ? `${human(staged)} more went to regrow staging, which emptying the Trash does not free.` : ''}</p>` : '';
+  const span = samples.length > 1 ? Math.round((time(samples[samples.length - 1].at) - time(samples[0].at)) / 864e5) : 0;
+  const free = hi.samples_unreadable ? h`<p class="aside">The history of free space could not be read.</p>`
+    : samples.length < 2 ? h`<p class="aside">Not enough samples yet: the watch takes one every 15 minutes.</p>` : chart(samples, runs);
+  const rules = Object.entries(runs.reduce((all, r) => { for (const [id, n] of Object.entries(r.rules || {})) all[id] = (all[id] || 0) + n; return all; }, {})).sort((a, b) => b[1] - a[1]);
+  const top = rules.slice(0, 8), scale = top.length ? top[0][1] : 1, runScale = Math.max(1, ...runs.map(sizeOfRun));
+  return h`${lead}${four}
+    ${section('Free space', span ? 'the last ' + num(span, 'day') : '', '', free)}
+    ${top.length ? section('By rule', top.length < rules.length ? `the ${top.length} largest of ${rules.length}` : num(rules.length, 'rule'), h`<span class="scale">A full bar is ${human(scale)}</span>`,
+      top.map(([id, n]) => h`<div class="entry plain small" data-rule="${id}"><div class="text"><h4>${ruleTitle(id)}</h4></div><div class="side">${bar(n, 'ruled', scale)}<b>${size(n)}</b></div></div>`)) : ''}
+    ${runs.length ? section('Runs', num(runs.length, 'run') + ', the latest first', '', runs.slice().reverse().map((r) => h`<div class="run" data-run="${r.id}"><span class="when">${stamp(time(r.start))}</span>
+      <div class="text"><h4>${r.prune ? 'Go build cache prune' : num(r.done + r.failed, 'action')}${r.failed ? h`<span class="tag bad">${r.failed} failed</span>` : ''}${r.undone ? h`<span class="tag">${r.undone} put back</span>` : ''}</h4>
+        ${r.restorable ? h`<p>${num(r.restorable, 'move')} can still be put back: <span class="mono">${cli()} undo ${r.id}</span>${copy(cli() + ' undo ' + r.id, 'command')}</p>` : ''}</div>
+      <div class="side">${split(r, runScale)}<b>${size(sizeOfRun(r))}</b></div></div>`)) : ''}`;
+}
+
+// The chart's crosshair follows the pointer, drawn straight into the plot: what it shows is no state of the page.
+document.addEventListener('mousemove', (e) => {
+  const plot = document.querySelector('#pane .plot');
+  if (!plot || !S.history || !S.history.samples) return;
+  const tip = plot.querySelector('.tip'), cross = plot.querySelector('.cross'), box = plot.getBoundingClientRect();
+  if (e.clientX < box.left || e.clientX > box.right || e.clientY < box.top || e.clientY > box.bottom) { tip.hidden = cross.hidden = true; return; }
+  const f = (e.clientX - box.left) / box.width, at = +plot.dataset.t0 + f * (+plot.dataset.t1 - +plot.dataset.t0);
+  const s = S.history.samples.reduce((a, b) => (Math.abs(time(b.at) - at) < Math.abs(time(a.at) - at) ? b : a));
+  tip.textContent = stamp(time(s.at)) + ' · ' + human(s.free) + ' free';
+  tip.hidden = cross.hidden = false;
+  cross.style.left = f * 100 + '%';
+  tip.style.left = Math.min(f * box.width + 8, box.width - tip.offsetWidth) + 'px';
+});
+
 // ---------- the sidebar ----------
 
-const PANES = { scan: 'Scan', general: 'General' };
+const PANES = { scan: 'Scan', stats: 'Stats', general: 'General' };
 const PANE_ICON = {
+  stats: svg('<path d="M2.5 13.5h11"/><path d="M4.5 11V8M8 11V4.5M11.5 11V6.5"/>'),
   scan: svg('<rect x="2" y="4.5" width="12" height="7" rx="1.6"/><path d="M4.6 9h.1M7.2 9h4.2"/>'),
   general: svg('<circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6l1.4 1.4M11 11l1.4 1.4M3.6 12.4L5 11M11 5l1.4-1.4"/>'),
 };
@@ -1057,6 +1188,7 @@ const PANE_ICON = {
 // What a section's line in the sidebar says beside its name: the scan while it is busy, the grants that are off.
 function figure(pane) {
   if (pane === 'scan') return S.down ? 'stopped' : S.screen === 'running' ? 'running' : S.scan && S.scan.phase === 'scanning' ? 'scanning' : '';
+  if (pane === 'stats') return S.history && S.history.runs && S.history.runs.length ? human(sumOf(S.history.runs, 'frees_now')) : '';
   const off = grantsOff();
   return off ? h`${ICON.caution}${off}` : '';
 }
@@ -1066,12 +1198,12 @@ const paneButton = (pane) => h`<button id="nav-${pane}" data-do="section" data-p
 function drawNav() {
   const t = S.tick;
   const disk = t ? h`<div class="disk"><b>${human(t.free)}</b> free<br>of ${human(t.total)}${meter(t, 0, 0)}${t.days_to_full != null ? `Full in ${t.days_to_full < 1 ? 'under a day' : 'about ' + num(Math.round(t.days_to_full), 'day')} at the recent pace` : ''}</div>` : '';
-  return h`<div class="name">regrow</div>${paneButton('scan')}<div class="group">Settings</div>${paneButton('general')}${disk}`;
+  return h`<div class="name">regrow</div>${paneButton('scan')}${paneButton('stats')}<div class="group">Settings</div>${paneButton('general')}${disk}`;
 }
 
 // ---------- drawing and wiring ----------
 
-const SECTIONS = { general: drawGeneral };
+const SECTIONS = { stats: drawStats, general: drawGeneral };
 const SCREENS = { findings: drawFindings, plan: drawPlan, confirm: drawConfirm, running: drawRunning, result: drawResult, down: drawDown };
 const root = document.documentElement, $ = (id) => document.getElementById(id);
 let clockDrawn = '', renders = 0;
