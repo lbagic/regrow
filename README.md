@@ -21,7 +21,17 @@ regrow is built and tested for macOS only. The rules carry Linux paths for a lat
 
 ## Install
 
-There is no packaged release yet. Build from source with Go 1.25.7 or later, the version `go.mod` names:
+On a Mac, paste this line into Terminal:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/lbagic/regrow/main/install.sh | sh
+```
+
+[`install.sh`](install.sh) downloads the latest release for your Mac's chip (Apple silicon or Intel), checks it against the release's `checksums.txt` and installs nothing when they differ, and puts `regrow` in `~/.local/bin`; it never asks for an administrator password. When `~/.local/bin` is not on your `PATH` and your shell is zsh, the macOS default, it adds the folder to `PATH` in `~/.zprofile` and says so; with another shell it prints the line to add. It ends with the version it installed and the command to run next. Run the same line again to update.
+
+### From source
+
+With Go 1.25.7 or later, the version `go.mod` names:
 
 ```sh
 go install github.com/lbagic/regrow/cmd/regrow@latest

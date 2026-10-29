@@ -1,6 +1,7 @@
-# Release pipeline: tag v* → GitHub release with signed checksums and
-# a brew formula pushed to lbagic/homebrew-tap. Run locally with
-# `goreleaser release --snapshot --clean` to verify without publishing.
+# Release pipeline: tag v* → GitHub release with signed checksums, and
+# a brew cask pushed to lbagic/homebrew-tap when TAP_GITHUB_TOKEN is set.
+# Run locally with `goreleaser release --snapshot --clean --skip=sign`
+# to verify without publishing.
 version: 2
 
 project_name: regrow
@@ -20,7 +21,8 @@ builds:
 
 archives:
   - formats: [tar.gz]
-    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    # No version in the name: install.sh fetches releases/latest/download/<name>.
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
 
 checksum:
   name_template: checksums.txt
@@ -45,6 +47,9 @@ homebrew_casks:
       owner: lbagic
       name: homebrew-tap
       token: "{{ .Env.TAP_GITHUB_TOKEN }}"
+    # An unset secret reaches the job as an empty string, which isEnvSet
+    # reads as unset.
+    skip_upload: '{{ if isEnvSet "TAP_GITHUB_TOKEN" }}false{{ else }}true{{ end }}'
     homepage: https://github.com/lbagic/regrow
     description: "Disk cleaner that knows what everything is and how it regenerates"
     license: MIT
