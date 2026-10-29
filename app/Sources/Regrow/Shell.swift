@@ -45,6 +45,8 @@ final class Shell: ObservableObject {
     private var readingSettings: Date?
     private var readSettingsAgain = false
     private var settingsSerial = 0
+    /// The engine went down during a run.
+    private var tickAfterHello = false
     private var tickLine: String?
     private var downLine: String?
     private var lockNoticed = false
@@ -350,6 +352,9 @@ final class Shell: ObservableObject {
 
     private func engineWentDown(_ down: EngineSupervisor.Down) {
         log("engine down: \(down.message); starting it again in \(Int(down.retryIn)) s")
+        // The run it held ended with it: the engine that starts next ticks
+        // for it.
+        tickAfterHello = tickAfterHello || router.executeInFlight
         engineDown = down.reason
         helloLine = nil
         watch?.settled(dropped: true)
@@ -399,6 +404,10 @@ final class Shell: ObservableObject {
             downLine = nil
             log("hello: protocol \(hello.protocol), engine \(hello.version), fda \(hello.fda)")
             startWatch()
+            if tickAfterHello {
+                tickAfterHello = false
+                watch?.tickNow(autotrim: false)
+            }
             readSettings()
         case "tick":
             guard let tick = Wire.decode(Wire.Tick.self, from: line) else { return }

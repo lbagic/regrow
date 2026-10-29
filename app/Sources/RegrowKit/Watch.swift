@@ -59,11 +59,10 @@ public final class Watch {
 
     /// Ticks as soon as the engine can take one: now, or right after
     /// the tick that is out, which was sent with the setting as it was.
-    /// With `autotrim` false that tick goes without autotrim.
+    /// With `autotrim` false that tick goes without autotrim; the last
+    /// ask before it goes says which.
     public func tickNow(autotrim allowed: Bool = true) {
-        if !allowed {
-            noTrim = true
-        }
+        noTrim = !allowed
         if out {
             again = true
         } else {
@@ -79,6 +78,7 @@ public final class Watch {
         if dropped {
             last = lastBeforeThis
             again = false
+            noTrim = false
         } else if again {
             again = false
             tick()

@@ -29,6 +29,22 @@ struct RouterTests {
         return Wire.decode(Wire.Head.self, from: line)
     }
 
+    @Test("a tick of the shell's goes before what the page has waiting, after what the shell has")
+    func tickAheadOfThePage() {
+        var router = started()
+        _ = page(&router, ["type": "execute", "id": "x1", "plan_id": "p"])
+        _ = page(&router, ["type": "scan", "id": "s1"])
+        _ = router.shellRequest(tick("shell-tick-1"))
+        _ = router.shellRequest(tick("shell-tick-2"))
+
+        let ran = #"{"event":"done","re":"x1","result":{},"canceled":false}"#
+        #expect(engine(&router, ran) == [.page(ran), .engine(#"{"autotrim":false,"id":"shell-tick-1","type":"tick"}"#)])
+        let ticked = #"{"event":"done","re":"shell-tick-1"}"#
+        #expect(engine(&router, ticked) == [.shell(ticked), .engine(#"{"autotrim":false,"id":"shell-tick-2","type":"tick"}"#)])
+        let again = #"{"event":"done","re":"shell-tick-2"}"#
+        #expect(engine(&router, again) == [.shell(again), .engine(#"{"id":"s1","type":"scan"}"#)])
+    }
+
     @Test("a tick waits behind a scan and goes out on the scan's done")
     func tickBehindScan() {
         var router = started()

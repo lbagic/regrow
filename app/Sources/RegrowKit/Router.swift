@@ -181,7 +181,12 @@ public struct Router {
     private mutating func submit(_ request: Request) -> [Output] {
         if Self.slotTypes.contains(request.type) {
             guard up, inFlight == nil else {
-                waiting.append(request)
+                // A tick of the shell's is a sample, short unless autotrim
+                // prunes: it goes before what the page has waiting, so the
+                // figures after a run are the run's before a scan starts.
+                let ahead = request.origin == .shell && request.type == "tick"
+                let at = ahead ? waiting.firstIndex { $0.origin == .page } ?? waiting.endIndex : waiting.endIndex
+                waiting.insert(request, at: at)
                 return []
             }
             inFlight = request
