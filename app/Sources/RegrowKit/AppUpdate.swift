@@ -104,7 +104,20 @@ public enum AppUpdate {
         else {
             throw Failure("this Regrow runs from \(running.path); only the copy in ~/Applications updates itself")
         }
+        // `--swap` renames the entry itself: a link there would be replaced, its target left old.
+        guard isDirectory(destination) else {
+            throw Failure("~/Applications/Regrow.app is a link to this Regrow; only a bundle there updates itself")
+        }
         return destination
+    }
+
+    /// What the row says of an error: a failure's own words, else the system's.
+    public static func reason(_ error: Error) -> String {
+        switch error {
+        case let failure as Failure: return failure.description
+        case let failure as Spawn.Failure: return failure.description
+        default: return error.localizedDescription
+        }
     }
 
     /// The running app's designated requirement.
@@ -181,12 +194,13 @@ public enum AppUpdate {
         home.appendingPathComponent("Applications").appendingPathComponent(".Regrow.app.staged")
     }
 
-    /// Downloads the release's app, checks it, and puts it at `staged`,
-    /// replacing whatever an earlier attempt left there. Any failure
+    /// Downloads the release's app, checks it, and puts it at `staged`.
+    /// Whatever an earlier attempt left there goes first, so any failure
     /// leaves nothing at `staged`.
     public static func stage(
         _ release: Release, requirement: SecRequirement, staged: URL, fetch: Fetch
     ) async throws {
+        try discard(staged)
         guard let sumsURL = release.assets[checksumsName] else {
             throw Failure("release \(release.tag) has no \(checksumsName)")
         }
@@ -212,19 +226,29 @@ public enum AppUpdate {
         let unpacked = work.appendingPathComponent("unpacked")
         try unpack(zip, into: unpacked)
         let bundle = unpacked.appendingPathComponent("Regrow.app")
+        // The checks below follow a link, and the move would stage the link itself.
+        guard isDirectory(bundle) else {
+            throw Failure("\(archiveName) of release \(release.tag) holds no Regrow.app folder")
+        }
         try verify(bundle, satisfies: requirement)
         guard let version = shortVersion(of: bundle), version == release.version.description else {
             throw Failure("the Regrow.app in release \(release.tag) says it is \(shortVersion(of: bundle) ?? "no version")")
         }
-        if (try? staged.checkResourceIsReachable()) == true || isLink(staged) {
-            try files.removeItem(at: staged)
-        }
+        try discard(staged)
         try files.moveItem(at: bundle, to: staged)
     }
 
-    private static func isLink(_ url: URL) -> Bool {
+    /// Removes what is at the staged path, a link there included.
+    public static func discard(_ staged: URL) throws {
         var info = stat()
-        return lstat(url.path, &info) == 0 && (info.st_mode & S_IFMT) == S_IFLNK
+        if lstat(staged.path, &info) == 0 {
+            try FileManager.default.removeItem(at: staged)
+        }
+    }
+
+    private static func isDirectory(_ url: URL) -> Bool {
+        var info = stat()
+        return lstat(url.path, &info) == 0 && (info.st_mode & S_IFMT) == S_IFDIR
     }
 
     /// `ditto -x -k`, leaving out the archive's quarantine: macOS refuses
@@ -243,26 +267,40 @@ public enum AppUpdate {
         }
     }
 
-    /// Reads a URL with URLSession, as GitHub's API asks to be read.
+    /// Each read ends within ten minutes, however slowly its bytes come.
+    static let session: URLSession = {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForResource = 600
+        return URLSession(configuration: configuration)
+    }()
+
+    /// Reads a URL with URLSession, as GitHub's API asks to be read,
+    /// holding no more than `limit` bytes of it.
     public static func fetch(userAgent: String) -> Fetch {
         { url, limit in
             var request = URLRequest(url: url, timeoutInterval: 60)
             request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
             request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
-            let (data, response): (Data, URLResponse)
+            let tooLarge = Failure("\(url.absoluteString) is larger than \(limit) bytes")
             do {
-                (data, response) = try await URLSession.shared.data(for: request)
+                let (bytes, response) = try await session.bytes(for: request)
+                guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                    let code = (response as? HTTPURLResponse)?.statusCode ?? 0
+                    throw Failure("\(url.absoluteString) answered \(code)")
+                }
+                guard response.expectedContentLength <= Int64(limit) else { throw tooLarge }
+                var data = Data()
+                data.reserveCapacity(max(0, Int(response.expectedContentLength)))
+                for try await byte in bytes {
+                    guard data.count < limit else { throw tooLarge }
+                    data.append(byte)
+                }
+                return data
+            } catch let failure as Failure {
+                throw failure
             } catch {
                 throw Failure("could not reach \(url.host ?? url.absoluteString): \(error.localizedDescription)")
             }
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-                let code = (response as? HTTPURLResponse)?.statusCode ?? 0
-                throw Failure("\(url.absoluteString) answered \(code)")
-            }
-            guard data.count <= limit else {
-                throw Failure("\(url.absoluteString) is larger than \(limit) bytes")
-            }
-            return data
         }
     }
 

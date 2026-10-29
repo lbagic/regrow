@@ -62,6 +62,8 @@ final class Shell: ObservableObject {
     private var update: AppUpdate.Phase = .unchecked
     /// The newer release the last check found.
     private var updateRelease: AppUpdate.Release?
+    /// A relaunch's or the update's helper is started and the app is quitting.
+    private var handedOff = false
 
     private init() {
         log = LogFile(url: config.log)
@@ -641,24 +643,35 @@ final class Shell: ObservableObject {
     /// Quits, and has a helper open the bundle again once this process
     /// has gone. The helper gives up waiting after a minute.
     func relaunch() {
+        guard !stopping, !handedOff else {
+            log("relaunch asked for while the app quits")
+            return
+        }
         let bundle = Bundle.main.bundlePath
         guard bundle.hasSuffix(".app") else {
             log("relaunch asked for outside a bundle: quit and start it again by hand")
             return
         }
         let wait = #"i=0; while kill -0 "$1" 2>/dev/null && [ "$i" -lt 600 ]; do sleep 0.1; i=$((i+1)); done; exec /usr/bin/open "$2" --args --open-scan"#
-        let null = open("/dev/null", O_RDWR | O_CLOEXEC)
-        defer { close(null) }
         do {
-            _ = try Spawn.start(
-                "/bin/sh", arguments: ["-c", wait, "sh", "\(getpid())", bundle],
-                environment: Account.environment(),
-                stdin: null, stdout: null, stderr: null, group: .session)
+            try quit(handingOff: wait, arguments: [bundle])
             log("relaunching")
-            MainRunLoop.quit()
         } catch {
             log("could not relaunch: \(error)")
         }
+    }
+
+    /// Starts `script` in a session of its own, this process's pid its
+    /// first argument, and quits.
+    private func quit(handingOff script: String, arguments: [String]) throws {
+        let null = open("/dev/null", O_RDWR | O_CLOEXEC)
+        defer { close(null) }
+        _ = try Spawn.start(
+            "/bin/sh", arguments: ["-c", script, "sh", "\(getpid())"] + arguments,
+            environment: Account.environment(),
+            stdin: null, stdout: null, stderr: null, group: .session)
+        handedOff = true
+        MainRunLoop.quit()
     }
 
     // MARK: The app's own update
@@ -711,7 +724,7 @@ final class Shell: ObservableObject {
                 }
             } catch {
                 log("update check: \(error)")
-                setUpdate(.failed("\(error)"))
+                setUpdate(.failed(AppUpdate.reason(error)))
             }
         }
     }
@@ -719,7 +732,7 @@ final class Shell: ObservableObject {
     /// Downloads and checks the newer release's app, then quits and has a
     /// helper put it in place and open it.
     private func installUpdate() {
-        guard case .newer = update, let release = updateRelease else { return }
+        guard case .newer = update, let release = updateRelease, !stopping, !handedOff else { return }
         guard !router.executeInFlight else {
             setUpdate(.failed("a run is going; update once it has ended"))
             return
@@ -728,7 +741,7 @@ final class Shell: ObservableObject {
         do {
             requirement = try AppUpdate.runningRequirement()
         } catch {
-            setUpdate(.failed("\(error)"))
+            setUpdate(.failed(AppUpdate.reason(error)))
             return
         }
         setUpdate(.installing(release.version.description))
@@ -740,10 +753,17 @@ final class Shell: ObservableObject {
                 try await AppUpdate.stage(release, requirement: requirement, staged: staged, fetch: fetch)
             } catch {
                 log("update: \(error)")
-                setUpdate(.failed("\(error)"))
+                setUpdate(.failed(AppUpdate.reason(error)))
+                return
+            }
+            // Quit, or Relaunch, was chosen during the download.
+            guard !stopping, !handedOff else {
+                log("update: the app quit before it was put in place")
+                try? AppUpdate.discard(staged)
                 return
             }
             guard !router.executeInFlight else {
+                try? AppUpdate.discard(staged)
                 setUpdate(.failed("a run started; update once it has ended"))
                 return
             }
@@ -754,33 +774,37 @@ final class Shell: ObservableObject {
     /// Quits, and has a helper put the staged bundle in place once this
     /// process has gone, then open the app: the new one, or this one
     /// again when the swap fails. A process still there after 90 s keeps
-    /// its bundle, and the helper gives up.
+    /// its bundle, and the helper gives up. Either way the staged path is
+    /// emptied, and a failure is written to the app's log.
     private func relaunch(swapping staged: URL) {
         let destination: URL
         do {
             destination = try AppUpdate.installed(running: Bundle.main.bundleURL)
         } catch {
-            setUpdate(.failed("\(error)"))
+            try? AppUpdate.discard(staged)
+            setUpdate(.failed(AppUpdate.reason(error)))
             return
         }
         let script = #"""
+            log=$4
+            say() { printf '%s update helper: %s\n' "$(/bin/date +%Y-%m-%dT%H:%M:%S%z)" "$1" >>"$log"; }
             i=0; while kill -0 "$1" 2>/dev/null && [ "$i" -lt 900 ]; do sleep 0.1; i=$((i+1)); done
-            kill -0 "$1" 2>/dev/null && exit 1
-            "$2/Contents/MacOS/Regrow" --swap "$2" "$3" && rm -rf "$2"
+            if kill -0 "$1" 2>/dev/null; then
+                say "gave up: Regrow, pid $1, was still running after 90 s"
+                rm -rf "$2"
+                exit 1
+            fi
+            "$2/Contents/MacOS/Regrow" --swap "$2" "$3" 2>>"$log" || say "the swap failed; opening the old app again"
+            rm -rf "$2"
             exec /usr/bin/open "$3"
             """#
-        let null = open("/dev/null", O_RDWR | O_CLOEXEC)
-        defer { close(null) }
         do {
-            _ = try Spawn.start(
-                "/bin/sh", arguments: ["-c", script, "sh", "\(getpid())", staged.path, destination.path],
-                environment: Account.environment(),
-                stdin: null, stdout: null, stderr: null, group: .session)
+            try quit(handingOff: script, arguments: [staged.path, destination.path, config.log.path])
             log("quitting for the update")
-            MainRunLoop.quit()
         } catch {
             log("could not start the update's helper: \(error)")
-            setUpdate(.failed("\(error)"))
+            try? AppUpdate.discard(staged)
+            setUpdate(.failed(AppUpdate.reason(error)))
         }
     }
 

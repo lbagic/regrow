@@ -77,6 +77,26 @@ struct AppUpdateTests {
         }
     }
 
+    @Test("a link at ~/Applications/Regrow.app does not update: the swap would replace the link, its target left old")
+    func linkedDestination() async throws {
+        try await withTemporaryDirectory { home in
+            let real = home.appendingPathComponent("System-Applications/Regrow.app")
+            try FileManager.default.createDirectory(at: real, withIntermediateDirectories: true)
+            let applications = home.appendingPathComponent("Applications")
+            try FileManager.default.createDirectory(at: applications, withIntermediateDirectories: true)
+            try FileManager.default.createSymbolicLink(
+                at: applications.appendingPathComponent("Regrow.app"), withDestinationURL: real)
+            #expect(throws: AppUpdate.Failure.self) { try AppUpdate.installed(running: real, home: home) }
+        }
+    }
+
+    @Test("the row gives a system error in words, not its domain and code")
+    func reasons() {
+        let reason = AppUpdate.reason(CocoaError(.fileWriteNoPermission))
+        #expect(!reason.isEmpty)
+        #expect(!reason.contains("Domain"))
+    }
+
     @Test("a release whose app matches its checksum and the running signature is staged")
     func stages() async throws {
         try await withTemporaryDirectory { directory in
@@ -93,11 +113,13 @@ struct AppUpdateTests {
         }
     }
 
-    @Test("an archive that does not match checksums.txt stages nothing")
+    @Test("an archive that does not match checksums.txt stages nothing, and clears what an earlier attempt staged")
     func checksumMismatch() async throws {
         try await withTemporaryDirectory { directory in
             let made = try makeRelease(in: directory, version: "0.3.0")
             let staged = directory.appendingPathComponent("Applications/.Regrow.app.staged")
+            try FileManager.default.createDirectory(at: staged, withIntermediateDirectories: true)
+            try Data("left over".utf8).write(to: staged.appendingPathComponent("old"))
             let tampered: AppUpdate.Fetch = { url, limit in
                 let data = try await made.fetch(url, limit)
                 return url.lastPathComponent == "Regrow.app.zip" ? data + Data([0]) : data
@@ -105,7 +127,7 @@ struct AppUpdateTests {
             await #expect(throws: AppUpdate.Failure.self) {
                 try await AppUpdate.stage(made.release, requirement: made.requirement, staged: staged, fetch: tampered)
             }
-            #expect(!FileManager.default.fileExists(atPath: staged.path))
+            #expect(!present(staged))
         }
     }
 
@@ -153,6 +175,54 @@ struct AppUpdateTests {
             #expect(!FileManager.default.fileExists(atPath: staged.path))
         }
     }
+
+    @Test("an archive whose Regrow.app is a link stages nothing, the bundle it points to passing every check")
+    func linkedBundle() async throws {
+        try await withTemporaryDirectory { directory in
+            let outside = try makeBundle(in: directory.appendingPathComponent("outside"), version: "0.3.0", marker: "release")
+            let packing = directory.appendingPathComponent("packing")
+            try FileManager.default.createDirectory(at: packing, withIntermediateDirectories: true)
+            try FileManager.default.createSymbolicLink(
+                at: packing.appendingPathComponent("Regrow.app"), withDestinationURL: outside)
+            let zip = directory.appendingPathComponent("Regrow.app.zip")
+            try run("/bin/sh", ["-c", #"cd "$1" && /usr/bin/zip -y -q "$2" Regrow.app"#, "sh", packing.path, zip.path])
+            let made = try serve(zip, tag: "v0.3.0", requirement: try AppUpdate.requirement(of: outside))
+            let staged = directory.appendingPathComponent("Applications/.Regrow.app.staged")
+            do {
+                try await AppUpdate.stage(made.release, requirement: made.requirement, staged: staged, fetch: made.fetch)
+                Issue.record("staged a link")
+            } catch let failure as AppUpdate.Failure {
+                #expect(failure.description.contains("holds no Regrow.app folder"))
+            }
+            #expect(!present(staged))
+        }
+    }
+
+    @Test("a change to either architecture of the app's code, or of its engine's, is refused")
+    func everySlice() async throws {
+        try await withTemporaryDirectory { directory in
+            let bundle = try makeBundle(in: directory, version: "0.3.0", marker: "release")
+            let requirement = try AppUpdate.requirement(of: bundle)
+            try AppUpdate.verify(bundle, satisfies: requirement)
+            for executable in ["Contents/MacOS/Regrow", "Contents/MacOS/regrow-engine"] {
+                let file = bundle.appendingPathComponent(executable)
+                let original = try Data(contentsOf: file)
+                let slices = sliceOffsets(original)
+                #expect(slices.count == 2, "\(executable) holds two architectures")
+                for slice in slices {
+                    var changed = original
+                    // The 64-bit Mach-O header's reserved word: hashed, and read by nothing else.
+                    changed[slice + 28] ^= 1
+                    try changed.write(to: file)
+                    #expect(throws: AppUpdate.Failure.self, "\(executable), slice at \(slice)") {
+                        try AppUpdate.verify(bundle, satisfies: requirement)
+                    }
+                }
+                try original.write(to: file)
+                try AppUpdate.verify(bundle, satisfies: requirement)
+            }
+        }
+    }
 }
 
 private func releaseRecord(tag: String, assets: [String]) -> Data {
@@ -174,11 +244,15 @@ private func makeRelease(in directory: URL, version: String, tag: String? = nil)
     try run(
         "/usr/bin/ditto",
         ["-c", "-k", "--norsrc", "--noextattr", "--noqtn", "--noacl", "--keepParent", bundle.path, zip.path])
+    return try serve(zip, tag: tag ?? "v\(version)", requirement: try AppUpdate.requirement(of: bundle))
+}
+
+/// A release of `zip`, served from memory, with a checksums.txt that lists it.
+private func serve(_ zip: URL, tag: String, requirement: SecRequirement) throws -> MadeRelease {
     let archive = try Data(contentsOf: zip)
     let sum = SHA256.hash(data: archive).map { String(format: "%02x", $0) }.joined()
     let sums = Data("\(sum)  Regrow.app.zip\n".utf8)
-    let release = try AppUpdate.Release.decode(releaseRecord(tag: tag ?? "v\(version)", assets: ["Regrow.app.zip", "checksums.txt"]))
-    let requirement = try AppUpdate.requirement(of: bundle)
+    let release = try AppUpdate.Release.decode(releaseRecord(tag: tag, assets: ["Regrow.app.zip", "checksums.txt"]))
     let served = ["Regrow.app.zip": archive, "checksums.txt": sums]
     return MadeRelease(release: release, requirement: requirement) { url, _ in
         guard let data = served[url.lastPathComponent] else { throw URLError(.fileDoesNotExist) }
@@ -186,7 +260,9 @@ private func makeRelease(in directory: URL, version: String, tag: String? = nil)
     }
 }
 
-/// A minimal app bundle, signed ad hoc; `marker` makes its code differ.
+/// A minimal app bundle, signed ad hoc, with a nested engine as a
+/// release has; both executables hold two architectures, and `marker`
+/// makes the bundle's code differ.
 private func makeBundle(in directory: URL, version: String, marker: String) throws -> URL {
     let bundle = directory.appendingPathComponent("Regrow.app")
     let macOS = bundle.appendingPathComponent("Contents/MacOS")
@@ -202,8 +278,24 @@ private func makeBundle(in directory: URL, version: String, marker: String) thro
     let resources = bundle.appendingPathComponent("Contents/Resources")
     try FileManager.default.createDirectory(at: resources, withIntermediateDirectories: true)
     try Data(marker.utf8).write(to: resources.appendingPathComponent("marker"))
+    // The engine first: the bundle's signature seals it.
+    let engine = macOS.appendingPathComponent("regrow-engine")
+    try FileManager.default.copyItem(atPath: "/bin/echo", toPath: engine.path)
+    try run("/usr/bin/codesign", ["--force", "--sign", "-", engine.path])
     try run("/usr/bin/codesign", ["--force", "--sign", "-", bundle.path])
     return bundle
+}
+
+/// Where each architecture's code starts in a universal binary's file.
+private func sliceOffsets(_ data: Data) -> [Int] {
+    func word(_ at: Int) -> Int { data[at..<at + 4].reduce(0) { $0 << 8 | Int($1) } }
+    guard word(0) == 0xcafe_babe else { return [0] }
+    return (0..<word(4)).map { word(8 + $0 * 20 + 8) }
+}
+
+/// Something is at `url`, a link included.
+private func present(_ url: URL) -> Bool {
+    (try? FileManager.default.attributesOfItem(atPath: url.path)) != nil
 }
 
 private func run(_ executable: String, _ arguments: [String]) throws {
