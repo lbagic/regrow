@@ -6,15 +6,21 @@ It builds with the Command Line Tools alone. No Xcode is needed.
 
 ## Install
 
+The install line in the [README](../README.md#install) installs the latest release's app in `~/Applications` on macOS 14 or later, with no developer tools. Each release carries `Regrow.app.zip`, which the release workflow builds on GitHub's macOS runner for Apple silicon and Intel and signs with "regrow release signing", a self-signed identity; `checksums.txt` lists it. The line checks that checksum, and checks that the app satisfies `identifier "com.github.lbagic.regrow" and certificate leaf = H"<app_signer>"`, the certificate's SHA-1 pinned in `install.sh`; when either fails it installs the CLI alone and says why. Then it quits a running Regrow, as its menu's Quit does, stops a leftover engine as `just app` does, puts the app in place with the new bundle's `--swap` and opens it.
+
+From a clone:
+
 ```sh
 scripts/signing-cert.sh   # once
 just app
 ```
 
-1. `scripts/signing-cert.sh` makes a self-signed code-signing identity, "regrow local signing", in the login keychain and writes its SHA-1 to `.signing-identity` (not committed). The first signature raises a keychain dialog: choose "Always Allow". Run again, it finds the identity, prints the same hash and creates nothing. `--dry-run` only reads the keychain.
+1. `scripts/signing-cert.sh` records the identity `just app` signs with in `.signing-identity` (not committed): "regrow release signing" when the login keychain holds it, so a build here holds the grants a release install got; otherwise "regrow local signing", a self-signed code-signing identity it makes in the login keychain the first time. The first signature with a new key raises a keychain dialog: choose "Always Allow". Run again, it finds the identity, prints the same hash and creates nothing. `--dry-run` only reads the keychain.
 2. `just app` builds the app and the engine (from a clean `app/.build` the first time in a checkout, and again after the checkout's folder moves), signs both by that hash with the hardened runtime, asks a running Regrow to quit, waits for its engine to finish the action it is on, exchanges the bundle in `~/Applications` in one step, and launches it. From `~/Applications` the app registers itself to open at login, once, and asks to send notifications. Then it runs the three smoke checks below against the installed app and ends with their `RESULT` line; `just app --no-check` skips them.
 
-macOS ties its grants to the bundle id and the signature. Signed with the same identity, a rebuilt app keeps Full Disk Access, the right to control Finder and its notifications. `just app-build` makes an ad-hoc signed bundle under `app/.build/bundle` for a look; it keeps no grant, registers nothing, asks for nothing and posts no notification.
+macOS ties its grants to the bundle id and the signature. Signed with the same identity, a rebuilt app keeps Full Disk Access, the right to control Finder and its notifications; an app signed with another identity gets each of them again.
+
+The release identity is made once, on the owner's Mac, by `scripts/signing-cert.sh --release` (it needs `gh` signed in as the owner): it makes the repository's `release` environment, which only a `v*` tag or `main` may run a job in, stores the key in its secrets `REGROW_SIGNING_P12` and `REGROW_SIGNING_PASSWORD`, imports it into the login keychain, which keeps the only copy that can be read back, records it, and writes its SHA-1 to `install.sh`'s `app_signer` line, which is then committed. The release workflow signs with no other key: `scripts/release-app.sh` imports the secrets into a keychain of its own, refuses a certificate that is not the pinned one, runs `scripts/app.sh release`, which builds both chips into one bundle and packs it in `app/.build/dist/Regrow.app.zip`, and deletes the keychain. A pull request's run signs with a throwaway identity instead (`release-app.sh --throwaway`), and `workflow_dispatch` on `main` packs an unpublished snapshot signed with the release key. A new key means every Mac grants everything again, so the script makes none while the keychain holds one; run again then, it records and pins that one. `just app-build` makes an ad-hoc signed bundle under `app/.build/bundle` for a look; it keeps no grant, registers nothing, asks for nothing and posts no notification.
 
 ## Grants
 
