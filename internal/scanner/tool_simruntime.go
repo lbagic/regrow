@@ -92,6 +92,9 @@ func (s *simRuntimesNoXcode) Runtimes(ctx context.Context) ([]engine.Item, error
 }
 
 func xcrunFindsSimctl(ctx context.Context) bool {
+	if !developerTools(ctx) {
+		return false
+	}
 	_, ok, err := runTool(ctx, "xcrun", "--find", "simctl")
 	return ok && err == nil
 }

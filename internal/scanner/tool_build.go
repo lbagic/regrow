@@ -236,7 +236,7 @@ func newBuildOutput(home string) *buildOutput {
 }
 
 func queryBuildOutput(ctx context.Context) ([]engine.Item, error) {
-	if _, err := exec.LookPath("git"); err != nil {
+	if !gitRuns(ctx) {
 		return nil, nil
 	}
 	home, err := os.UserHomeDir()

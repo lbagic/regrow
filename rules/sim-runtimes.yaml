@@ -8,7 +8,7 @@ risk: caution
 tool_query: simctl-runtimes
 native_command: xcrun simctl runtime delete {arg}
 note: Existing simulators of a deleted runtime stop booting until it is re-downloaded.
-scans: "`xcrun simctl runtime list -j`; one row per runtime, with the size simctl reports"
+scans: "`xcrun simctl runtime list -j`, only when the developer tools `xcode-select` points at, Xcode or the Command Line Tools, are installed (without them, macOS's `xcrun` asks to install them); one row per runtime, with the size simctl reports"
 keeps:
   - "runtimes simctl reports as not deletable"
 regen:

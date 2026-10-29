@@ -219,7 +219,7 @@ Package caches, build caches and build output of developer tools, and what codin
 
 **Build output in idle projects** · caution · beta · [`rules/build-output.yaml`](../rules/build-output.yaml)
 
-- **Looks at:** folders named `.next`, `dist`, `.turbo` and `.venv`, up to 10 levels below `~/workspace`, `~/dev`, `~/projects`, `~/src` and `~/code`, without entering `.git`, `.Trash`, `Library` or `node_modules`. For each project: what git says (`rev-parse`, `check-ignore`, `ls-files`, all with `--no-optional-locks`), its files' change times and those of git's `HEAD`, and the working folders and command lines of your processes (`lsof`, `ps`).
+- **Looks at:** nothing when the first git on `PATH` is macOS's `/usr/bin/git` and the developer tools `xcode-select` points at, Xcode or the Command Line Tools, are not installed (it would ask to install them); otherwise folders named `.next`, `dist`, `.turbo` and `.venv`, up to 10 levels below `~/workspace`, `~/dev`, `~/projects`, `~/src` and `~/code`, without entering `.git`, `.Trash`, `Library` or `node_modules`. For each project: what git says (`rev-parse`, `check-ignore`, `ls-files`, all with `--no-optional-locks`), its files' change times and those of git's `HEAD`, and the working folders and command lines of your processes (`lsof`, `ps`).
 - **Removed by:** a move to the Trash, one per item; `regrow undo` puts it back. Right before each removal, regrow judges the folder again, as the scan did, and leaves it in place if any reason to keep it holds now.
 - **Keeps:**
   - A folder git tracks a file in, one no ignore rule names by its own name, or one beside which git tracks nothing.
@@ -280,7 +280,7 @@ Package caches, build caches and build output of developer tools, and what codin
 
 **Finished git worktrees** · caution · beta · [`rules/git-worktrees.yaml`](../rules/git-worktrees.yaml)
 
-- **Looks at:** git repositories (a folder holding `.git`) up to 6 levels below `~/workspace`, `~/dev`, `~/projects`, `~/src`, `~/code` and `/tmp/claude-<uid>`, and their linked worktrees as git describes them (`worktree list`, `for-each-ref`, `rev-list`, `status --ignored`, `ls-files`, all with `--no-optional-locks`), with each worktree's file times.
+- **Looks at:** nothing when the first git on `PATH` is macOS's `/usr/bin/git` and the developer tools `xcode-select` points at, Xcode or the Command Line Tools, are not installed (it would ask to install them); otherwise git repositories (a folder holding `.git`) up to 6 levels below `~/workspace`, `~/dev`, `~/projects`, `~/src`, `~/code` and `/tmp/claude-<uid>`, and their linked worktrees as git describes them (`worktree list`, `for-each-ref`, `rev-list`, `status --ignored`, `ls-files`, all with `--no-optional-locks`), with each worktree's file times.
 - **Removed by:** `git -C {path} worktree remove {path}`, once per item; `{path}` is the item's path. It deletes for good: `regrow undo` cannot bring it back. Right before each removal, regrow checks the worktree again, and leaves it in place if it is no longer clean or its HEAD is detached at a commit no branch holds. git itself refuses a worktree with modified or untracked files.
 - **Keeps:**
   - The main worktree, and a worktree with `main`, `master` or the default branch checked out.
@@ -711,7 +711,7 @@ Installed SDKs and tool versions.
 
 **iOS simulator devices** · caution · [`rules/sim-devices.yaml`](../rules/sim-devices.yaml)
 
-- **Looks at:** `xcrun simctl list devices -j`; one row per available device, with the size simctl reports.
+- **Looks at:** `xcrun simctl list devices -j`, only when the developer tools `xcode-select` points at, Xcode or the Command Line Tools, are installed (without them, macOS's `xcrun` asks to install them); one row per available device, with the size simctl reports.
 - **Removed by:** `xcrun simctl delete {arg}`, once per item; `{arg}` is the item as the tool names it. It deletes for good: `regrow undo` cannot bring it back.
 - **Comes back:** Recreate any device via Xcode or `xcrun simctl create`. Cost: simulator contents (apps, settings, data) are gone.
 - **Note:** Erases that simulator's installed apps and data; the device itself is recreatable in seconds.
@@ -720,7 +720,7 @@ Installed SDKs and tool versions.
 
 **Unavailable simulator devices** · safe · [`rules/sim-devices-unavailable.yaml`](../rules/sim-devices-unavailable.yaml)
 
-- **Looks at:** `xcrun simctl list devices -j`; the devices simctl reports as unavailable.
+- **Looks at:** `xcrun simctl list devices -j`, only when the developer tools `xcode-select` points at, Xcode or the Command Line Tools, are installed (without them, macOS's `xcrun` asks to install them); the devices simctl reports as unavailable.
 - **Removed by:** `xcrun simctl delete unavailable`, once for the whole rule: all of it or nothing. It deletes for good: `regrow undo` cannot bring it back.
 - **Comes back:** Nothing to regenerate — these simulators reference SDKs that are gone. Cost: none.
 
@@ -728,7 +728,7 @@ Installed SDKs and tool versions.
 
 **Simulator runtimes** · caution · [`rules/sim-runtimes.yaml`](../rules/sim-runtimes.yaml)
 
-- **Looks at:** `xcrun simctl runtime list -j`; one row per runtime, with the size simctl reports.
+- **Looks at:** `xcrun simctl runtime list -j`, only when the developer tools `xcode-select` points at, Xcode or the Command Line Tools, are installed (without them, macOS's `xcrun` asks to install them); one row per runtime, with the size simctl reports.
 - **Removed by:** `xcrun simctl runtime delete {arg}`, once per item; `{arg}` is the item as the tool names it. It deletes for good: `regrow undo` cannot bring it back.
 - **Keeps:**
   - Runtimes simctl reports as not deletable.
@@ -739,7 +739,7 @@ Installed SDKs and tool versions.
 
 **Simulator runtimes (no Xcode)** · caution · beta · [`rules/sim-runtimes-no-xcode.yaml`](../rules/sim-runtimes-no-xcode.yaml)
 
-- **Looks at:** `xcrun --find simctl`; the apps named like Xcode in `/Applications` and `~/Applications` and one folder down, with their `Info.plist`; Spotlight (`mdfind` for Xcode's bundle identifier); only when none of these finds Xcode, `simctl runtime list -j` from CoreSimulator's own copy, `/Library/Developer/PrivateFrameworks/CoreSimulator.framework/Versions/A/Resources/bin/simctl`; and, only when that lists a runtime, whether Spotlight indexes the startup disk (`mdutil -s` of `/` and `/System/Volumes/Data`) and LaunchServices' register of bundles (`lsregister -dump Bundle`, a few seconds), for an Xcode anywhere else.
+- **Looks at:** `xcrun --find simctl`, only when the developer tools `xcode-select` points at, Xcode or the Command Line Tools, are installed (without them, macOS's `xcrun` asks to install them, and the rule goes on as if it found none); the apps named like Xcode in `/Applications` and `~/Applications` and one folder down, with their `Info.plist`; Spotlight (`mdfind` for Xcode's bundle identifier); only when none of these finds Xcode, `simctl runtime list -j` from CoreSimulator's own copy, `/Library/Developer/PrivateFrameworks/CoreSimulator.framework/Versions/A/Resources/bin/simctl`; and, only when that lists a runtime, whether Spotlight indexes the startup disk (`mdutil -s` of `/` and `/System/Volumes/Data`) and LaunchServices' register of bundles (`lsregister -dump Bundle`, a few seconds), for an Xcode anywhere else.
 - **Removed by:** `/bin/sh -c '"$1" runtime delete "$2" || exit; n=0; while out=$("$1" runtime list -j); do case $out in *"$2"*) ;; *) exit 0;; esac; n=$((n+1)); if [ "$n" -ge 600 ]; then echo "runtime $2 is still listed after 600 listings a second apart" >&2; exit 1; fi; sleep 1; done; echo "simctl runtime list failed after the delete" >&2; exit 1' sh /Library/Developer/PrivateFrameworks/CoreSimulator.framework/Versions/A/Resources/bin/simctl {arg}`, once per item; `{arg}` is the item as the tool names it. It deletes for good: `regrow undo` cannot bring it back.
 - **Keeps:**
   - Every runtime while `xcrun` finds `simctl`, when `sim-runtimes` lists them, or an Xcode is found: in the Applications folders or one folder down, by Spotlight, or in LaunchServices' register, still on disk or on a disk not mounted now; with an Xcode installed but `xcode-select` pointing at the Command Line Tools, neither rule lists them.

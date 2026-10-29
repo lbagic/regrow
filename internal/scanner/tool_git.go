@@ -77,7 +77,7 @@ func worktreeRoots() []string {
 }
 
 func queryGitWorktrees(ctx context.Context) ([]engine.Item, error) {
-	if _, err := exec.LookPath("git"); err != nil {
+	if !gitRuns(ctx) {
 		return nil, nil
 	}
 	home, err := os.UserHomeDir()

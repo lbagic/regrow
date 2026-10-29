@@ -8,7 +8,7 @@ risk: caution
 tool_query: simctl-devices
 native_command: xcrun simctl delete {arg}
 note: Erases that simulator's installed apps and data; the device itself is recreatable in seconds.
-scans: "`xcrun simctl list devices -j`; one row per available device, with the size simctl reports"
+scans: "`xcrun simctl list devices -j`, only when the developer tools `xcode-select` points at, Xcode or the Command Line Tools, are installed (without them, macOS's `xcrun` asks to install them); one row per available device, with the size simctl reports"
 regen:
   story: Recreate any device via Xcode or `xcrun simctl create`.
   cost: simulator contents (apps, settings, data) are gone
