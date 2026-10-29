@@ -26,6 +26,12 @@ struct AppUpdateTests {
             #expect(throws: AppUpdate.Failure.self) { try AppUpdate.Release.decode(releaseRecord(tag: tag, assets: [])) }
         }
         #expect(throws: AppUpdate.Failure.self) { try AppUpdate.Release.decode(Data("{}".utf8)) }
+        do {
+            _ = try AppUpdate.Release.decode(Data(#"{"tag_name": 3}"#.utf8))
+            Issue.record("a record whose tag is a number decodes")
+        } catch let failure as AppUpdate.Failure {
+            #expect(!failure.description.contains("CodingKeys"), "the row gets words, not the decoder's dump")
+        }
     }
 
     @Test("the latest release is newer, the same or older; a development build updates from none")
@@ -87,6 +93,19 @@ struct AppUpdateTests {
             try FileManager.default.createSymbolicLink(
                 at: applications.appendingPathComponent("Regrow.app"), withDestinationURL: real)
             #expect(throws: AppUpdate.Failure.self) { try AppUpdate.installed(running: real, home: home) }
+        }
+    }
+
+    @Test("an app moved or deleted while it ran says so, not that a link is in its place")
+    func movedAway() async throws {
+        try await withTemporaryDirectory { home in
+            let gone = home.appendingPathComponent("Applications/Regrow.app")
+            do {
+                _ = try AppUpdate.installed(running: gone, home: home)
+                Issue.record("a missing bundle updates")
+            } catch let failure as AppUpdate.Failure {
+                #expect(failure.description.contains("moved or deleted"))
+            }
         }
     }
 

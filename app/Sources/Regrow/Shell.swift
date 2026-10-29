@@ -749,6 +749,8 @@ final class Shell: ObservableObject {
         let staged = AppUpdate.stagedPath()
         let fetch = AppUpdate.fetch(userAgent: "Regrow/\(runningVersion)")
         Task {
+            var handed = false
+            defer { if !handed { try? AppUpdate.discard(staged) } }
             do {
                 try await AppUpdate.stage(release, requirement: requirement, staged: staged, fetch: fetch)
             } catch {
@@ -759,52 +761,55 @@ final class Shell: ObservableObject {
             // Quit, or Relaunch, was chosen during the download.
             guard !stopping, !handedOff else {
                 log("update: the app quit before it was put in place")
-                try? AppUpdate.discard(staged)
                 return
             }
             guard !router.executeInFlight else {
-                try? AppUpdate.discard(staged)
                 setUpdate(.failed("a run started; update once it has ended"))
                 return
             }
-            relaunch(swapping: staged)
+            handed = relaunch(swapping: staged)
         }
     }
 
     /// Quits, and has a helper put the staged bundle in place once this
     /// process has gone, then open the app: the new one, or this one
     /// again when the swap fails. A process still there after 90 s keeps
-    /// its bundle, and the helper gives up. Either way the staged path is
-    /// emptied, and a failure is written to the app's log.
-    private func relaunch(swapping staged: URL) {
+    /// its bundle, and the helper gives up. Either way the helper empties
+    /// the staged path, and writes a failure to the app's log. Returns
+    /// whether the helper was started.
+    private func relaunch(swapping staged: URL) -> Bool {
         let destination: URL
         do {
             destination = try AppUpdate.installed(running: Bundle.main.bundleURL)
         } catch {
-            try? AppUpdate.discard(staged)
             setUpdate(.failed(AppUpdate.reason(error)))
-            return
+            return false
         }
+        // A command whose redirection fails is not run, so nothing but `say` writes to the log.
         let script = #"""
             log=$4
-            say() { printf '%s update helper: %s\n' "$(/bin/date +%Y-%m-%dT%H:%M:%S%z)" "$1" >>"$log"; }
+            { : >>"$log"; } 2>/dev/null || log=/dev/null
+            say() { printf '%s update helper: %s\n' "$(/bin/date +%Y-%m-%dT%H:%M:%S%z | /usr/bin/sed 's/\(..\)$/:\1/')" "$1" >>"$log"; }
             i=0; while kill -0 "$1" 2>/dev/null && [ "$i" -lt 900 ]; do sleep 0.1; i=$((i+1)); done
             if kill -0 "$1" 2>/dev/null; then
                 say "gave up: Regrow, pid $1, was still running after 90 s"
                 rm -rf "$2"
                 exit 1
             fi
-            "$2/Contents/MacOS/Regrow" --swap "$2" "$3" 2>>"$log" || say "the swap failed; opening the old app again"
-            rm -rf "$2"
-            exec /usr/bin/open "$3"
+            if ! out=$("$2/Contents/MacOS/Regrow" --swap "$2" "$3" 2>&1); then
+                say "the swap failed, so the old app opens again: $(printf '%s' "$out" | /usr/bin/tr '\n' ' ')"
+            fi
+            rm -rf "$2" || say "could not remove $2"
+            /usr/bin/open "$3" || say "could not open $3"
             """#
         do {
             try quit(handingOff: script, arguments: [staged.path, destination.path, config.log.path])
             log("quitting for the update")
+            return true
         } catch {
             log("could not start the update's helper: \(error)")
-            try? AppUpdate.discard(staged)
             setUpdate(.failed(AppUpdate.reason(error)))
+            return false
         }
     }
 

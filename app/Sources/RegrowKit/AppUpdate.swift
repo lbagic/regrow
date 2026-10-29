@@ -67,7 +67,7 @@ public enum AppUpdate {
             do {
                 record = try JSONDecoder().decode(Record.self, from: data)
             } catch {
-                throw Failure("the latest release record could not be read: \(error)")
+                throw Failure("the latest release record could not be read: \(error.localizedDescription)")
             }
             guard record.tag_name.hasPrefix("v"), let version = Version(String(record.tag_name.dropFirst())) else {
                 throw Failure("the latest release's tag \"\(record.tag_name)\" is not a version")
@@ -104,8 +104,12 @@ public enum AppUpdate {
         else {
             throw Failure("this Regrow runs from \(running.path); only the copy in ~/Applications updates itself")
         }
+        var info = stat()
+        guard lstat(destination.path, &info) == 0 else {
+            throw Failure("nothing is at ~/Applications/Regrow.app any more: this Regrow was moved or deleted while it ran")
+        }
         // `--swap` renames the entry itself: a link there would be replaced, its target left old.
-        guard isDirectory(destination) else {
+        guard (info.st_mode & S_IFMT) == S_IFDIR else {
             throw Failure("~/Applications/Regrow.app is a link to this Regrow; only a bundle there updates itself")
         }
         return destination
