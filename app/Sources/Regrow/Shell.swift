@@ -137,9 +137,10 @@ final class Shell: ObservableObject {
         guard Config.installed else { return nil }
         switch SMAppService.mainApp.status {
         case .enabled: return .on
-        case .notRegistered: return .off
+        // macOS reports a never-registered or unregistered app as notFound too.
+        case .notRegistered, .notFound: return .off
         case .requiresApproval: return .needsApproval
-        default: return nil
+        @unknown default: return nil
         }
     }
 
