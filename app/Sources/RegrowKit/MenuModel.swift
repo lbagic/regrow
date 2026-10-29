@@ -21,6 +21,8 @@ public struct MenuState {
     public var tickFailure: TickFailure?
     public var engineDown: String?
     public var autotrim: Bool
+    /// Nil where the app is no login item candidate: not run from ~/Applications.
+    public var loginItem: LoginItemState?
     public var fda: String?
     public var environmentFailure: String?
     /// The engine's path, which a copied `regrow` command starts.
@@ -28,13 +30,15 @@ public struct MenuState {
 
     public init(
         tick: Wire.Tick?, checkedAt: String?, tickFailure: TickFailure?, engineDown: String?,
-        autotrim: Bool, fda: String?, environmentFailure: String?, engine: String
+        autotrim: Bool, fda: String?, environmentFailure: String?, engine: String,
+        loginItem: LoginItemState? = nil
     ) {
         self.tick = tick
         self.checkedAt = checkedAt
         self.tickFailure = tickFailure
         self.engineDown = engineDown
         self.autotrim = autotrim
+        self.loginItem = loginItem
         self.fda = fda
         self.environmentFailure = environmentFailure
         self.engine = engine
@@ -76,6 +80,7 @@ public enum MenuRow: Equatable {
     case open
     case scan
     case autotrim(on: Bool)
+    case loginItem(LoginItemState)
     /// The engine's words under the switch: why autotrim did not run.
     case note(String)
     /// The command the line above quotes, as Terminal takes it.
@@ -106,6 +111,9 @@ public enum MenuModel {
         }
         for note in notes {
             rows += [.note(note)] + copy(in: note, state)
+        }
+        if let loginItem = state.loginItem {
+            rows.append(.loginItem(loginItem))
         }
         rows += [.separator, .fullDiskAccess(MenuText.fullDiskAccess(state.fda))]
         if let fda = state.fda, fda != "granted" {

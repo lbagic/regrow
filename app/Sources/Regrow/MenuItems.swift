@@ -7,6 +7,7 @@ struct MenuActions {
     var open: () -> Void
     var scan: () -> Void
     var setAutotrim: (Bool) -> Void
+    var chooseLoginItem: (LoginItemChoice) -> Void
     var copy: (String) -> Void
     var openFullDiskAccess: () -> Void
     var relaunch: () -> Void
@@ -38,6 +39,11 @@ enum MenuItems {
                 let title = "Trim the Go build cache when space is low"
                 let item = ActionItem(title) { actions.setAutotrim(!on) }
                 item.attributedTitle = paired(title, on ? "on" : "off")
+                return item
+            case .loginItem(let state):
+                let title = "Start with Mac"
+                let item = ActionItem(title) { actions.chooseLoginItem(state.choice) }
+                item.attributedTitle = paired(title, state.figure)
                 return item
             case .note(let text), .environment(let text):
                 return hosted(Text(quoted(text)).font(.system(size: 12)).foregroundStyle(.secondary)
