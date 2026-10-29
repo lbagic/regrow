@@ -45,8 +45,6 @@ final class Shell: ObservableObject {
     private var readingSettings: Date?
     private var readSettingsAgain = false
     private var settingsSerial = 0
-    /// The engine went down during a run.
-    private var tickAfterHello = false
     private var tickLine: String?
     private var downLine: String?
     private var lockNoticed = false
@@ -340,21 +338,11 @@ final class Shell: ObservableObject {
             let code = head.code.map { " \($0): \(head.message ?? "")" } ?? ""
             log("← \(head.event ?? "") re=\(head.re ?? "-")\(code)")
         }
-        let executing = router.executeInFlight
         apply(router.engineEvent(head, line: String(decoding: line, as: UTF8.self)))
-        // A run changed the disk and what regrow staging holds: the menu
-        // and General sample them again, whether or not a page saw it end.
-        // Not with autotrim: a prune would hold the engine right after.
-        if executing && !router.executeInFlight {
-            watch?.tickNow(autotrim: false)
-        }
     }
 
     private func engineWentDown(_ down: EngineSupervisor.Down) {
         log("engine down: \(down.message); starting it again in \(Int(down.retryIn)) s")
-        // The run it held ended with it: the engine that starts next ticks
-        // for it.
-        tickAfterHello = tickAfterHello || router.executeInFlight
         engineDown = down.reason
         helloLine = nil
         watch?.settled(dropped: true)
@@ -394,7 +382,9 @@ final class Shell: ObservableObject {
 
     private func shellEvent(_ line: String) {
         guard let head = Wire.decode(Wire.Head.self, from: line) else { return }
-        let ofTick = head.re?.hasPrefix(Self.tickPrefix) ?? false
+        // The router's tick after a run is a tick the watch did not send.
+        let ofRunTick = head.re?.hasPrefix(Router.runTickPrefix) ?? false
+        let ofTick = ofRunTick || head.re?.hasPrefix(Self.tickPrefix) ?? false
         switch head.event {
         case "hello":
             guard let hello = Wire.decode(Wire.Hello.self, from: line) else { return }
@@ -404,10 +394,6 @@ final class Shell: ObservableObject {
             downLine = nil
             log("hello: protocol \(hello.protocol), engine \(hello.version), fda \(hello.fda)")
             startWatch()
-            if tickAfterHello {
-                tickAfterHello = false
-                watch?.tickNow(autotrim: false)
-            }
             readSettings()
         case "tick":
             guard let tick = Wire.decode(Wire.Tick.self, from: line) else { return }
@@ -422,7 +408,9 @@ final class Shell: ObservableObject {
         case "done" where ofTick:
             tickFailure = nil
             lockNoticed = false
-            watch?.settled()
+            if !ofRunTick {
+                watch?.settled()
+            }
         case "error" where ofTick:
             tickFailure = TickFailure(code: head.code, message: head.message)
             // A locked gate fails every tick while headroom stays low:
@@ -435,7 +423,9 @@ final class Shell: ObservableObject {
             } else {
                 lockNoticed = false
             }
-            watch?.settled()
+            if !ofRunTick {
+                watch?.settled()
+            }
         default:
             break
         }
