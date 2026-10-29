@@ -11,6 +11,7 @@ final class Shell: ObservableObject {
     private static let autotrimKey = "autotrim"
     private static let loginItemKey = "loginItemRegistered"
     private static let tickPrefix = "\(Router.shellPrefix)tick-"
+    private static let aerialsPrefix = "\(Router.shellPrefix)aerials-"
 
     @Published private(set) var tick: Wire.Tick?
     @Published private(set) var checkedAt: Date?
@@ -18,6 +19,7 @@ final class Shell: ObservableObject {
     @Published private(set) var hello: Wire.Hello?
     @Published private(set) var environmentFailure: String?
     @Published private(set) var engineDown: String?
+    @Published private(set) var aerials = AerialsSwitch()
     @Published var autotrim: Bool {
         didSet {
             guard autotrim != oldValue else { return }
@@ -58,6 +60,11 @@ final class Shell: ObservableObject {
     private var pageReloaded = false
     /// An execute was in flight when the reloaded page's process ended; it runs on.
     private var reloadedMidRun = false
+    private var aerialsSerial = 0
+    /// The aerials switch in flight, by request id.
+    private var aerialsSwitch: String?
+    /// The last aerials status as the engine wrote it, for the page.
+    private var aerialsStatus: Any?
 
     private init() {
         log = LogFile(url: config.log)
@@ -83,7 +90,7 @@ final class Shell: ObservableObject {
             tick: tick, checkedAt: checkedAt.map(Self.clock.string(from:)), tickFailure: tickFailure,
             engineDown: engineDown, autotrim: autotrim, fda: hello?.fda,
             environmentFailure: environmentFailure, engine: engine,
-            loginItem: loginItemState)
+            loginItem: loginItemState, aerials: aerials)
     }
 
     var engine: String {
@@ -345,6 +352,13 @@ final class Shell: ObservableObject {
         log("engine down: \(down.message); starting it again in \(Int(down.retryIn)) s")
         engineDown = down.reason
         helloLine = nil
+        if aerialsSwitch != nil {
+            aerialsSwitch = nil
+            aerials.end(failure: aerials.queued
+                ? "The engine stopped before the switch of aerial downloads started; nothing changed."
+                : "The engine stopped before the switch of aerial downloads ended, and its root step may still have run: the state shown is read at each start of the engine and after each tick.")
+            deliverAerials()
+        }
         watch?.settled(dropped: true)
         let outputs = router.engineExited(message: down.message)
         if case .page(let line)? = outputs.last {
@@ -368,6 +382,10 @@ final class Shell: ObservableObject {
                     log("→ \(request.type) id=\(request.id)")
                 }
                 supervisor?.send(line)
+                if aerials.queued, request?.id == aerialsSwitch {
+                    aerials.queued = false
+                    deliverAerials()
+                }
             case .page(let line):
                 window?.deliver(line)
             case .shell(let line):
@@ -385,6 +403,7 @@ final class Shell: ObservableObject {
         // The router's tick after a run is a tick the watch did not send.
         let ofRunTick = head.re?.hasPrefix(Router.runTickPrefix) ?? false
         let ofTick = ofRunTick || head.re?.hasPrefix(Self.tickPrefix) ?? false
+        let ofSwitch = head.re != nil && head.re == aerialsSwitch
         switch head.event {
         case "hello":
             guard let hello = Wire.decode(Wire.Hello.self, from: line) else { return }
@@ -395,6 +414,7 @@ final class Shell: ObservableObject {
             log("hello: protocol \(hello.protocol), engine \(hello.version), fda \(hello.fda)")
             startWatch()
             readSettings()
+            askAerials()
         case "tick":
             guard let tick = Wire.decode(Wire.Tick.self, from: line) else { return }
             self.tick = tick
@@ -411,6 +431,25 @@ final class Shell: ObservableObject {
             if !ofRunTick {
                 watch?.settled()
             }
+            askAerials()
+        case "aerials":
+            guard let event = Wire.decode(Wire.Aerials.self, from: line) else { return }
+            aerialsStatus = (try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any])?["status"]
+            if ofSwitch {
+                aerials.switched(event)
+            } else {
+                aerials.read(event.status)
+                deliverAerials()
+            }
+        case "done" where ofSwitch:
+            log("aerial downloads: \(aerials.status?.state ?? "unknown")")
+            aerialsSwitch = nil
+            aerials.done()
+            deliverAerials()
+        case "error" where ofSwitch:
+            aerialsSwitch = nil
+            aerials.failed(head.message ?? head.code ?? "unknown error")
+            deliverAerials()
         case "error" where ofTick:
             tickFailure = TickFailure(code: head.code, message: head.message)
             // A locked gate fails every tick while headroom stays low:
@@ -426,6 +465,7 @@ final class Shell: ObservableObject {
             if !ofRunTick {
                 watch?.settled()
             }
+            askAerials()
         default:
             break
         }
@@ -537,7 +577,7 @@ final class Shell: ObservableObject {
         switch name {
         case "ready":
             log("page ready")
-            var standing = [helloLine, tickLine, downLine, settings?.line].compactMap { $0 }
+            var standing = [helloLine, tickLine, downLine, settings?.line, aerialsLine()].compactMap { $0 }
             if let environmentFailure {
                 standing.append(environmentLine(environmentFailure))
             }
@@ -572,6 +612,16 @@ final class Shell: ObservableObject {
                     self.readSettings()
                 }
             }
+        case "aerials-read":
+            askAerials()
+        case "aerials-off":
+            setAerials(off: true)
+        case "aerials-on":
+            setAerials(off: false)
+        case "open-wallpaper-settings":
+            openAerialPane(surface: "wallpaper")
+        case "open-screen-saver-settings":
+            openAerialPane(surface: "screen saver")
         case "open-full-disk-access":
             openFullDiskAccess()
         case "login-item-on":
@@ -602,7 +652,61 @@ final class Shell: ObservableObject {
         Router.shellEvent("environment", ["captured": false, "reason": reason])
     }
 
+    // MARK: Aerial downloads
+
+    /// Reads where the aerial downloads stand: at each hello, after each
+    /// tick and after each scan in the window that ran to its end, so the
+    /// menu and the page follow a change made in System Settings or in
+    /// Terminal.
+    private func askAerials() {
+        aerialsSerial += 1
+        apply(router.shellRequest(["type": "aerials", "id": "\(Self.aerialsPrefix)\(aerialsSerial)"]))
+    }
+
+    /// Turns the downloads off or on: macOS asks for the password.
+    func setAerials(off: Bool) {
+        guard aerialsSwitch == nil else {
+            log("an aerials switch is already waiting")
+            return
+        }
+        aerialsSerial += 1
+        let id = "\(Self.aerialsPrefix)\(aerialsSerial)"
+        aerialsSwitch = id
+        log("turning aerial downloads \(off ? "off" : "on")")
+        let outputs = router.shellRequest(["type": "aerials_switch", "id": id, "to": off ? "off" : "on"])
+        aerials.start(queued: !outputs.contains { if case .engine = $0 { return true } else { return false } })
+        deliverAerials()
+        apply(outputs)
+    }
+
+    /// The page's word on the aerial downloads: the status as the engine
+    /// wrote it, a switch waiting, and why the last one did not end.
+    private func aerialsLine() -> String? {
+        guard let aerialsStatus else { return nil }
+        var fields: [String: Any] = ["status": aerialsStatus, "pending": aerials.pending, "queued": aerials.queued]
+        if let failure = aerials.failure {
+            fields["error"] = failure
+        }
+        if let note = aerials.note {
+            fields["note"] = note
+        }
+        return Router.shellEvent("aerials", fields)
+    }
+
+    private func deliverAerials() {
+        if let line = aerialsLine() {
+            window?.deliver(line)
+        }
+    }
+
     // MARK: What the menu does
+
+    /// Opens the pane where the owner chooses what a surface shows in
+    /// place of an aerial; regrow writes no wallpaper setting itself.
+    func openAerialPane(surface: String) {
+        log("opening \(MenuText.aerialPane(surface)) settings")
+        NSWorkspace.shared.open(MenuText.aerialPaneURL(surface))
+    }
 
     func openFullDiskAccess() {
         log("opening Full Disk Access settings")

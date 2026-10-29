@@ -1049,3 +1049,98 @@ func TestOffStopsTheDownloader(t *testing.T) {
 		}
 	}
 }
+
+// The administrator prompt hands the script to /bin/sh unchanged: the
+// AppleScript literal must carry quotes, backslashes and newlines.
+func TestAdminPromptQuotesTheScript(t *testing.T) {
+	script := offScript(`/tmp/a "b"\c.sqlite`, Daemon, []Pick{{Table: "Z_2ACTIVEFORUSERS", Item: 1, User: 1}})
+	argv := AdminPrompt(`regrow "aerials"`)(script)
+	if len(argv) != 3 || argv[0] != "/usr/bin/osascript" || argv[1] != "-e" {
+		t.Fatalf("argv = %q", argv)
+	}
+	// osascript compiles without running when the script is only a
+	// string: compile the literal back and compare.
+	lit := strings.TrimPrefix(argv[2], "do shell script ")
+	lit = lit[:strings.Index(lit, " with prompt ")]
+	out, err := exec.Command("/usr/bin/osascript", "-e", "return "+lit).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSuffix(string(out), "\n"); got != script {
+		t.Errorf("round trip:\n%s\nwant:\n%s", got, script)
+	}
+	if !strings.HasSuffix(argv[2], `with prompt "regrow \"aerials\"" with administrator privileges`) {
+		t.Errorf("prompt: %s", argv[2])
+	}
+}
+
+// osascript exits 1 whenever its script fails: AdminRun reads the root
+// step's status from the error text, as osascript gives it here (no
+// administrator rights are needed to run a plain do shell script).
+func TestAdminRunReadsTheStepsStatus(t *testing.T) {
+	run := AdminRun(func(ctx context.Context, argv []string) error {
+		out, err := exec.CommandContext(ctx, argv[0], argv[1:]...).CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("%w: %s", err, out)
+		}
+		return nil
+	})
+	for _, c := range []struct {
+		script string
+		want   int
+	}{
+		{"exit 0", exitDone},
+		{"exit 1", exitNothing},
+		{"echo 'regrow: the downloader did not exit' >&2; exit 2", exitLived},
+		{"kill -TERM $$", exitUnknown},
+	} {
+		err := run(context.Background(), []string{"/usr/bin/osascript", "-e", `do shell script "` + c.script + `"`})
+		if got := exitStatus(err); got != c.want {
+			t.Errorf("%s: status %d (%v), want %d", c.script, got, err, c.want)
+		}
+	}
+	canceled := AdminRun(func(context.Context, []string) error {
+		err := exec.Command("/bin/sh", "-c", "exit 1").Run()
+		return fmt.Errorf("%w: 0:63: execution error: User canceled. (-128)", err)
+	})
+	if err := canceled(context.Background(), nil); !errors.Is(err, ErrNotRun) {
+		t.Errorf("Cancel at the prompt: %v, want ErrNotRun", err)
+	}
+	absent := AdminRun(func(context.Context, []string) error { return unstarted{exec.ErrNotFound} })
+	if err := absent(context.Background(), nil); !errors.Is(err, ErrNotRun) {
+		t.Errorf("a command that never started: %v, want ErrNotRun", err)
+	}
+	lost := AdminRun(func(context.Context, []string) error { return context.Canceled })
+	if err := lost(context.Background(), nil); errors.Is(err, ErrNotRun) || exitStatus(err) != exitUnknown {
+		t.Errorf("an error that says neither a status nor that nothing started: %v, want no status", err)
+	}
+}
+
+// unstarted is a command that never started, marked as
+// protocol.RunNative marks one.
+type unstarted struct{ error }
+
+func (unstarted) Started() bool { return false }
+
+// A stop that lands as osascript exits 0 comes back as the context's
+// error: it gives no status, so off keeps the record of what it cleared.
+func TestAdminRunStoppedAsTheStepEnds(t *testing.T) {
+	f := newFixture(t)
+	f.a.Authorize = nil
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	f.a.Run = AdminRun(func(ctx context.Context, argv []string) error {
+		if out, err := exec.Command(argv[0], argv[1:]...).CombinedOutput(); err != nil {
+			t.Fatalf("the step: %v: %s", err, out)
+		}
+		cancel()
+		return ctx.Err()
+	})
+	res, err := f.a.Off(ctx)
+	if !errors.Is(err, ErrStopped) || errors.Is(err, ErrNotRun) || !res.Ran || res.After.State != StateOff {
+		t.Fatalf("off stopped as its step ended: %+v, %v; want ErrStopped with the picks cleared", res, err)
+	}
+	if r := f.record(t); !r.Waiting() || len(r.Picks) != 4 {
+		t.Errorf("record = %+v, want the 4 cleared picks kept for on", r)
+	}
+}

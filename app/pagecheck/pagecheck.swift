@@ -124,6 +124,8 @@ struct Play {
         "event": "shell", "state": "settings", "login_item": "on", "notifications": "allowed", "finder": "not_asked",
         "log": "/Users/dev/Library/Logs/regrow/app.log", "staging": "/Users/dev/.local/state/regrow/staging",
     ]
+    var aerials: [String: Any]?          // the shell's word on the aerial downloads, sent once the page is ready
+    var aerialRow = false                // the scan also finds the aerial videos, a row the transcript lacks
 }
 
 /// The window the page is drawn in: the size DESIGN.md draws it for, unless the environment asks otherwise.
@@ -277,6 +279,9 @@ final class Run: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHa
     }
 
     /// What an element says, without the copy controls beside its commands.
+    /// The aerial videos' note while picks hold them, as the engine's scan writes it.
+    private static let aerialsHeld = "Kept while macOS downloads aerial videos for what is picked (4 categories): deleted now, they come back. To clear the picks first: `regrow aerials off`."
+
     private static let words = """
         const words = (el) => { const c = el.cloneNode(true); c.querySelectorAll('.copy').forEach((b) => b.remove()); return c.textContent.replace(/\\s+/g, ' ').trim(); };
         """
@@ -480,11 +485,13 @@ final class Run: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHa
             if let tick = play.tick { send([answering(tick, "shell-1")[0]]) }
             if let reason = play.environment { send(["event": "shell", "state": "environment", "captured": false, "reason": reason]) }
             if let settings = play.settings { send(settings) }
+            if let aerials = play.aerials { send(aerials.merging(["event": "shell", "state": "aerials"]) { $1 }) }
             if !play.opened && !play.scanFirst { send(["event": "shell", "state": "scan"]) }
         case "automation":
             if let allowed = play.automation { send(["event": "shell", "state": "automation", "allowed": allowed]) }
         case "open-full-disk-access", "relaunch", "login-item-on", "login-item-off", "login-item-settings", "notification-settings",
-            "automation-settings", "show-log", "show-staging":
+            "automation-settings", "show-log", "show-staging", "aerials-off", "aerials-on", "aerials-read", "open-wallpaper-settings",
+            "open-screen-saver-settings":
             break
         default:
             fail("the page sent a shell message the bridge does not have: \(shell)")
@@ -495,7 +502,22 @@ final class Run: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHa
         scanRequest = id
         scanID = transcript.event(play.scan, "start").str("scan_id")
         given = []
-        let lines = answering(play.scan, id)
+        var lines = answering(play.scan, id)
+        if play.aerialRow, let summary = lines.firstIndex(where: { parse($0).str("event") == "summary" }) {
+            lines.insert(json([
+                "event": "finding", "re": id, "scan_id": scanID, "index": transcript.event(play.scan, "start").int("rules"),
+                "took_ms": 4, "bucket": "shown_only",
+                "finding": [
+                    "rule": [
+                        "id": "aerial-wallpapers", "title": "Aerial wallpaper videos", "category": "macos", "risk": "surface-only",
+                        "note": Self.aerialsHeld,
+                        "regen": ["story": "macOS downloads videos again for each aerial category picked.", "cost": "roughly 0.5 GB of download per video, only once an aerial is picked again"],
+                    ] as [String: Any],
+                    "held": Self.aerialsHeld,
+                    "items": [["path": "/Library/Application Support/com.apple.idleassetsd/Customer", "key": "/Library/Application Support/com.apple.idleassetsd/Customer", "bytes": 23_000_000_000]],
+                ] as [String: Any],
+            ]), at: summary)
+        }
         if play.scanStops {
             let findings = lines.indices.filter { parse(lines[$0]).str("event") == "finding" }
             let cut = findings[findings.count / 2]
@@ -1215,6 +1237,56 @@ struct Scenario {
             r.same(await r.count(".note"), 0, "notices on the scan for a history that failed")
             await r.shoot()
         },
+        Scenario(name: "aerials", play: Play(aerials: [
+            "status": ["state": "on", "counts": ["categories": 4, "subcategories": 0, "videos": 0], "set_for": ["wallpaper", "screen saver"]], "pending": false,
+        ], aerialRow: true)) { r in
+            await r.wait(for: "the scan to end", "document.documentElement.dataset.scan === 'done'")
+            let row = ".entry[data-rule=aerial-wallpapers]"
+            r.has(await r.text(".note"), "macOS downloads aerial videos for what is picked for the wallpaper or screen saver (4 categories)", "the notice")
+            r.has(await r.text(".note"), "An aerial is still set as your wallpaper, so macOS may download for it again: choose another in System Settings ▸ Wallpaper.", "the warning")
+            r.has(await r.text(".note"), "An aerial is still set as your screen saver, so macOS may download for it again: choose another in System Settings ▸ Screen Saver.", "the screen saver's warning")
+            r.same(await r.text(".note [data-do=aerialsOff]"), "Turn off aerial downloads", "the notice's action")
+            await drawn(r, [(".note .line", "border-bottom-style", "none"), (".note .line", "padding-top", "0px"), (".note .line", "padding-bottom", "0px")])
+            r.same(await r.text(".note [data-surface=wallpaper]"), "Open Wallpaper settings", "the wallpaper's pane link")
+            r.same(await r.text(".note [data-surface='screen saver']"), "Open Screen Saver settings", "the screen saver's pane link")
+            await r.click(".note [data-surface=wallpaper]")
+            await r.click(".note [data-surface='screen saver']")
+            r.same(r.sentShell("open-wallpaper-settings"), 1, "open-wallpaper-settings messages")
+            r.same(r.sentShell("open-screen-saver-settings"), 1, "open-screen-saver-settings messages")
+            r.same(await r.text("\(row) .cost.aerials"), "Aerial downloads are on: 4 categories picked.Turn off aerial downloads", "the row's state")
+            r.same(r.sentShell("aerials-read"), 1, "aerials reads asked once the scan ended")
+            await r.shoot()
+            await r.click(".note [data-do=aerialsOff]")
+            r.same(r.sentShell("aerials-off"), 1, "aerials-off messages")
+            r.has(await r.text(".note"), "Waiting for your password…", "the notice while macOS asks")
+            r.same(await r.count("[data-do=aerialsOff]"), 0, "switches while macOS asks")
+            r.send(["event": "shell", "state": "aerials", "pending": true, "queued": true, "status": ["state": "on", "counts": ["categories": 4] as [String: Any], "set_for": ["wallpaper", "screen saver"]] as [String: Any]])
+            await r.settle()
+            r.has(await r.text(".note"), "Waiting for the engine…", "the notice while the switch waits its turn")
+            r.send(["event": "shell", "state": "aerials", "pending": true, "queued": false, "status": ["state": "on", "counts": ["categories": 4] as [String: Any], "set_for": ["wallpaper", "screen saver"]] as [String: Any]])
+            await r.settle()
+            r.has(await r.text(".note"), "Waiting for your password…", "the notice once macOS asks")
+            let cleared: [String: Any] = ["state": "off", "counts": [:] as [String: Any], "recorded": ["cleared": "2026-10-09T09:20:00Z", "picks": [["table": "Z_2ACTIVEFORUSERS"]]]]
+            r.send(["event": "shell", "state": "aerials", "pending": false, "status": cleared])
+            await r.settle()
+            r.same(await r.count(".note"), 0, "notices once the downloads are off and no aerial is set")
+            r.same(await r.text("\(row) .cost.aerials"), "Aerial downloads are off; regrow keeps what it cleared.Turn them back on", "the row once off")
+            r.has(await r.text("\(row) .cost.aerials + .cost"), "To delete the videos, which asks for your password, run in Terminal:", "the row's way to delete them")
+            r.has(await r.text("\(row) .cost.aerials + .cost"), "regrow-engine clean aerial-wallpapers", "the clean the row names")
+            r.has(await r.text(row), "The note above is from the last scan; scan again to see the videos offered.", "the scan's held note, marked as from before the switch")
+            await r.shoot("-off", top: row)
+            await r.click("\(row) [data-do=aerialsOn]")
+            r.same(r.sentShell("aerials-on"), 1, "aerials-on messages")
+            r.send(["event": "shell", "state": "aerials", "pending": false, "status": cleared, "error": "Aerial downloads did not switch: canceled at the password prompt; nothing changed"])
+            await r.settle()
+            r.has(await r.text(".note"), "canceled at the password prompt; nothing changed", "the failed switch")
+            r.same(await r.text(".note [data-do=aerialsOn]"), "Turn them back on", "the notice's action after a failed switch")
+            await r.shoot("-failed")
+            r.send(["event": "shell", "state": "aerials", "pending": false, "status": cleared, "note": "3 recorded picks are no longer in macOS's aerial catalogue and were not put back."])
+            await r.settle()
+            r.has(await r.text(".note"), "3 recorded picks are no longer in macOS's aerial catalogue and were not put back.", "what an on could not put back")
+            r.same(await r.count(".note .err"), 0, "an on's missing picks shown as an error")
+        },
         Scenario(name: "env-failed", play: Play(environment: "the login shell gave no answer within 5 s")) { r in
             r.has(await r.text(".note"), "could not read your login shell's environment", "the notice")
             r.has(await r.text(".note"), "the login shell gave no answer within 5 s", "the notice's reason")
@@ -1766,8 +1838,8 @@ struct Scenario {
             r.same(await r.screen(), "findings", "the screen after the engine came back")
         },
     ]
-    // Results, plan and confirm also in dark.
-    return lit + lit.filter { ["results", "plan", "confirm", "general", "stats"].contains($0.name) }.map { var dark = $0; dark.dark = true; return dark }
+    // Results, plan, confirm, General, Stats and the aerial downloads also in dark.
+    return lit + lit.filter { ["results", "plan", "confirm", "general", "stats", "aerials"].contains($0.name) }.map { var dark = $0; dark.dark = true; return dark }
 }()
 
 // MARK: - Main

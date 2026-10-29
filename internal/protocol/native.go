@@ -46,8 +46,15 @@ func runCaptured(ctx context.Context, argv []string, stdout io.Writer) error {
 		cmd.Stdout = stdout
 	}
 	cmd.WaitDelay = nativeWaitDelay
-	err := cmd.Run()
+	if err := cmd.Start(); err != nil {
+		return notStarted{err}
+	}
+	err := cmd.Wait()
 	if err == nil || errors.Is(err, exec.ErrWaitDelay) {
+		return nil
+	}
+	if cmd.ProcessState != nil && cmd.ProcessState.Success() {
+		// Once the context is done, Wait reports it even for an exit 0.
 		return nil
 	}
 	if text := out.String(); text != "" {
@@ -55,6 +62,14 @@ func runCaptured(ctx context.Context, argv []string, stdout io.Writer) error {
 	}
 	return err
 }
+
+// notStarted is a command that never started, so it changed nothing;
+// a caller tells it from one that ran by its Started method.
+type notStarted struct{ err error }
+
+func (e notStarted) Error() string { return e.err.Error() }
+func (e notStarted) Unwrap() error { return e.err }
+func (e notStarted) Started() bool { return false }
 
 // tail keeps the last max bytes written to it.
 type tail struct {

@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/lbagic/regrow/internal/aerials"
 	"github.com/lbagic/regrow/internal/autopilot"
 	"github.com/lbagic/regrow/internal/engine"
 	"github.com/lbagic/regrow/internal/executor"
@@ -75,6 +76,10 @@ type Server struct {
 	// StagingDir names the folder a run's staged moves and volume
 	// exports go to, for the run's done event; nil names none.
 	StagingDir func(runID string) string
+	// Aerials builds what reads and switches the aerial picks: its root
+	// step goes through macOS's administrator prompt, and its journal
+	// is the oplog. Nil refuses aerials requests.
+	Aerials func() *aerials.Aerials
 	// ProbeFDA answers hello's fda field; nil means ProbeFDA(Host).
 	ProbeFDA func() FDA
 	// Now is injectable for plan expiry in tests.
@@ -128,7 +133,7 @@ type heldPlan struct {
 	expired bool
 }
 
-// operation is the one scan, execute or tick in flight.
+// operation is the one scan, execute, tick or aerials switch in flight.
 type operation struct {
 	kind string
 	re   string
@@ -286,12 +291,17 @@ func (s *session) handle(l requestLine) {
 			defer s.answering.Done()
 			s.history(req)
 		}()
+	case reqAerials:
+		s.aerialsStatus(req)
+	case reqAerialsSwitch:
+		s.startAerialsSwitch(req)
 	default:
 		s.emit(failure(req.ID, CodeUnknownRequest, fmt.Sprintf("unknown request type %q", req.Type)))
 	}
 }
 
-// busy refuses req while a scan, execute or tick is in flight. The caller
+// busy refuses req while a scan, execute, tick or aerials switch is in
+// flight. The caller
 // holds s.mu.
 func (s *session) busy(req request) bool {
 	cur := s.inflight

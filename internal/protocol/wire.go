@@ -24,6 +24,10 @@ const (
 	reqCancel  = "cancel"
 	reqTick    = "tick"
 	reqHistory = "history"
+	// reqAerials reads the aerial picks; reqAerialsSwitch turns the
+	// downloads off or on.
+	reqAerials       = "aerials"
+	reqAerialsSwitch = "aerials_switch"
 )
 
 // Error codes, the `code` of an error event.
@@ -44,6 +48,7 @@ const (
 	CodePlanExpired    = "plan_expired"
 	CodeExecuteFailed  = "execute_failed"
 	CodeHistoryFailed  = "history_failed"
+	CodeAerialsFailed  = "aerials_failed"
 )
 
 type request struct {
@@ -56,6 +61,8 @@ type request struct {
 	PlanID   string    `json:"plan_id"`
 	Target   string    `json:"target"`
 	Autotrim bool      `json:"autotrim"`
+	// To is an aerials_switch's "off" or "on".
+	To string `json:"to"`
 }
 
 // head opens every event: its name and the id of the request it

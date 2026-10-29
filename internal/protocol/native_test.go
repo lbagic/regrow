@@ -2,11 +2,14 @@ package protocol
 
 import (
 	"context"
+	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 
+	"github.com/lbagic/regrow/internal/aerials"
 	"github.com/lbagic/regrow/internal/engine"
 	"github.com/lbagic/regrow/internal/executor"
 	"github.com/lbagic/regrow/internal/oplog"
@@ -29,6 +32,48 @@ func TestRunNativeFailureCarriesTheOutputTail(t *testing.T) {
 func TestRunNativeSuccessIsSilent(t *testing.T) {
 	if err := RunNative(context.Background(), sh(`echo chatter; echo more >&2`)); err != nil {
 		t.Fatalf("a successful command returned %v", err)
+	}
+}
+
+// A command that never started says so, and aerials.AdminRun reads it
+// as a root step that did not run; one that ran and failed does not.
+func TestRunNativeMarksACommandThatNeverStarted(t *testing.T) {
+	stopped, cancel := context.WithCancel(context.Background())
+	cancel()
+	for name, c := range map[string]struct {
+		ctx  context.Context
+		argv []string
+	}{
+		"a stop before it started": {stopped, []string{"/usr/bin/true"}},
+		"no such command":          {context.Background(), []string{"/nonexistent/regrow-test"}},
+	} {
+		var start interface{ Started() bool }
+		err := RunNative(c.ctx, c.argv)
+		if !errors.As(err, &start) || start.Started() {
+			t.Errorf("%s: %v, want an error saying it never started", name, err)
+		}
+		if err := aerials.AdminRun(RunNative)(c.ctx, c.argv); !errors.Is(err, aerials.ErrNotRun) {
+			t.Errorf("%s through AdminRun: %v, want ErrNotRun", name, err)
+		}
+	}
+	var start interface{ Started() bool }
+	if err := RunNative(context.Background(), sh("exit 3")); errors.As(err, &start) {
+		t.Errorf("a command that ran and failed: %v, want no Started mark", err)
+	}
+}
+
+// A stop that lands as a command exits 0 leaves its success standing:
+// any error from a command that started is its exit, never the stop.
+func TestRunNativeExitZeroUnderAStopSucceeds(t *testing.T) {
+	for i := 0; i < 1000; i++ {
+		ctx, cancel := context.WithCancel(context.Background())
+		go cancel()
+		err := RunNative(ctx, []string{"/usr/bin/true"})
+		var start interface{ Started() bool }
+		var exit *exec.ExitError
+		if err != nil && !errors.As(err, &exit) && !(errors.As(err, &start) && !start.Started()) {
+			t.Fatalf("run %d: %v, want nil, an exit, or a command that never started", i, err)
+		}
 	}
 }
 

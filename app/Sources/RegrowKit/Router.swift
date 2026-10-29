@@ -1,8 +1,9 @@
 import Foundation
 
 /// The shell's place between the page and the engine: it is the only
-/// writer to the engine's stdin, holds a scan, execute or tick behind
-/// the one in flight, and sends every engine event to its side.
+/// writer to the engine's stdin, holds a scan, execute, tick or aerials
+/// switch behind the one in flight, and sends every engine event to its
+/// side.
 ///
 /// It is a value with no I/O: each input returns what to do.
 public struct Router {
@@ -29,7 +30,7 @@ public struct Router {
     public static let maxLine = 1 << 20
 
     private static let pageTypes: Set<String> = ["scan", "plan", "execute", "cancel", "history"]
-    private static let slotTypes: Set<String> = ["scan", "execute", "tick"]
+    private static let slotTypes: Set<String> = ["scan", "execute", "tick", "aerials_switch"]
 
     private enum Origin { case page, shell }
 

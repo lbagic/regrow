@@ -96,6 +96,19 @@ struct RouterTests {
         ])
     }
 
+    @Test("an aerials switch waits behind a scan; a status read does not")
+    func aerialsBehindScan() {
+        var router = started()
+        _ = page(&router, ["type": "scan", "id": "s1"])
+        #expect(router.shellRequest(["type": "aerials", "id": "shell-aerials-1"]) == [.engine(#"{"id":"shell-aerials-1","type":"aerials"}"#)])
+        #expect(router.shellRequest(["type": "aerials_switch", "id": "shell-aerials-2", "to": "off"]) == [])
+
+        let done = #"{"event":"done","re":"s1","elapsed_ms":9,"canceled":false}"#
+        #expect(engine(&router, done) == [
+            .page(done), .engine(#"{"id":"shell-aerials-2","to":"off","type":"aerials_switch"}"#),
+        ])
+    }
+
     @Test("a scan waits behind a tick and goes out on the tick's done")
     func scanBehindTick() {
         var router = started()
