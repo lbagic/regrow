@@ -43,6 +43,25 @@ struct MenuModelTests {
         ])
     }
 
+    @Test("Start with Mac sits under the autotrim switch with its state, and is absent where the app is no login item")
+    func loginItem() throws {
+        for (item, figure, choice) in [
+            (LoginItemState.on, "on", LoginItemChoice.unregister),
+            (.off, "off", .register),
+            (.needsApproval, "needs approval", .openSettings),
+        ] {
+            var s = state(tick: try tick())
+            s.loginItem = item
+            let rows = MenuModel.rows(s)
+            let at = try #require(rows.firstIndex(of: .autotrim(on: false)))
+            #expect(rows[at + 1] == .loginItem(item))
+            #expect(item.figure == figure)
+            #expect(item.choice == choice)
+        }
+        let none = MenuModel.rows(state(tick: try tick()))
+        #expect(!none.contains { if case .loginItem = $0 { true } else { false } })
+    }
+
     @Test("the meter draws free space to scale, a nearly full disk included", arguments: [
         Int64(66_201_620_480), 10 << 30, 5 << 30, 2 << 30, 0,
     ])

@@ -74,7 +74,8 @@ final class Shell: ObservableObject {
         MenuState(
             tick: tick, checkedAt: checkedAt.map(Self.clock.string(from:)), tickFailure: tickFailure,
             engineDown: engineDown, autotrim: autotrim, fda: hello?.fda,
-            environmentFailure: environmentFailure, engine: engine)
+            environmentFailure: environmentFailure, engine: engine,
+            loginItem: loginItemState)
     }
 
     var engine: String {
@@ -129,6 +130,39 @@ final class Shell: ObservableObject {
         } catch {
             log("could not register as a login item: \(error.localizedDescription)")
         }
+    }
+
+    /// Read from macOS at each menu open: the owner may change it in System Settings.
+    private var loginItemState: LoginItemState? {
+        guard Config.installed else { return nil }
+        switch SMAppService.mainApp.status {
+        case .enabled: return .on
+        // macOS reports a never-registered or unregistered app as notFound too.
+        case .notRegistered, .notFound: return .off
+        case .requiresApproval: return .needsApproval
+        @unknown default: return nil
+        }
+    }
+
+    func chooseLoginItem(_ choice: LoginItemChoice) {
+        // Either way the owner has chosen, so the launch does not register again.
+        UserDefaults.standard.set(true, forKey: Self.loginItemKey)
+        do {
+            switch choice {
+            case .register:
+                try SMAppService.mainApp.register()
+                log("registered as a login item from the menu")
+            case .unregister:
+                try SMAppService.mainApp.unregister()
+                log("removed as a login item from the menu")
+            case .openSettings:
+                log("opening Login Items settings")
+                SMAppService.openSystemSettingsLoginItems()
+            }
+        } catch {
+            log("could not change the login item: \(error.localizedDescription)")
+        }
+        objectWillChange.send()
     }
 
     private func environmentRead(_ captured: Result<[String: String], LoginEnvironment.Failure>) {

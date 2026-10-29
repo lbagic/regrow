@@ -45,6 +45,7 @@ final class StatusMenu: NSObject, NSMenuDelegate {
             open: { shell.showWindow(scan: false) },
             scan: { shell.showWindow(scan: true) },
             setAutotrim: { shell.autotrim = $0 },
+            chooseLoginItem: { shell.chooseLoginItem($0) },
             copy: { shell.copy($0) },
             openFullDiskAccess: { shell.openFullDiskAccess() },
             relaunch: { shell.relaunch() },
