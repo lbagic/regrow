@@ -14,7 +14,7 @@ app_zip=Regrow.app.zip
 # The SHA-1 of the certificate releases sign Regrow.app with, written by
 # `scripts/signing-cert.sh --release`; the release workflow signs with
 # no other. macOS keeps the app's grants for this signature.
-app_signer=0000000000000000000000000000000000000000
+app_signer=E941D3CB4CBB3FBFB2FB78C65C7EB0F0CB47C2C8
 
 say() { printf '%s\n' "$*"; }
 die() {
