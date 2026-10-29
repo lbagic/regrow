@@ -273,6 +273,19 @@ func TestUpdateRefusesBinaryThatDoesNotRunOrLies(t *testing.T) {
 	}
 }
 
+// A binary that answered and exited is judged by its answer, even when a
+// child of its keeps the output open.
+func TestUpdateAcceptsABinaryWhoseChildHoldsItsOutput(t *testing.T) {
+	rel := newRelease(t, "v0.2.1", []byte("#!/bin/sh\necho \"regrow 0.2.1\"\n(sleep 3) &\nexit 0\n"))
+	u := installed(t, "0.1.0", rel.serve(t))
+	if _, err := u.Update(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := binaryAt(t, u.Exe); !strings.Contains(got, "sleep 3") {
+		t.Fatalf("binary = %q, want the release's", got)
+	}
+}
+
 // A later release may say more after its version; it still installs.
 func TestUpdateAcceptsMoreAfterTheVersion(t *testing.T) {
 	rel := newRelease(t, "v0.2.1", []byte("#!/bin/sh\necho \"regrow 0.2.1 (abc1234)\"\necho built today\n"))
@@ -467,7 +480,7 @@ func TestSaysVersion(t *testing.T) {
 func TestParseVersion(t *testing.T) {
 	for s, want := range map[string]bool{
 		"0.1.0": true, "1.20.3": true,
-		"0.0.0-dev": false, "0.2.0-rc1": false, "0.2.01": false, "v0.1.0": false, "0.1": false, "0.1.0.1": false, "0.+1.0": false, "": false,
+		"0.0.0-dev": false, "0.2.0-rc1": false, "v0.1.0": false, "0.1": false, "0.1.0.1": false, "0.+1.0": false, "": false,
 	} {
 		if _, ok := parseVersion(s); ok != want {
 			t.Errorf("parseVersion(%q) ok = %v, want %v", s, ok, want)

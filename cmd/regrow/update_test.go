@@ -28,7 +28,13 @@ func TestVersionLineIsWhatAnUpdateChecks(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
+	// Every installed release reads a new one's line this way, with the
+	// check it shipped with: these two words never change.
+	line, _, _ := strings.Cut(out, "\n")
+	if f := strings.Fields(line); len(f) < 2 || f[0] != "regrow" || f[1] != version {
+		t.Fatalf("regrow version printed %q; installed releases would refuse it", out)
+	}
 	if !selfupdate.SaysVersion(out, version) {
-		t.Fatalf("regrow version printed %q; an installed release would refuse it", out)
+		t.Fatalf("SaysVersion refuses %q", out)
 	}
 }

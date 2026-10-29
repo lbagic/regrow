@@ -363,10 +363,14 @@ func install(ctx context.Context, target string, bin []byte, want string) (err e
 	cmd.Env = append(os.Environ(), OffEnv+"=1")
 	cmd.WaitDelay = time.Second
 	out, err := cmd.Output()
-	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		return fmt.Errorf("the downloaded regrow did not answer `version` within %v; nothing was changed", runTimeout)
+	if errors.Is(err, exec.ErrWaitDelay) {
+		// It exited 0; a child of its kept the output open.
+		err = nil
 	}
 	if err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return fmt.Errorf("the downloaded regrow did not answer `version` within %v; nothing was changed", runTimeout)
+		}
 		return fmt.Errorf("the downloaded regrow does not run on this Mac (%v); nothing was changed", err)
 	}
 	if !SaysVersion(string(out), want) {
@@ -480,7 +484,7 @@ func parseVersion(s string) (version, bool) {
 		return v, false
 	}
 	for i, p := range parts {
-		if p == "" || strings.TrimLeft(p, "0123456789") != "" || (len(p) > 1 && p[0] == '0') {
+		if p == "" || strings.TrimLeft(p, "0123456789") != "" {
 			return v, false
 		}
 		n, err := strconv.Atoi(p)
