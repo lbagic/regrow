@@ -87,6 +87,7 @@ func newEngineServer(host engine.Host, catalog []engine.Rule, flags []string) *p
 		Headroom:   headroom.Take,
 		Tick:       tickFor(host, catalog),
 		Staged:     stagedBytes,
+		History:    engineHistory,
 		NewExecutor: func(runID string) (*executor.Executor, func(), error) {
 			return newRunExecutor(host, catalog, runID, dockerStream)
 		},

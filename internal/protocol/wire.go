@@ -7,6 +7,7 @@ import (
 
 	"github.com/lbagic/regrow/internal/engine"
 	"github.com/lbagic/regrow/internal/executor"
+	"github.com/lbagic/regrow/internal/headroom"
 	"github.com/lbagic/regrow/internal/oplog"
 )
 
@@ -22,6 +23,7 @@ const (
 	reqExecute = "execute"
 	reqCancel  = "cancel"
 	reqTick    = "tick"
+	reqHistory = "history"
 )
 
 // Error codes, the `code` of an error event.
@@ -41,6 +43,7 @@ const (
 	CodeUnknownPlan    = "unknown_plan"
 	CodePlanExpired    = "plan_expired"
 	CodeExecuteFailed  = "execute_failed"
+	CodeHistoryFailed  = "history_failed"
 )
 
 type request struct {
@@ -137,6 +140,44 @@ type planEvent struct {
 type journalEvent struct {
 	head
 	Entry oplog.Entry `json:"entry"`
+}
+
+// History is what a history request answers: every run in the oplog,
+// oldest first, and the free-space samples of the headroom history.
+type History struct {
+	Runs    []oplog.Summary   `json:"runs"`
+	Samples []headroom.Sample `json:"samples"`
+	// SamplesUnreadable: the headroom history could not be read, and
+	// Samples is empty.
+	SamplesUnreadable bool `json:"samples_unreadable,omitempty"`
+	// Titles names each rule the runs counted bytes for that the
+	// engine's catalog still holds, by rule id.
+	Titles map[string]string `json:"titles"`
+}
+
+// ReadHistory reads a history request's answer. A journal that cannot
+// be read fails it, since the journal is never read past a bad line; a
+// headroom history that cannot be read is only said so.
+func ReadHistory(oplogPath, headroomPath string) (History, error) {
+	entries, err := oplog.Read(oplogPath)
+	if err != nil {
+		return History{}, err
+	}
+	var h History
+	for _, r := range oplog.Runs(entries) {
+		h.Runs = append(h.Runs, r.Summary())
+	}
+	h.Samples, err = headroom.Tail(headroomPath, time.Time{})
+	h.SamplesUnreadable = err != nil
+	if err != nil {
+		h.Samples = nil
+	}
+	return h, nil
+}
+
+type historyEvent struct {
+	head
+	History
 }
 
 type doneEvent struct {

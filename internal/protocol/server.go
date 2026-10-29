@@ -31,9 +31,9 @@ const (
 	// cancel reaches a goroutine stuck in one.
 	defaultMoveLimit = time.Minute
 	// defaultExitGrace bounds what shutdown waits for that cannot lose
-	// data: a canceled scan winding down, and a reader that stopped
-	// draining events. An execute or a tick is always waited for in
-	// full.
+	// data: a canceled scan winding down and a history being read, from
+	// one deadline, and a reader that stopped draining events. An
+	// execute or a tick is always waited for in full.
 	defaultExitGrace = 5 * time.Second
 )
 
@@ -60,6 +60,9 @@ type Server struct {
 	// autopilot.Autopilot.Tick, autotrim gate included. Nil refuses
 	// tick requests.
 	Tick func(ctx context.Context, autotrim bool) (headroom.Tick, error)
+	// History reads the oplog and the headroom history for a history
+	// request. Nil refuses history requests.
+	History func() (History, error)
 	// Staged measures what regrow's staging directory holds, for a
 	// tick's staged_bytes: a lower bound where part of it cannot be
 	// read. Nil omits the field.
@@ -147,12 +150,17 @@ type session struct {
 	scan     *scanState
 	plans    map[string]heldPlan
 	inflight *operation
+
+	// answering counts the requests answered off the read loop, which
+	// shutdown waits for as it waits for a scan.
+	answering sync.WaitGroup
 }
 
 // Serve runs the protocol until in ends or ctx is canceled, then shuts
 // down: a scan in flight is canceled, an execute finishes and journals
-// its current action and stops there, a tick runs to its end. It returns in's read error, nil
-// at EOF.
+// its current action and stops there, a tick runs to its end, and a
+// history being read is answered if it ends within the exit grace or
+// before the execute or tick. It returns in's read error, nil at EOF.
 func (srv *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 	s := srv.newSession(out)
 
@@ -197,7 +205,10 @@ loop:
 	if grace == 0 {
 		grace = defaultExitGrace
 	}
+	answered := s.answered()
+	deadline := time.Now().Add(grace)
 	s.shutdown(grace)
+	waitUntil(answered, deadline)
 	s.out.close(grace)
 	return err
 }
@@ -269,6 +280,12 @@ func (s *session) handle(l requestLine) {
 		s.cancel(req)
 	case reqTick:
 		s.startTick(req)
+	case reqHistory:
+		s.answering.Add(1)
+		go func() {
+			defer s.answering.Done()
+			s.history(req)
+		}()
 	default:
 		s.emit(failure(req.ID, CodeUnknownRequest, fmt.Sprintf("unknown request type %q", req.Type)))
 	}
@@ -457,6 +474,41 @@ func (s *session) plan(req request) {
 	id := newPlanID(now)
 	s.plans[id] = heldPlan{plan: plan, scan: sc, created: now}
 	s.emit(planEvent{head{"plan", req.ID}, id, now.Add(s.planTTL()).UTC(), atoms, plan, plan.Totals()})
+	s.emit(done(req.ID))
+}
+
+// history answers beside whatever is in flight, off the read loop, so a
+// long journal holds up no cancel: it only reads the journal, which an
+// execute appends to a whole line at a time.
+func (s *session) history(req request) {
+	if s.srv.History == nil {
+		s.emit(failure(req.ID, CodeHistoryFailed, "this engine reads no history"))
+		return
+	}
+	h, err := s.srv.History()
+	if err != nil {
+		s.emit(failure(req.ID, CodeHistoryFailed, err.Error()))
+		return
+	}
+	if h.Runs == nil {
+		h.Runs = []oplog.Summary{}
+	}
+	if h.Samples == nil {
+		h.Samples = []headroom.Sample{}
+	}
+	titles := make(map[string]string, len(s.srv.Catalog))
+	for _, r := range s.srv.Catalog {
+		titles[r.ID] = r.Title
+	}
+	h.Titles = map[string]string{}
+	for _, run := range h.Runs {
+		for id := range run.Rules {
+			if title, ok := titles[id]; ok {
+				h.Titles[id] = title
+			}
+		}
+	}
+	s.emit(historyEvent{head{"history", req.ID}, h})
 	s.emit(done(req.ID))
 }
 
@@ -653,6 +705,26 @@ func (s *session) shutdown(grace time.Duration) {
 	defer timer.Stop()
 	select {
 	case <-op.finished:
+	case <-timer.C:
+	}
+}
+
+// answered is closed once the requests answered off the read loop
+// have their terminal events. The caller has stopped reading requests.
+func (s *session) answered() <-chan struct{} {
+	ch := make(chan struct{})
+	go func() {
+		s.answering.Wait()
+		close(ch)
+	}()
+	return ch
+}
+
+func waitUntil(ch <-chan struct{}, deadline time.Time) {
+	timer := time.NewTimer(time.Until(deadline))
+	defer timer.Stop()
+	select {
+	case <-ch:
 	case <-timer.C:
 	}
 }
