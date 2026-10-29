@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- The menu bar menu has "Start with Mac", under the autotrim switch: it shows whether Regrow is in your Login Items and turns that on or off. Turning it off stays off: the app registers itself only on its first launch. When macOS waits for your approval the row says so, and choosing it opens Login Items settings.
+- The menu bar menu has "Start with Mac", under the autotrim switch: it shows whether Regrow is in your Login Items and turns that on or off. Turning it off stays off: the app registers itself at launch only until it has done so once. When macOS waits for your approval the row says so, and choosing it opens Login Items settings.
 
 - Install with one line in Terminal: `curl -fsSL https://raw.githubusercontent.com/lbagic/regrow/main/install.sh | sh` downloads the latest release for the Mac's chip, Apple silicon or Intel, checks it against the release's `checksums.txt`, installs nothing when they differ or when the new `regrow` does not run, and puts `regrow` in `~/.local/bin` without asking for an administrator password. When that folder is not on `PATH`, it adds it in the file zsh or bash reads at login and prints the line to add for another shell. It refuses a macOS older than 12. Release archives are named without their version (`regrow_darwin_arm64.tar.gz`, `regrow_darwin_amd64.tar.gz`), and a release publishes without the Homebrew tap while the `TAP_GITHUB_TOKEN` secret is unset.
 
