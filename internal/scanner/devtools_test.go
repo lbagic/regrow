@@ -5,6 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
+
+	"github.com/lbagic/regrow/internal/engine"
 )
 
 func TestDevToolsPresent(t *testing.T) {
@@ -53,6 +56,17 @@ func TestDevToolsPresent(t *testing.T) {
 		{"Command Line Tools partly removed", func(t *testing.T, root string) {
 			file(t, root, clt+"/usr/bin/git")
 		}, "", false},
+		{"an unreadable Xcode before the Command Line Tools", func(t *testing.T, root string) {
+			tools(t, root, clt)
+			contents := filepath.Join(root, "/Applications/Xcode.app/Contents")
+			if err := os.MkdirAll(contents, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(contents, 0); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(contents, 0o755) })
+		}, "", true},
 		{"link to the Command Line Tools", func(t *testing.T, root string) {
 			tools(t, root, clt)
 			link(t, root, dbLink, clt)
@@ -178,7 +192,7 @@ func TestGitQueriesRunNoShimWithoutTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, dir := range []string{"workspace/repo/.git", "workspace/repo/dist"} {
+	for _, dir := range []string{"workspace/repo/.git/worktrees", "workspace/repo/dist"} {
 		if err := os.MkdirAll(filepath.Join(home, dir), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -190,10 +204,17 @@ func TestGitQueriesRunNoShimWithoutTools(t *testing.T) {
 		t.Fatalf("found %v %v, errors %v %v, git ran %v; want nothing run", worktrees, builds, err1, err2, ran())
 	}
 
-	// With tools, the same fixture runs git: the fixture reaches it.
+	// The same fixture reaches git once nothing gates it: each query's
+	// walk under the temp home, with tools.
 	withDeveloperTools(t, true)
 	t.Setenv("PATH", os.Getenv("PATH")+string(os.PathListSeparator)+"/usr/sbin:/bin")
+	if _, err := scanWorktrees(ctx, defaultWalker, engine.Host{Home: home}, []string{"~/workspace"}, time.Now()); err != nil || !ran() {
+		t.Fatalf("worktrees with tools: error %v, git ran %v; want git run", err, ran())
+	}
+	ran = fakeTools(t)
+	gitShim = filepath.Join(filepath.SplitList(os.Getenv("PATH"))[0], "git")
+	t.Setenv("PATH", os.Getenv("PATH")+string(os.PathListSeparator)+"/usr/sbin:/bin")
 	if _, err := queryBuildOutput(ctx); err != nil || !ran() {
-		t.Fatalf("with tools: error %v, git ran %v; want git run", err, ran())
+		t.Fatalf("build output with tools: error %v, git ran %v; want git run", err, ran())
 	}
 }

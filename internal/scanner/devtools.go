@@ -2,6 +2,7 @@ package scanner
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -39,8 +40,9 @@ type devTools struct {
 // library (or, in older layouts, xcrun): $DEVELOPER_DIR, else the first
 // select link there is, read through the link, either of them an Xcode
 // app or its Contents/Developer; else the first default that holds it.
-// A link whose folder lacks it, or any path that cannot be read, means
-// no tools.
+// A link whose folder lacks it, or a path that hangs, means no tools; a
+// path that is refused is passed over, so a hung volume costs one stall
+// window.
 func (d devTools) present(ctx context.Context) bool {
 	unread := false
 	holds := func(dir string, app bool) bool {
@@ -54,7 +56,7 @@ func (d devTools) present(ctx context.Context) bool {
 				if err == nil {
 					return true
 				}
-				if !absent(err) {
+				if errors.Is(err, errBlocked) || ctx.Err() != nil {
 					unread = true
 					return false
 				}
