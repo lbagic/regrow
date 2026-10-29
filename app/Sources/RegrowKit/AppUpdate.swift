@@ -67,7 +67,7 @@ public enum AppUpdate {
             do {
                 record = try JSONDecoder().decode(Record.self, from: data)
             } catch {
-                throw Failure("the latest release record could not be read: \(error.localizedDescription)")
+                throw Failure("the latest release record could not be read: \(fault(error))")
             }
             guard record.tag_name.hasPrefix("v"), let version = Version(String(record.tag_name.dropFirst())) else {
                 throw Failure("the latest release's tag \"\(record.tag_name)\" is not a version")
@@ -104,15 +104,17 @@ public enum AppUpdate {
         else {
             throw Failure("this Regrow runs from \(running.path); only the copy in ~/Applications updates itself")
         }
-        var info = stat()
-        guard lstat(destination.path, &info) == 0 else {
-            throw Failure("nothing is at ~/Applications/Regrow.app any more: this Regrow was moved or deleted while it ran")
-        }
         // `--swap` renames the entry itself: a link there would be replaced, its target left old.
-        guard (info.st_mode & S_IFMT) == S_IFDIR else {
+        switch fileType(destination) {
+        case S_IFDIR?:
+            return destination
+        case nil:
+            throw Failure("nothing is at ~/Applications/Regrow.app any more: this Regrow was moved or deleted while it ran")
+        case S_IFLNK?:
             throw Failure("~/Applications/Regrow.app is a link to this Regrow; only a bundle there updates itself")
+        default:
+            throw Failure("~/Applications/Regrow.app is not a folder; only a bundle there updates itself")
         }
-        return destination
     }
 
     /// What the row says of an error: a failure's own words, else the system's.
@@ -231,7 +233,7 @@ public enum AppUpdate {
         try unpack(zip, into: unpacked)
         let bundle = unpacked.appendingPathComponent("Regrow.app")
         // The checks below follow a link, and the move would stage the link itself.
-        guard isDirectory(bundle) else {
+        guard fileType(bundle) == S_IFDIR else {
             throw Failure("\(archiveName) of release \(release.tag) holds no Regrow.app folder")
         }
         try verify(bundle, satisfies: requirement)
@@ -244,15 +246,30 @@ public enum AppUpdate {
 
     /// Removes what is at the staged path, a link there included.
     public static func discard(_ staged: URL) throws {
-        var info = stat()
-        if lstat(staged.path, &info) == 0 {
+        if fileType(staged) != nil {
             try FileManager.default.removeItem(at: staged)
         }
     }
 
-    private static func isDirectory(_ url: URL) -> Bool {
+    /// The file type `lstat` gives, a link's own; nil when nothing is there.
+    private static func fileType(_ url: URL) -> mode_t? {
         var info = stat()
-        return lstat(url.path, &info) == 0 && (info.st_mode & S_IFMT) == S_IFDIR
+        return lstat(url.path, &info) == 0 ? info.st_mode & S_IFMT : nil
+    }
+
+    /// Which part of GitHub's record did not decode, in words.
+    private static func fault(_ error: Error) -> String {
+        func path(_ keys: [CodingKey]) -> String {
+            keys.map { $0.intValue.map { "#\($0)" } ?? $0.stringValue }.joined(separator: ".")
+        }
+        switch error as? DecodingError {
+        case .keyNotFound(let key, let context)?:
+            return "it has no \(path(context.codingPath + [key]))"
+        case .typeMismatch(_, let context)?, .valueNotFound(_, let context)?:
+            return "its \(path(context.codingPath)) is not what GitHub sends"
+        default:
+            return "it is not the JSON GitHub sends"
+        }
     }
 
     /// `ditto -x -k`, leaving out the archive's quarantine: macOS refuses

@@ -30,7 +30,13 @@ struct AppUpdateTests {
             _ = try AppUpdate.Release.decode(Data(#"{"tag_name": 3}"#.utf8))
             Issue.record("a record whose tag is a number decodes")
         } catch let failure as AppUpdate.Failure {
-            #expect(!failure.description.contains("CodingKeys"), "the row gets words, not the decoder's dump")
+            #expect(failure.description.hasSuffix("its tag_name is not what GitHub sends"), "\(failure)")
+        }
+        do {
+            _ = try AppUpdate.Release.decode(Data(#"{"tag_name": "v0.3.0"}"#.utf8))
+            Issue.record("a record without assets decodes")
+        } catch let failure as AppUpdate.Failure {
+            #expect(failure.description.hasSuffix("it has no assets"), "\(failure)")
         }
     }
 
@@ -90,9 +96,12 @@ struct AppUpdateTests {
             try FileManager.default.createDirectory(at: real, withIntermediateDirectories: true)
             let applications = home.appendingPathComponent("Applications")
             try FileManager.default.createDirectory(at: applications, withIntermediateDirectories: true)
-            try FileManager.default.createSymbolicLink(
-                at: applications.appendingPathComponent("Regrow.app"), withDestinationURL: real)
-            #expect(throws: AppUpdate.Failure.self) { try AppUpdate.installed(running: real, home: home) }
+            let destination = applications.appendingPathComponent("Regrow.app")
+            try FileManager.default.createSymbolicLink(at: destination, withDestinationURL: real)
+            #expect(try refusal(running: real, home: home).contains("is a link"))
+            try FileManager.default.removeItem(at: destination)
+            try Data().write(to: destination)
+            #expect(try refusal(running: destination, home: home).contains("is not a folder"))
         }
     }
 
@@ -100,12 +109,8 @@ struct AppUpdateTests {
     func movedAway() async throws {
         try await withTemporaryDirectory { home in
             let gone = home.appendingPathComponent("Applications/Regrow.app")
-            do {
-                _ = try AppUpdate.installed(running: gone, home: home)
-                Issue.record("a missing bundle updates")
-            } catch let failure as AppUpdate.Failure {
-                #expect(failure.description.contains("moved or deleted"))
-            }
+            let reason = try refusal(running: gone, home: home)
+            #expect(reason.contains("moved or deleted"))
         }
     }
 
@@ -310,6 +315,17 @@ private func sliceOffsets(_ data: Data) -> [Int] {
     func word(_ at: Int) -> Int { data[at..<at + 4].reduce(0) { $0 << 8 | Int($1) } }
     guard word(0) == 0xcafe_babe else { return [0] }
     return (0..<word(4)).map { word(8 + $0 * 20 + 8) }
+}
+
+/// Why `installed` refuses `running`, or "" when it does not.
+private func refusal(running: URL, home: URL) throws -> String {
+    do {
+        _ = try AppUpdate.installed(running: running, home: home)
+        Issue.record("\(running.path) updates")
+        return ""
+    } catch let failure as AppUpdate.Failure {
+        return failure.description
+    }
 }
 
 /// Something is at `url`, a link included.

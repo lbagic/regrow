@@ -785,20 +785,22 @@ final class Shell: ObservableObject {
             setUpdate(.failed(AppUpdate.reason(error)))
             return false
         }
-        // A command whose redirection fails is not run, so nothing but `say` writes to the log.
+        // A command whose redirection fails is not run, so nothing but `say` writes to the log;
+        // the probe is `true`, since a special built-in's failed redirection ends dash and zsh.
         let script = #"""
             log=$4
-            { : >>"$log"; } 2>/dev/null || log=/dev/null
-            say() { printf '%s update helper: %s\n' "$(/bin/date +%Y-%m-%dT%H:%M:%S%z | /usr/bin/sed 's/\(..\)$/:\1/')" "$1" >>"$log"; }
+            { true >>"$log"; } 2>/dev/null || log=/dev/null
+            say() { printf '%s update helper: %s\n' "$(/bin/date +%Y-%m-%dT%H:%M:%S%z | /usr/bin/sed -e 's/+0000$/Z/' -e t -e 's/\(..\)$/:\1/')" "$1" >>"$log"; }
             i=0; while kill -0 "$1" 2>/dev/null && [ "$i" -lt 900 ]; do sleep 0.1; i=$((i+1)); done
             if kill -0 "$1" 2>/dev/null; then
                 say "gave up: Regrow, pid $1, was still running after 90 s"
-                rm -rf "$2"
+                rm -rf "$2" || say "could not remove $2"
                 exit 1
             fi
-            if ! out=$("$2/Contents/MacOS/Regrow" --swap "$2" "$3" 2>&1); then
-                say "the swap failed, so the old app opens again: $(printf '%s' "$out" | /usr/bin/tr '\n' ' ')"
-            fi
+            out=$("$2/Contents/MacOS/Regrow" --swap "$2" "$3" 2>&1) || {
+                rc=$?
+                say "the swap failed (exit $rc), so the old app opens again: $(printf '%s\n' "$out" | /usr/bin/awk 'NR > 1 { printf " ⏎ " } { printf "%s", $0 }')"
+            }
             rm -rf "$2" || say "could not remove $2"
             /usr/bin/open "$3" || say "could not open $3"
             """#
