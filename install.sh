@@ -118,6 +118,12 @@ stop_app() {
 	done
 }
 
+# Removes the staged copy, which the exit trap then leaves alone.
+unstage() {
+	rm -rf "${staged:?}" || true
+	staging=no
+}
+
 # Puts the checked bundle in $tmp/app in ~/Applications in one step,
 # through the new bundle's own --swap, and opens it; on a failure, sets
 # app_note to why and leaves no staged copy.
@@ -125,23 +131,23 @@ install_app() {
 	staging=yes
 	if ! mkdir -p "$HOME/Applications" || ! rm -rf "${staged:?}" || ! ditto "$tmp/app/Regrow.app" "$staged"; then
 		app_note="could not copy it to ~/Applications"
-		rm -rf "${staged:?}" || true
+		unstage
 		return 1
 	fi
 	if ! stop_app; then
-		rm -rf "${staged:?}" || true
+		unstage
 		return 1
 	fi
 	if ! "$staged/Contents/MacOS/Regrow" --swap "$staged" "$app_dest"; then
 		app_note="could not put it in ~/Applications"
-		rm -rf "${staged:?}" || true
+		unstage
 		if [ "$quit_app" = yes ]; then
 			open "$app_dest" 2>/dev/null || true
 		fi
 		return 1
 	fi
 	# After a swap the old bundle is here.
-	rm -rf "${staged:?}" || true
+	unstage
 	app_version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app_dest/Contents/Info.plist" 2>/dev/null || true)
 	say "Installed Regrow.app $app_version to ~/Applications."
 	if open "$app_dest" 2>/dev/null; then

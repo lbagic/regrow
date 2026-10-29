@@ -217,8 +217,8 @@ if [ "$release" -eq 0 ]; then
 		exit 0
 	fi
 	import_identity
-	probe
 	record "$sha1"
+	probe
 	echo "$sha1"
 	echo "Created \"$LOCAL\", valid $DAYS days, and recorded it in $RECORD."
 	exit 0
