@@ -1,7 +1,9 @@
 # Release pipeline: tag v* → GitHub release with signed checksums, and
 # a brew cask pushed to lbagic/homebrew-tap when TAP_GITHUB_TOKEN is set.
-# Run locally with `goreleaser release --snapshot --clean --skip=sign`
-# to verify without publishing.
+# The release carries Regrow.app.zip, which the release workflow builds
+# and signs before goreleaser runs. Run locally with `scripts/app.sh
+# release`, then `goreleaser release --snapshot --clean --skip=sign`, to
+# verify without publishing.
 version: 2
 
 project_name: regrow
@@ -26,6 +28,8 @@ archives:
 
 checksum:
   name_template: checksums.txt
+  extra_files:
+    - glob: ./app/.build/dist/Regrow.app.zip
 
 # Keyless cosign signature over the checksum file: anyone can verify
 # the release against the GitHub Actions OIDC identity, no Apple
@@ -71,6 +75,8 @@ changelog:
       - "^chore"
 
 release:
+  extra_files:
+    - glob: ./app/.build/dist/Regrow.app.zip
   footer: |
     Nothing is removed before you confirm a plan (at the prompt, with
     --yes, or in the app), except by `regrow prune go-build --yes` and by

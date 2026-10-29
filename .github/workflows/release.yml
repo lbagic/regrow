@@ -3,6 +3,22 @@ name: release
 on:
   push:
     tags: ["v*"]
+  # A snapshot that is not published, its app signed with the release key.
+  workflow_dispatch:
+  # A dry run that is not published, its app signed with a throwaway
+  # identity: the release key is out of a pull request's reach.
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - .goreleaser.yaml
+      - install.sh
+      - scripts/app.sh
+      - scripts/release-app.sh
+      - app/**
+      - cmd/**
+      - internal/**
+      - go.mod
+      - go.sum
 
 permissions:
   contents: write
@@ -11,6 +27,9 @@ permissions:
 jobs:
   goreleaser:
     runs-on: macos-latest
+    # The release key is a secret of this environment, whose policy lets
+    # only a v* tag or main run a job in it.
+    environment: ${{ github.event_name != 'pull_request' && 'release' || '' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -19,10 +38,21 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go test ./...
+        if: github.event_name != 'pull_request'
+      # The signing key reaches this step alone, and its keychain is
+      # deleted when the step ends, before any other action runs.
+      - name: Build and sign Regrow.app
+        run: scripts/release-app.sh ${{ github.event_name == 'pull_request' && '--throwaway' || '' }}
+        env:
+          REGROW_SIGNING_P12: ${{ secrets.REGROW_SIGNING_P12 }}
+          REGROW_SIGNING_PASSWORD: ${{ secrets.REGROW_SIGNING_PASSWORD }}
       - uses: sigstore/cosign-installer@v3
+        if: github.event_name == 'push'
       - uses: goreleaser/goreleaser-action@v6
         with:
-          args: release --clean
+          args: ${{ github.event_name == 'push' && 'release --clean' || 'release --snapshot --clean --skip=sign' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAP_GITHUB_TOKEN: ${{ secrets.TAP_GITHUB_TOKEN }}
+          TAP_GITHUB_TOKEN: ${{ github.event_name == 'push' && secrets.TAP_GITHUB_TOKEN || '' }}
+      - name: Checksums
+        run: cat dist/checksums.txt

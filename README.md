@@ -29,6 +29,8 @@ curl -fsSL https://raw.githubusercontent.com/lbagic/regrow/main/install.sh | sh
 
 [`install.sh`](install.sh) downloads the latest release for your Mac's chip (Apple silicon or Intel), checks it against the release's `checksums.txt` and installs nothing when they differ, and puts `regrow` in `~/.local/bin`; it never asks for an administrator password. When `~/.local/bin` is not on your `PATH`, it adds the folder to `PATH` in the file your shell reads at login, and names that file: `~/.zprofile` for zsh, the macOS default; for bash, the first of `~/.bash_profile`, `~/.bash_login` and `~/.profile` that exists, else `~/.bash_profile`. With another shell it prints the line to add. It prints the version it installed and the command to run next. Run the same line again to update; an update whose new `regrow` does not run leaves the installed one in place.
 
+On macOS 14 or later the same line installs `Regrow.app`, the menu bar app, in `~/Applications`, and opens it. It checks the app's archive against `checksums.txt` and checks that the app is signed by regrow's release certificate, and installs `regrow` alone, saying why, when either fails; a running Regrow quits first, as its menu's Quit does. Neither Go nor Xcode nor the developer tools are needed. The release's app is signed with a certificate of regrow's own, not Apple's: fetched by the install line it opens without a prompt, while a copy downloaded in a browser is blocked until you choose Open Anyway in System Settings ▸ Privacy & Security. On macOS 12 and 13 the line installs `regrow` alone.
+
 ### Updates
 
 From 0.2.0 on, `regrow` keeps itself up to date. When it runs, at most once a day, it asks GitHub for the latest release in the background; when that release is newer, it downloads the archive for your Mac's chip, checks it against the release's `checksums.txt`, checks that the new `regrow` runs, puts it in place of the old one and says `regrow updated to 0.2.1; the next run uses it` on stderr. It never stops or fails the command you ran: a command that ends first waits at most 2 seconds for the check, and then only for an install already under way, which takes well under a second; offline it says nothing. `regrow update` checks at once and says what it did. Only the `regrow` the install line put in `~/.local/bin` updates itself, and only a release build: a `go install` build, a copy elsewhere, a link and a `~/.local/bin` you cannot write are left as they are. To turn the daily check off, set `REGROW_NO_AUTO_UPDATE` to any non-empty value, for example with `export REGROW_NO_AUTO_UPDATE=1` in `~/.zprofile`. A `regrow` 0.1.0 does not update itself: run the install line once more.
@@ -43,7 +45,7 @@ go install github.com/lbagic/regrow/cmd/regrow@latest
 
 or, from a clone, `just install` (which runs `go install ./cmd/regrow`). Either puts `regrow` where `go install` puts programs, `~/go/bin` unless you set `GOBIN` or `GOPATH`.
 
-The menubar app, `Regrow.app`, builds from a clone with the Command Line Tools; no Xcode is needed:
+The menubar app, `Regrow.app`, also builds from a clone with the Command Line Tools; no Xcode is needed:
 
 ```sh
 scripts/signing-cert.sh   # once: a local code-signing identity in your login keychain
