@@ -177,14 +177,14 @@ A tick that sampled sends its `tick` event even when it then fails, so the alert
 {"type":"history","id":"h1"}
 ```
 
-What regrow has done on this Mac, read from the oplog and the headroom history, answered at once beside whatever is in flight.
+What regrow has done on this Mac, read from the oplog and the headroom history, answered beside whatever is in flight; the engine reads them off its request loop, so a `cancel` sent meanwhile is not held up.
 
 | Event | Fields |
 |---|---|
 | `history` | `runs`: every run in the oplog, oldest first; `samples`: the headroom history's free-space samples, oldest first, each with the `headroom` event's fields (`at`, `total`, `free`, `purgeable`, `swap_used`); `samples_unreadable: true` when that history could not be read, `samples` then empty; `titles`: rule id → title, for each rule the runs counted bytes for that the catalog still holds |
 | `done` | — |
 
-A run counts as `regrow history` counts it: an action once its done line is in the journal, a prune at what it deleted, any other action at its planned size; a failed or cut-short action counts nothing. Its fields: `id`; `start`; `done`, `failed` and `undone`, counts of actions; `restorable`, the moves `regrow undo` can still put back; `prune`, true when every action was a prune (autotrim's or `regrow prune`'s); its bytes split by where the space went, as the run's summary splits them: `frees_now` (commands and prunes), `after_trash` (moved to the Trash), `staged` (moved to regrow staging, Finder being unavailable) and `exported` (a docker volume removed after its export); and `rules`, rule id → bytes. A journal that cannot be read fails the request with `history_failed`, since the journal is never read past a bad line.
+A run counts as `regrow history` counts it: an action once its done line is in the journal, a prune at what it deleted, any other action at its planned size; a failed or cut-short action, and a move `regrow undo` put back, counts nothing. Its fields: `id`; `start`; `done`, `failed` and `undone`, counts of actions; `restorable`, the moves `regrow undo` can still put back; `prune`, true when every action was a prune (autotrim's or `regrow prune`'s); its bytes split by where the space went, as the run's summary splits them: `frees_now` (commands and prunes), `after_trash` (moved to the Trash), `staged` (moved to regrow staging, Finder being unavailable) and `exported` (a docker volume removed after its export); and `rules`, rule id → bytes. A journal that cannot be read fails the request with `history_failed`, since the journal is never read past a bad line.
 
 ## hello
 
