@@ -1,5 +1,6 @@
 import AppKit
 import RegrowKit
+import Security
 import ServiceManagement
 
 /// The app behind the menu: it keeps one engine running, ticks, routes
@@ -58,6 +59,9 @@ final class Shell: ObservableObject {
     private var pageReloaded = false
     /// An execute was in flight when the reloaded page's process ended; it runs on.
     private var reloadedMidRun = false
+    private var update: AppUpdate.Phase = .unchecked
+    /// The newer release the last check found.
+    private var updateRelease: AppUpdate.Release?
 
     private init() {
         log = LogFile(url: config.log)
@@ -538,6 +542,7 @@ final class Shell: ObservableObject {
         case "ready":
             log("page ready")
             var standing = [helloLine, tickLine, downLine, settings?.line].compactMap { $0 }
+            standing.append(update.line(running: runningVersion))
             if let environmentFailure {
                 standing.append(environmentLine(environmentFailure))
             }
@@ -593,6 +598,10 @@ final class Shell: ObservableObject {
             showStaging()
         case "relaunch":
             relaunch()
+        case "app-update-check":
+            checkUpdate()
+        case "app-update-install":
+            installUpdate()
         default:
             log("the page sent a shell message this app does not know: \(name)")
         }
@@ -649,6 +658,129 @@ final class Shell: ObservableObject {
             MainRunLoop.quit()
         } catch {
             log("could not relaunch: \(error)")
+        }
+    }
+
+    // MARK: The app's own update
+
+    private var runningVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
+    }
+
+    private func setUpdate(_ phase: AppUpdate.Phase) {
+        update = phase
+        window?.deliver(phase.line(running: runningVersion))
+    }
+
+    /// Why this copy does not update itself, or nil when it does.
+    private var updateRefusal: String? {
+        do {
+            _ = try AppUpdate.installed(running: Bundle.main.bundleURL)
+        } catch {
+            return "\(error)"
+        }
+        // An ad hoc signature holds no grant across builds, so no release can keep one for it.
+        return CodeSignature.runningSealed ? nil : "this copy is a development build, signed ad hoc"
+    }
+
+    private func checkUpdate() {
+        switch update {
+        case .checking, .installing: return
+        default: break
+        }
+        if let refusal = updateRefusal {
+            setUpdate(.unavailable(refusal))
+            return
+        }
+        setUpdate(.checking)
+        let running = runningVersion
+        let fetch = AppUpdate.fetch(userAgent: "Regrow/\(running)")
+        Task {
+            do {
+                let release = try await AppUpdate.latest(fetch: fetch)
+                switch try AppUpdate.standing(of: release, running: running) {
+                case .latest:
+                    updateRelease = nil
+                    setUpdate(.latest)
+                case .newer:
+                    updateRelease = release
+                    setUpdate(.newer(release.version.description))
+                case .older:
+                    updateRelease = nil
+                    setUpdate(.older(release.version.description))
+                }
+            } catch {
+                log("update check: \(error)")
+                setUpdate(.failed("\(error)"))
+            }
+        }
+    }
+
+    /// Downloads and checks the newer release's app, then quits and has a
+    /// helper put it in place and open it.
+    private func installUpdate() {
+        guard case .newer = update, let release = updateRelease else { return }
+        guard !router.executeInFlight else {
+            setUpdate(.failed("a run is going; update once it has ended"))
+            return
+        }
+        let requirement: SecRequirement
+        do {
+            requirement = try AppUpdate.runningRequirement()
+        } catch {
+            setUpdate(.failed("\(error)"))
+            return
+        }
+        setUpdate(.installing(release.version.description))
+        log("updating to \(release.tag)")
+        let staged = AppUpdate.stagedPath()
+        let fetch = AppUpdate.fetch(userAgent: "Regrow/\(runningVersion)")
+        Task {
+            do {
+                try await AppUpdate.stage(release, requirement: requirement, staged: staged, fetch: fetch)
+            } catch {
+                log("update: \(error)")
+                setUpdate(.failed("\(error)"))
+                return
+            }
+            guard !router.executeInFlight else {
+                setUpdate(.failed("a run started; update once it has ended"))
+                return
+            }
+            relaunch(swapping: staged)
+        }
+    }
+
+    /// Quits, and has a helper put the staged bundle in place once this
+    /// process has gone, then open the app: the new one, or this one
+    /// again when the swap fails. A process still there after 90 s keeps
+    /// its bundle, and the helper gives up.
+    private func relaunch(swapping staged: URL) {
+        let destination: URL
+        do {
+            destination = try AppUpdate.installed(running: Bundle.main.bundleURL)
+        } catch {
+            setUpdate(.failed("\(error)"))
+            return
+        }
+        let script = #"""
+            i=0; while kill -0 "$1" 2>/dev/null && [ "$i" -lt 900 ]; do sleep 0.1; i=$((i+1)); done
+            kill -0 "$1" 2>/dev/null && exit 1
+            "$2/Contents/MacOS/Regrow" --swap "$2" "$3" && rm -rf "$2"
+            exec /usr/bin/open "$3"
+            """#
+        let null = open("/dev/null", O_RDWR | O_CLOEXEC)
+        defer { close(null) }
+        do {
+            _ = try Spawn.start(
+                "/bin/sh", arguments: ["-c", script, "sh", "\(getpid())", staged.path, destination.path],
+                environment: Account.environment(),
+                stdin: null, stdout: null, stderr: null, group: .session)
+            log("quitting for the update")
+            MainRunLoop.quit()
+        } catch {
+            log("could not start the update's helper: \(error)")
+            setUpdate(.failed("\(error)"))
         }
     }
 
