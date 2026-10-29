@@ -118,11 +118,12 @@ struct Play {
     var historyEvent: [String: Any]?     // the history event in place of the transcript's
     var historyError: String?            // the history request fails with this message
     var holdHistory = false              // history requests wait in heldHistory until the scenario answers them
+    var rulesError: String?              // a set_rules request fails with this message
 
     /// The settings of the installed app on a Mac that has granted it all but Control of Finder.
     static let installed: [String: Any] = [
         "event": "shell", "state": "settings", "login_item": "on", "notifications": "allowed", "finder": "not_asked",
-        "log": "/Users/dev/Library/Logs/regrow/app.log", "staging": "/Users/dev/.local/state/regrow/staging",
+        "log": "/Users/dev/Library/Logs/regrow/app.log", "staging": "/Users/dev/.local/state/regrow/staging", "autotrim": false,
     ]
 }
 
@@ -164,6 +165,8 @@ final class Run: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHa
     private var scanID = ""
     private(set) var planID = ""
     private(set) var executeRequest = ""
+    /// The rules after the changes the page has made.
+    private var rulesNow: [String: Any]?
     private var planHeld: [[String]] = []
 
     init(name: String, dark: Bool, transcript: Transcript, out: URL, play: Play) {
@@ -442,6 +445,27 @@ final class Run: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHa
         case "plan": answer(plan: id, body)
         case "execute": answer(execute: id, body)
         case "cancel": answer(cancel: id, body)
+        case "rules":
+            send(answering("rules", id))
+        case "set_rules":
+            if let message = play.rulesError {
+                return send(["event": "error", "re": id, "code": "rules_failed", "message": message])
+            }
+            // The rules as they stand with this change made, as the engine's switch would.
+            var event = rulesNow ?? parse(answering("rules", id)[0])
+            event["re"] = id
+            let beta = (body["beta"] as? Bool) ?? event["beta"] as? Bool ?? false
+            event["beta"] = beta
+            event["catalog"] = event.objs("catalog").map { rule -> [String: Any] in
+                var rule = rule
+                if rule.str("id") == body.str("rule") { rule["off"] = body["off"] as? Bool ?? false }
+                let off = rule["off"] as? Bool ?? false, isBeta = rule["beta"] as? Bool ?? false
+                rule["runs"] = !off && (!isBeta || beta)
+                return rule
+            }
+            rulesNow = event
+            send(event)
+            send(["event": "done", "re": id])
         case "history":
             if play.holdHistory {
                 heldHistory.append(id)
@@ -483,7 +507,7 @@ final class Run: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHa
             if !play.opened && !play.scanFirst { send(["event": "shell", "state": "scan"]) }
         case "automation":
             if let allowed = play.automation { send(["event": "shell", "state": "automation", "allowed": allowed]) }
-        case "open-full-disk-access", "relaunch", "login-item-on", "login-item-off", "login-item-settings", "notification-settings",
+        case "autotrim-on", "autotrim-off", "open-full-disk-access", "relaunch", "login-item-on", "login-item-off", "login-item-settings", "notification-settings",
             "automation-settings", "show-log", "show-staging":
             break
         default:
@@ -1215,6 +1239,55 @@ struct Scenario {
             r.same(await r.count(".note"), 0, "notices on the scan for a history that failed")
             await r.shoot()
         },
+        Scenario(name: "rules") { r in
+            await results(r)
+            let catalog = r.transcript.event("rules", "rules").objs("catalog")
+            let runs = catalog.filter { $0["runs"] as? Bool ?? false }.count
+            r.same(await r.text("#nav-rules .fig"), "\(runs) on", "Rules' figure in the sidebar")
+            await r.click("#nav-rules")
+            r.same(await r.text(".top h1"), "Rules", "the top bar's title")
+            r.same(await r.text("#pane .lead h2"), "\(runs) of \(catalog.count) rules run.", "the headline")
+            r.same(await r.count("#pane .set[data-rule]"), catalog.count, "a row for every rule")
+            r.same(await r.js("return document.querySelector('#sw-pip-cache').getAttribute('aria-checked')") as? String ?? "", "false", "the rule turned off")
+            r.has(await r.text("[data-rule=pip-cache] .ctl"), "off", "its state")
+            r.same(await r.js("return document.querySelector('#sw-fresh-cache').disabled") as? Bool ?? false, true, "a beta rule's switch while the beta rules are off")
+            r.has(await r.text("[data-rule=fresh-cache] .ctl"), "beta, not scanned", "its state")
+            r.has(await r.text("[data-rule=go-build-cache] .ctl"), "in the last scan", "what the scan shown found for a rule")
+            r.same(await r.text("[data-setting=autotrim] .state"), "off", "autotrim, from the shell's settings")
+            await r.shoot()
+
+            await r.click("#sw-npm-cache")
+            r.same(r.sent("set_rules").last?.str("rule") ?? "", "npm-cache", "the rule a switch turns off")
+            r.same(r.sent("set_rules").last?["off"] as? Bool, true, "off")
+            await r.settle()
+            r.same(await r.js("return document.querySelector('#sw-npm-cache').getAttribute('aria-checked')") as? String ?? "", "false", "the switch once the engine says it is off")
+            r.same(await r.text("#nav-rules .fig"), "\(runs - 1) on", "the sidebar's count once it is off")
+            await r.click("[data-setting=beta] .switch")
+            r.same(r.sent("set_rules").last?["beta"] as? Bool, true, "the beta switch")
+            await r.settle()
+            r.same(await r.js("return document.querySelector('#sw-fresh-cache').getAttribute('aria-checked')") as? String ?? "", "true", "the beta rule once the beta rules run")
+            await r.click("[data-setting=autotrim] .switch")
+            r.same(r.sentShell("autotrim-on"), 1, "autotrim-on messages")
+
+            // The filter hides rows in place.
+            await r.js("const f = document.getElementById('rfilter'); f.value = 'pip'; f.dispatchEvent(new Event('input', { bubbles: true })); return null")
+            r.same(await r.count("#pane .set[data-rule]:not([hidden])"), 1, "rows the filter leaves")
+            await r.js("const f = document.getElementById('rfilter'); f.value = ''; f.dispatchEvent(new Event('input', { bubbles: true })); return null")
+            await r.click("[data-do=ruleShow][data-show=off]")
+            r.same(await r.count("#pane .set[data-rule]:not([hidden])"), 2, "rows that are off: the one the transcript holds, and npm-cache")
+            await r.click("#nav-scan")
+            r.same(await r.screen(), "findings", "the scan, kept while Rules showed")
+        },
+        Scenario(name: "rules-refused", play: Play(rulesError: "/Users/dev/.config/regrow/config.yaml: yaml: line 2: field of not found in type config.Rules")) { r in
+            await results(r)
+            await r.click("#nav-rules")
+            await r.click("#sw-npm-cache")
+            await r.settle()
+            r.has(await r.text("#pane .lead .note"), "That change did not take", "the note")
+            r.has(await r.text("#pane .lead .note"), "field of not found", "the engine's reason")
+            r.same(await r.js("return document.querySelector('#sw-npm-cache').getAttribute('aria-checked')") as? String ?? "", "true", "the switch, unmoved")
+            await r.shoot()
+        },
         Scenario(name: "env-failed", play: Play(environment: "the login shell gave no answer within 5 s")) { r in
             r.has(await r.text(".note"), "could not read your login shell's environment", "the notice")
             r.has(await r.text(".note"), "the login shell gave no answer within 5 s", "the notice's reason")
@@ -1767,7 +1840,7 @@ struct Scenario {
         },
     ]
     // Results, plan and confirm also in dark.
-    return lit + lit.filter { ["results", "plan", "confirm", "general", "stats"].contains($0.name) }.map { var dark = $0; dark.dark = true; return dark }
+    return lit + lit.filter { ["results", "plan", "confirm", "general", "stats", "rules"].contains($0.name) }.map { var dark = $0; dark.dark = true; return dark }
 }()
 
 // MARK: - Main

@@ -60,6 +60,10 @@ type Server struct {
 	// autopilot.Autopilot.Tick, autotrim gate included. Nil refuses
 	// tick requests.
 	Tick func(ctx context.Context, autotrim bool) (headroom.Tick, error)
+	// Switch, when set, owns the catalog: a scan takes Switch.Catalog()
+	// as it starts in place of Catalog, and rules and set_rules
+	// requests read and change it. Nil refuses those requests.
+	Switch RuleSwitch
 	// History reads the oplog and the headroom history for a history
 	// request. Nil refuses history requests.
 	History func() (History, error)
@@ -286,6 +290,8 @@ func (s *session) handle(l requestLine) {
 			defer s.answering.Done()
 			s.history(req)
 		}()
+	case reqRules, reqSetRule:
+		s.rules(req)
 	default:
 		s.emit(failure(req.ID, CodeUnknownRequest, fmt.Sprintf("unknown request type %q", req.Type)))
 	}
@@ -367,7 +373,7 @@ func (s *session) runScan(ctx context.Context, cancel context.CancelFunc, op *op
 			s.emit(inlineEvent{head{"headroom", op.re}, sample})
 		}
 	}
-	rules := s.srv.Catalog
+	rules := s.srv.catalog()
 	s.emit(startEvent{head{"start", op.re}, sc.id, len(rules)})
 
 	findings := make([]engine.Finding, len(rules))
@@ -496,8 +502,15 @@ func (s *session) history(req request) {
 	if h.Samples == nil {
 		h.Samples = []headroom.Sample{}
 	}
-	titles := make(map[string]string, len(s.srv.Catalog))
-	for _, r := range s.srv.Catalog {
+	all := s.srv.Catalog
+	if s.srv.Switch != nil {
+		all = nil
+		for _, r := range s.srv.Switch.State().Rules {
+			all = append(all, r.Rule)
+		}
+	}
+	titles := make(map[string]string, len(all))
+	for _, r := range all {
 		titles[r.ID] = r.Title
 	}
 	h.Titles = map[string]string{}
@@ -509,6 +522,37 @@ func (s *session) history(req request) {
 		}
 	}
 	s.emit(historyEvent{head{"history", req.ID}, h})
+	s.emit(done(req.ID))
+}
+
+// catalog is what a scan starting now runs.
+func (srv *Server) catalog() []engine.Rule {
+	if srv.Switch != nil {
+		return srv.Switch.Catalog()
+	}
+	return srv.Catalog
+}
+
+// rules answers at once: a change applies from the next scan or tick,
+// and the scan shown keeps the findings it has.
+func (s *session) rules(req request) {
+	if s.srv.Switch == nil {
+		s.emit(failure(req.ID, CodeRulesFailed, "this engine cannot change its rules"))
+		return
+	}
+	state := s.srv.Switch.State()
+	if req.Type == reqSetRule {
+		if (req.Rule == "") == (req.Beta == nil) || (req.Rule != "") != (req.Off != nil) {
+			s.emit(failure(req.ID, CodeBadRequest, "set_rules needs a rule and off, or beta"))
+			return
+		}
+		var err error
+		if state, err = s.srv.Switch.Set(req.Rule, req.Off, req.Beta); err != nil {
+			s.emit(failure(req.ID, CodeRulesFailed, err.Error()))
+			return
+		}
+	}
+	s.emit(rulesEvent{head{"rules", req.ID}, state})
 	s.emit(done(req.ID))
 }
 

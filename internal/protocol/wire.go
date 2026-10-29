@@ -24,6 +24,8 @@ const (
 	reqCancel  = "cancel"
 	reqTick    = "tick"
 	reqHistory = "history"
+	reqRules   = "rules"
+	reqSetRule = "set_rules"
 )
 
 // Error codes, the `code` of an error event.
@@ -44,6 +46,7 @@ const (
 	CodePlanExpired    = "plan_expired"
 	CodeExecuteFailed  = "execute_failed"
 	CodeHistoryFailed  = "history_failed"
+	CodeRulesFailed    = "rules_failed"
 )
 
 type request struct {
@@ -56,6 +59,11 @@ type request struct {
 	PlanID   string    `json:"plan_id"`
 	Target   string    `json:"target"`
 	Autotrim bool      `json:"autotrim"`
+	// Rule and Off turn one rule off or on; Beta turns the beta rules
+	// on or off. A set_rules request carries one or the other.
+	Rule string `json:"rule"`
+	Off  *bool  `json:"off"`
+	Beta *bool  `json:"beta"`
 }
 
 // head opens every event: its name and the id of the request it
@@ -173,6 +181,47 @@ func ReadHistory(oplogPath, headroomPath string) (History, error) {
 		h.Samples = nil
 	}
 	return h, nil
+}
+
+// Rules is the engine's catalog and which of it runs, as config.yaml's
+// `rules:` and the engine's --beta-rules leave it.
+type Rules struct {
+	// Rules is every rule of the catalog, beta ones included. Its name
+	// on the wire is catalog: a scan's start event counts its rules in
+	// a field named rules.
+	Rules []RuleState `json:"catalog"`
+	// Beta is config.yaml's `rules: beta`; BetaFlag says the engine was
+	// started with --beta-rules, which runs them whatever Beta says.
+	Beta     bool `json:"beta"`
+	BetaFlag bool `json:"beta_flag"`
+	// Config is the file's path.
+	Config string `json:"config"`
+	// Error says the file no longer loads: the rules as it last loaded
+	// stand until it does.
+	Error string `json:"error,omitempty"`
+}
+
+// RuleState is one rule, whether config.yaml turns it off, and whether
+// it runs: not off, and not beta while the beta rules are off.
+type RuleState struct {
+	engine.Rule
+	Off  bool `json:"off"`
+	Runs bool `json:"runs"`
+}
+
+// RuleSwitch is the engine's say over which rules run.
+type RuleSwitch interface {
+	// Catalog is what a scan or tick starting now runs.
+	Catalog() []engine.Rule
+	State() Rules
+	// Set turns one rule off or on (rule and off), or the beta rules
+	// (beta), in config.yaml.
+	Set(rule string, off, beta *bool) (Rules, error)
+}
+
+type rulesEvent struct {
+	head
+	Rules
 }
 
 type historyEvent struct {

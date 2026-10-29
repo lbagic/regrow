@@ -7,6 +7,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path"
@@ -97,6 +98,28 @@ const DefaultVolumeExportCap = 10 << 30
 // Config is the whole file.
 type Config struct {
 	Docker Docker `yaml:"docker"`
+	Rules  Rules  `yaml:"rules"`
+}
+
+// Rules is which of the catalog's rules regrow runs. The app's Rules
+// section writes it; every command reads it.
+type Rules struct {
+	// Off lists the ids of rules regrow does not look at: no scan,
+	// plan, clean, tick or doctor runs them. An id no rule has is
+	// ignored, so a rule dropped from the catalog leaves the file valid.
+	Off []string `yaml:"off,omitempty"`
+	// Beta runs the rules still in staged rollout, as --beta-rules does.
+	Beta bool `yaml:"beta,omitempty"`
+}
+
+// IsOff reports whether the rule is turned off.
+func (r Rules) IsOff(id string) bool {
+	for _, off := range r.Off {
+		if off == id {
+			return true
+		}
+	}
+	return false
 }
 
 func (c Config) validate() error {
@@ -131,7 +154,8 @@ func Load() (Config, error) {
 	return LoadFile(p)
 }
 
-// LoadFile reads one config file. Unknown keys are an error.
+// LoadFile reads one config file. Unknown keys are an error; an empty
+// file is the defaults.
 func LoadFile(path string) (Config, error) {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -143,7 +167,7 @@ func LoadFile(path string) (Config, error) {
 	var c Config
 	dec := yaml.NewDecoder(strings.NewReader(string(data)))
 	dec.KnownFields(true)
-	if err := dec.Decode(&c); err != nil {
+	if err := dec.Decode(&c); err != nil && !errors.Is(err, io.EOF) {
 		return Config{}, fmt.Errorf("%s: %w", path, err)
 	}
 	if err := c.validate(); err != nil {
