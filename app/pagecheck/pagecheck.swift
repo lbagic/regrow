@@ -6,9 +6,9 @@
 //
 // Each scenario loads the page fresh in an offscreen web view, answers what the page asks with the section of
 // the transcript the scenario names, waits for the page to settle, asserts on the DOM and on what the page
-// sent, and writes a PNG of the 900×640 window. It exits 1 with a line per failure. Two things in the
+// sent, and writes a PNG of the 1096×640 window. It exits 1 with a line per failure. Two things in the
 // environment are for a closer look: PAGECHECK_ONLY, a comma-separated list of scenario names, runs only
-// those; PAGECHECK_SIZE, as 720x520, draws the window at another size.
+// those; PAGECHECK_SIZE, as 916x520, draws the window at another size.
 //
 // What reaches the page is the transcript's own lines, with four substitutions a recording cannot hold:
 // REQ becomes the id of the request being answered; a plan's expires_at is set from this run's clock, in the
@@ -94,6 +94,7 @@ struct Transcript {
 
 struct Play {
     var fdaDenied = false
+    var fdaWord: String?                 // the hello's fda in place of the recorded one, as fdaDenied does for denied
     var tick: String? = "tick"           // the section whose tick the shell relays; nil when it has none yet
     var environment: String?             // the reason the shell could not read the login environment
     var scan = "scan"
@@ -112,12 +113,20 @@ struct Play {
     var opened = false                   // the window was opened with Open: the shell asks for no scan
     var scanFirst = false                // the shell asks for a scan before it hands over the engine's hello
     var holdHello = false                // the engine has not said hello when the page is ready
+    var settings: [String: Any]? = Play.installed  // the shell's settings event; nil: it has read none yet
+    var tickAfterRun: String?            // the section whose tick the shell relays once a run ends, as the app does
+
+    /// The settings of the installed app on a Mac that has granted it all but Control of Finder.
+    static let installed: [String: Any] = [
+        "event": "shell", "state": "settings", "login_item": "on", "notifications": "allowed", "finder": "not_asked",
+        "log": "/Users/dev/Library/Logs/regrow/app.log", "staging": "/Users/dev/.local/state/regrow/staging",
+    ]
 }
 
 /// The window the page is drawn in: the size DESIGN.md draws it for, unless the environment asks otherwise.
 let windowSize: CGSize = {
     let parts = (ProcessInfo.processInfo.environment["PAGECHECK_SIZE"] ?? "").split(separator: "x").compactMap { Double($0) }
-    return parts.count == 2 ? CGSize(width: parts[0], height: parts[1]) : CGSize(width: 900, height: 640)
+    return parts.count == 2 ? CGSize(width: parts[0], height: parts[1]) : CGSize(width: 1096, height: 640)
 }()
 
 @MainActor
@@ -409,7 +418,7 @@ final class Run: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHa
         pumping = false
     }
 
-    private func answering(_ section: String, _ id: String) -> [String] {
+    func answering(_ section: String, _ id: String) -> [String] {
         transcript.lines(section).map { line in
             if !line.contains("\"re\":\"REQ\"") { fail("a line of \(section) has no REQ to replace") }
             return line.replacingOccurrences(of: "\"re\":\"REQ\"", with: "\"re\":\(json(["v": id]).dropFirst(5).dropLast(1))")
@@ -441,9 +450,9 @@ final class Run: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHa
             pasted.append(pasteboard.string(forType: .string) ?? "")
         case "ready":
             var hello = transcript.lines("hello")[0]
-            if play.fdaDenied {
-                expect(hello.contains("\"fda\":\"granted\""), "the recorded hello has no fda to deny")
-                hello = hello.replacingOccurrences(of: "\"fda\":\"granted\"", with: "\"fda\":\"denied\"")
+            if let word = play.fdaWord ?? (play.fdaDenied ? "denied" : nil) {
+                expect(hello.contains("\"fda\":\"granted\""), "the recorded hello has no fda to replace")
+                hello = hello.replacingOccurrences(of: "\"fda\":\"granted\"", with: "\"fda\":\"\(word)\"")
             }
             if let path = play.helloSelf {
                 var event = parse(hello)
@@ -454,10 +463,12 @@ final class Run: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHa
             if !play.holdHello { send([hello]) }
             if let tick = play.tick { send([answering(tick, "shell-1")[0]]) }
             if let reason = play.environment { send(["event": "shell", "state": "environment", "captured": false, "reason": reason]) }
+            if let settings = play.settings { send(settings) }
             if !play.opened && !play.scanFirst { send(["event": "shell", "state": "scan"]) }
         case "automation":
             if let allowed = play.automation { send(["event": "shell", "state": "automation", "allowed": allowed]) }
-        case "open-full-disk-access", "relaunch":
+        case "open-full-disk-access", "relaunch", "login-item-on", "login-item-off", "login-item-settings", "notification-settings",
+            "automation-settings", "show-log", "show-staging":
             break
         default:
             fail("the page sent a shell message the bridge does not have: \(shell)")
@@ -536,6 +547,10 @@ final class Run: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHa
         }
         let lines = answering(play.execute, id)
         send(play.executeStops ? Array(lines.prefix(lines.count / 2)) : play.executeLines.map { Array(lines.prefix($0)) } ?? lines)
+        // The shell ticks once a run has ended, and hands the page that tick.
+        if !play.executeStops, play.executeLines == nil, let tick = play.tickAfterRun {
+            send([answering(tick, "shell-2")[0]])
+        }
     }
 
     private func answer(cancel id: String, _ body: [String: Any]) {
@@ -567,14 +582,15 @@ struct Scenario {
 }
 
 /// What DESIGN.md fixes in numbers, read back from the drawn page: `[selector, property]` against a value.
-/// A property starting with `#` is the element's own box: its height, or how far its right edge is from
-/// the window's.
+/// A property starting with `#` is the element's own box: its height, its width, or how far its right edge
+/// is from the window's.
 @MainActor func drawn(_ r: Run, _ wants: [(String, String, String)]) async {
     for (selector, property, want) in wants {
         let got = await r.js("""
             const el = document.querySelector(selector);
             if (!el) return 'no such element';
             if (property === '#height') return String(el.getBoundingClientRect().height);
+            if (property === '#width') return String(el.getBoundingClientRect().width);
             if (property === '#right') return String(innerWidth - el.getBoundingClientRect().right);
             const style = getComputedStyle(el);
             return property === 'font-family' ? style.fontFamily.split(',')[0] : style.getPropertyValue(property);
@@ -700,7 +716,7 @@ struct Scenario {
             let paper = await r.paper()
             await r.shoot()
 
-            if windowSize.width == 900 {
+            if windowSize.width == 1096 {
                 await drawn(r, [
                     (".top", "#height", "42"), (".tray", "#height", "60"), (".page", "padding-left", "32px"), (".entry", "#right", "32"), (".top button", "#right", "32"), (".tray .btn", "#right", "32"),
                     (".top h1", "font-family", "ui-serif"), (".top h1", "font-size", "17px"), (".top h1", "font-weight", "600"),
@@ -888,6 +904,183 @@ struct Scenario {
             await r.click(".entry[data-rule=node-modules-dirs] [data-do=open]")
             r.has(await r.text(".entry[data-rule=node-modules-dirs] .items"), "needs Full Disk Access", "what an unreadable item needs")
         },
+        Scenario(name: "general") { r in
+            await results(r)
+            await r.js("document.getElementById('page').scrollTop = 300; return null")
+            let top = await r.js("return document.getElementById('page').scrollTop") as? Double ?? 0
+            r.expect(top > 0, "the scan scrolls")
+            r.same(await r.js("return document.getElementById('nav-scan').getAttribute('aria-current')") as? String ?? "", "page", "the sidebar's current section on the scan")
+            await r.click("#nav-general")
+            r.same(await r.js("return document.documentElement.dataset.pane") as? String ?? "", "general", "the section shown")
+            r.same(await r.js("return document.getElementById('nav-general').getAttribute('aria-current')") as? String ?? "", "page", "the sidebar's current section")
+            r.same(await r.text(".top h1"), "General", "the top bar's title")
+            r.same(await r.count(".top button"), 0, "actions in General's top bar")
+            r.same(await r.texts("#pane .sec h3"), ["Startup", "Permissions", "About"], "General's sections")
+            r.same(await r.js("return document.querySelector('[data-setting=login] .switch').getAttribute('aria-checked')") as? String ?? "", "true", "Start with Mac's switch")
+            r.same(await r.text("[data-setting=fda] .ctl"), "on", "Full Disk Access granted")
+            r.same(await r.text("[data-setting=finder] .ctl"), "not asked yet", "Control of Finder before macOS asked")
+            r.same(await r.text("[data-setting=notifications] .state"), "on", "Notifications allowed")
+            r.same(await r.text("[data-setting=notifications] button"), "Open settings", "Notifications' action")
+            r.same(await r.text("#pane .sec header span"), "", "the count of grants off when none is")
+            r.same(await r.text("[data-setting=version] .ctl"), "regrow 0.5.0", "the version")
+            r.same(await r.text("[data-setting=engine] .mono"), "~/Applications/Regrow.app/Contents/MacOS/regrow-engine", "the engine's path")
+            await r.click("[data-setting=engine] .copy")
+            r.same(r.pasted.last ?? "", "/Users/dev/Applications/Regrow.app/Contents/MacOS/regrow-engine", "what Copy beside the engine's path put on the pasteboard")
+            r.same(await r.text("[data-setting=log] .mono"), "~/Library/Logs/regrow/app.log", "the log, from the home the scan taught the page")
+            await drawn(r, [
+                (".nav", "#width", "196"), (".nav .name", "font-family", "ui-serif"), (".nav .name", "font-size", "17px"),
+                ("#pane", "padding-left", "32px"), (".set h4", "font-size", "13.5px"), (".set h4", "font-weight", "650"),
+                (".switch", "#height", "19"), ("[data-setting=login] .switch", "#right", "32"),
+            ])
+            await r.shoot()
+
+            await r.click("[data-setting=login] .switch")
+            r.same(r.sentShell("login-item-off"), 1, "login-item-off messages")
+            r.same(await r.js("return document.querySelector('[data-setting=login] .switch').getAttribute('aria-checked')") as? String ?? "", "true", "the switch before the shell says it moved")
+            var off = Play.installed
+            off["login_item"] = "off"
+            r.send(off)
+            await r.settle()
+            r.same(await r.js("return document.querySelector('[data-setting=login] .switch').getAttribute('aria-checked')") as? String ?? "", "false", "the switch once the shell says it moved")
+            await r.click("[data-setting=login] .switch")
+            r.same(r.sentShell("login-item-on"), 1, "login-item-on messages")
+            await r.click("[data-setting=log] button")
+            r.same(r.sentShell("show-log"), 1, "show-log messages")
+            await r.click("[data-setting=staging] button")
+            r.same(r.sentShell("show-staging"), 1, "show-staging messages")
+            await r.click("[data-setting=notifications] button")
+            r.same(r.sentShell("notification-settings"), 1, "notification-settings messages")
+
+            await r.click("#nav-scan")
+            r.same(await r.text(".top h1"), "Scan", "the top bar's title on the scan")
+            r.same(await r.js("return document.getElementById('page').scrollTop") as? Double ?? 0, top, "where the scan was scrolled to, kept while General showed")
+            r.same(await r.screen(), "findings", "the scan's screen, kept while General showed")
+        },
+        Scenario(name: "general-off", play: Play(fdaDenied: true, settings: [
+            "event": "shell", "state": "settings", "login_item": "needs_approval", "notifications": "denied", "finder": "denied",
+            "log": "/Users/dev/Library/Logs/regrow/app.log", "staging": "/Users/dev/.local/state/regrow/staging",
+        ])) { r in
+            await results(r)
+            r.same(await r.text("#nav-general .fig"), "3", "the grants off, beside General in the sidebar")
+            await r.click("#nav-general")
+            r.same(await r.text("#pane .sec:nth-of-type(2) header span"), "3 of 3 off", "the count of grants off")
+            let partial = r.transcript.events("scan", "finding").filter { $0.obj("finding").objs("items").contains { $0["partial"] as? Bool ?? false } }.count
+            r.has(await r.text("[data-setting=fda] p"), "Off: \(partial) findings of the last scan were read only in part", "what Full Disk Access off costs")
+            r.same(await r.text("[data-setting=fda] button"), "Open settings", "Full Disk Access's action")
+            r.same(await r.text("[data-setting=login] .state"), "needs approval", "Start with Mac awaiting approval")
+            r.same(await r.text("[data-setting=login] button"), "Open Login Items settings", "Start with Mac's action awaiting approval")
+            r.same(await r.count("[data-setting=login] .switch"), 0, "a switch while macOS holds the login item")
+            await r.shoot()
+            await r.click("[data-setting=fda] button")
+            r.same(r.sentShell("open-full-disk-access"), 1, "open-full-disk-access messages")
+            r.same(await r.text("[data-setting=fda] button"), "Relaunch to apply", "Full Disk Access's action once its settings were opened")
+            await r.click("[data-setting=fda] button")
+            r.same(r.sentShell("relaunch"), 1, "relaunch messages")
+            await r.click("[data-setting=login] button")
+            r.same(r.sentShell("login-item-settings"), 1, "login-item-settings messages")
+            await r.click("[data-setting=finder] button")
+            r.same(r.sentShell("automation-settings"), 1, "automation-settings messages")
+            await r.click("#nav-scan")
+            r.same(await r.text(".note button"), "Relaunch regrow to apply", "the scan's notice, once General opened the settings")
+        },
+        Scenario(name: "general-copy", play: Play(opened: true, settings: [
+            "event": "shell", "state": "settings", "notifications": "unknown", "finder": "not_asked", "log": "/tmp/regrow/app.log",
+        ])) { r in
+            await r.click("#nav-general")
+            r.same(await r.text("[data-setting=login] p"), "Only the copy in ~/Applications can start with your Mac.", "Start with Mac in a copy elsewhere")
+            r.same(await r.count("#pane .switch"), 0, "switches in a copy elsewhere")
+            r.same(await r.text("[data-setting=notifications] .ctl"), "not available in this copy", "Notifications without a bundle")
+            r.same(await r.count("[data-setting=staging]"), 0, "the staging row before the engine named its folder")
+            r.same(await r.text("[data-setting=log] .mono"), "/tmp/regrow/app.log", "a log outside the home")
+            await r.shoot()
+        },
+        Scenario(name: "general-latest-word") { r in
+            await results(r)
+            // The confirm step heard no; then the owner allowed it in System Settings, and the shell read that.
+            r.send(["event": "shell", "state": "automation", "allowed": false])
+            var allowed = Play.installed
+            allowed["finder"] = "allowed"
+            r.send(allowed)
+            await r.settle()
+            await r.click("#nav-general")
+            r.same(await r.text("[data-setting=finder] .state"), "on", "Control of Finder, by the shell's later read")
+            r.same(await r.count("[data-setting=finder] button"), 0, "Control of Finder's link while it is on")
+            r.same(await r.text("#nav-general .fig"), "", "grants off beside General")
+            r.send(["event": "shell", "state": "automation", "allowed": false])
+            await r.settle()
+            r.same(await r.text("[data-setting=finder] .state"), "off", "Control of Finder, by the confirm step's later answer")
+            var unknown = Play.installed
+            unknown["finder"] = "unknown"
+            r.send(unknown)
+            await r.settle()
+            r.same(await r.text("[data-setting=finder] .state"), "unknown", "Control of Finder macOS did not report")
+            r.has(await r.text("[data-setting=finder] p"), "macOS did not say", "why it is unknown")
+            r.same(await r.text("#nav-general .fig"), "", "a grant macOS did not report, counted as off")
+            r.same(await r.text("[data-setting=staging] .state"), human(r.transcript.event("tick", "tick").int("staged_bytes")), "staging's size, from the tick")
+            r.same(await r.count("[data-setting=staging] button"), 1, "Show in Finder for staging with something there")
+            await r.shoot()
+        },
+        Scenario(name: "general-scan-asked") { r in
+            await results(r)
+            await r.click("#nav-general")
+            r.send(["event": "shell", "state": "scan"])
+            await r.settle()
+            r.same(await r.js("return document.documentElement.dataset.pane") as? String ?? "", "scan", "the section the menu's Scan shows")
+            r.same(r.sent("scan").count, 2, "scans, the menu's included")
+            await r.shoot()
+        },
+        Scenario(name: "general-run-ended", play: Play(executeStops: true)) { r in
+            await toRun(r)
+            await r.js("document.getElementById('page').scrollTop = 400; return null")
+            await r.click("#nav-general")
+            let lines = r.answering("execute", r.executeRequest)
+            r.send(Array(lines.suffix(from: lines.count / 2)))
+            await r.settle()
+            r.same(await r.text("#nav-scan .fig"), "", "Scan's figure once the run has ended")
+            await r.click("#nav-scan")
+            r.same(await r.screen(), "result", "the screen once the run has ended")
+            r.same(await r.js("return document.getElementById('page').scrollTop") as? Double ?? -1, 0, "the result's scroll, on a screen new since the scan was left")
+            await r.shoot()
+        },
+        Scenario(name: "general-unknown", play: Play(fdaWord: "unknown", tick: nil)) { r in
+            await results(r)
+            await r.click("#nav-general")
+            r.same(await r.text("[data-setting=fda] .state"), "unknown", "Full Disk Access macOS did not report")
+            r.same(await r.text("[data-setting=fda] button"), "Open settings", "Full Disk Access's action while unknown")
+            r.same(await r.text("#nav-general .fig"), "", "grants off beside General")
+            r.same(await r.text("#pane .sec:nth-of-type(2) header span"), "", "the count of grants off")
+            r.same(await r.text("[data-setting=staging] .state"), "…", "staging with no tick yet")
+            r.same(await r.count("[data-setting=staging] button"), 0, "Show in Finder for staging with nothing there")
+            r.send(["event": "shell", "state": "engine_down", "message": "the engine exited with status 1"])
+            await r.settle()
+            r.same(await r.text("#nav-scan .fig"), "stopped", "Scan's figure while the engine is down")
+            await r.shoot()
+        },
+        Scenario(name: "general-staged-after-run", play: Play(tick: "tick-steady", tickAfterRun: "tick")) { r in
+            await toRun(r)
+            await r.settle()
+            r.same(await r.screen(), "result", "the screen")
+            r.same(r.sentShell("tick"), 0, "ticks the page asked for: the shell ticks by itself")
+            await r.click("#nav-general")
+            r.same(await r.text("[data-setting=staging] .state"), human(r.transcript.event("tick", "tick").int("staged_bytes")), "staging's size, from the tick after the run")
+            r.same(await r.count("[data-setting=staging] button"), 1, "Show in Finder for staging once the run put something there")
+            await r.shoot()
+        },
+        Scenario(name: "general-rescan-scroll") { r in
+            await results(r)
+            await r.js("document.getElementById('page').scrollTop = 400; return null")
+            await r.click("#nav-general")
+            r.send(["event": "shell", "state": "engine_down", "message": "the engine exited with status 2"])
+            await r.settle()
+            r.send([r.transcript.lines("hello")[0]])
+            await r.settle()
+            r.same(r.sent("scan").count, 2, "scans, the one after the engine came back included")
+            await r.click("#nav-scan")
+            await r.settle()
+            r.same(await r.phase(), "done", "the new scan's phase")
+            r.same(await r.js("return document.getElementById('page').scrollTop") as? Double ?? -1, 0, "a new scan's scroll, though the screen is the same")
+            await r.shoot()
+        },
         Scenario(name: "env-failed", play: Play(environment: "the login shell gave no answer within 5 s")) { r in
             r.has(await r.text(".note"), "could not read your login shell's environment", "the notice")
             r.has(await r.text(".note"), "the login shell gave no answer within 5 s", "the notice's reason")
@@ -928,7 +1121,7 @@ struct Scenario {
             let last = actions.reversed().prefix { $0.str("rule_id") == order.last }.count
             r.same(await r.texts(".act .seq").last ?? "", last > 1 ? "\(actions.count - last + 1)–\(actions.count)" : "\(actions.count)", "the last group's numbers")
             r.has(await r.text(".tray .say"), "in the next 10 minutes", "how long the plan can run")
-            if windowSize.width == 900 {
+            if windowSize.width == 1096 {
                 await drawn(r, [
                     (".act:not(.skip)", "grid-template-columns", "44px 546px 246px"), (".act h4", "font-family", "ui-serif"), (".act h4", "font-size", "15px"),
                     (".act .ln", "font-family", "ui-monospace"), (".act .ln", "font-size", "12px"), (".act .ln", "-webkit-user-select", "text"),
@@ -1033,7 +1226,7 @@ struct Scenario {
             r.same(await r.text(".ask h2"), "Run \(actions.count) actions?", "the question")
             r.has(await r.text(".gate label"), "I read the \(actions.filter { $0.str("kind") != "trash" }.count) commands. They have no undo.", "the tick box's sentence")
             r.has(await r.text(".ask dl"), "empties the Trash", "the line on the command that empties the Trash")
-            if windowSize.width == 900 {
+            if windowSize.width == 1096 {
                 await drawn(r, [
                     (".ask", "max-width", "560px"), (".ask h2", "font-size", "28px"), (".ask h2", "font-family", "ui-serif"),
                     (".btn.run", "border-top-left-radius", "8px"), (".top .status", "#height", "0"),
@@ -1115,7 +1308,7 @@ struct Scenario {
             r.expect(await r.flag("return getComputedStyle(document.querySelector('.undo .mono')).webkitUserSelect === 'text'"), "the undo command cannot be selected")
             r.same(await r.texts(".sec.bad .err"), journal.filter { $0.str("event") == "fail" }.map { $0.str("error").replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression) }, "what failed")
             r.same(await r.count(".ln[data-state=done]"), journal.filter { $0.str("event") == "done" }.count, "lines marked done")
-            r.same(await r.js("return [...document.querySelectorAll('[data-do]')].map((el) => el.dataset.do).filter((d) => d !== 'copy')") as? [String] ?? [], ["scan"], "the ways on from a result")
+            r.same(await r.js("return [...document.querySelectorAll(':is(#top, #page, #tray) [data-do]')].map((el) => el.dataset.do).filter((d) => d !== 'copy')") as? [String] ?? [], ["scan"], "the ways on from a result")
             await r.shoot()
             // The undo command and the run's folder are copied whole: the folder with its home, not ~.
             await r.click(".undo .copy")
@@ -1353,7 +1546,7 @@ struct Scenario {
             r.has(await r.text(".tray .say"), frees + " frees now", "the tray after the engine refused the review")
             let exported = human(r.transcript.event("plan-all", "plan").obj("totals").int("exported"))
             r.has(await r.text(".tray .say"), exported + " in volume exports", "the tray names the volume exports the ticks hold")
-            // The tray grows past 60 px for its lines on a narrow window (PAGECHECK_SIZE=720x520 draws one).
+            // The tray grows past 60 px for its lines on a narrow window (PAGECHECK_SIZE=916x520 draws one).
             r.expect(await r.flag("""
                 const tray = document.querySelector('.tray').getBoundingClientRect();
                 return [...document.querySelectorAll('.tray > *')].every((el) => {
@@ -1430,7 +1623,7 @@ struct Scenario {
             r.same(await r.screen(), "down", "the screen")
             r.has(await r.text(".page"), "the engine exited with status 1: write /dev/stdout: broken pipe", "the shell's message")
             r.same(await r.text(".lead .aside"), "This page scans again as soon as the engine is back.", "the engine-down screen")
-            r.same(await r.count("button:not(:disabled)"), 0, "buttons that can be pressed while the engine is down")
+            r.same(await r.count(":is(#top, #page, #tray) button:not(:disabled)"), 0, "buttons in the scan that can be pressed while the engine is down")
             await r.shoot()
             let scans = r.sent("scan").count
             r.send([r.transcript.lines("hello")[0]])
@@ -1440,7 +1633,7 @@ struct Scenario {
         },
     ]
     // Results, plan and confirm also in dark.
-    return lit + lit.filter { ["results", "plan", "confirm"].contains($0.name) }.map { var dark = $0; dark.dark = true; return dark }
+    return lit + lit.filter { ["results", "plan", "confirm", "general"].contains($0.name) }.map { var dark = $0; dark.dark = true; return dark }
 }()
 
 // MARK: - Main

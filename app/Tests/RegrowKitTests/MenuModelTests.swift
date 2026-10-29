@@ -39,7 +39,7 @@ struct MenuModelTests {
         #expect(abs(figures.taken - 0.858) < 0.001)
         #expect(abs(figures.purgeable - 0.008) < 0.001)
         #expect(Array(rows.dropFirst()) == [
-            .separator, .open, .scan, .separator, .autotrim(on: false), .separator, .fullDiskAccess("granted"), .separator, .quit,
+            .separator, .open, .scan, .separator, .autotrim(on: false), .separator, .fullDiskAccess("granted", opensSettings: false), .separator, .quit,
         ])
     }
 
@@ -76,6 +76,15 @@ struct MenuModelTests {
         #expect(abs(width.taken + width.purgeable + width.free - room) < 0.01)
     }
 
+    @Test("Full Disk Access not granted is a row that opens its settings, with Relaunch to apply under it", arguments: [
+        ("denied", "not granted"), ("unknown", "unknown"),
+    ])
+    func fullDiskAccessOff(fda: String, figure: String) throws {
+        let rows = MenuModel.rows(state(tick: try tick(), fda: fda))
+        let at = try #require(rows.firstIndex(of: .fullDiskAccess(figure, opensSettings: true)))
+        #expect(rows[at + 1] == .relaunch)
+    }
+
     @Test("before the first tick the figures say so, and every action is there")
     func noTick() throws {
         let rows = MenuModel.rows(MenuState(
@@ -85,8 +94,8 @@ struct MenuModelTests {
         #expect(figures.free == nil)
         #expect(figures.checked == "Not checked yet")
         #expect(rows.contains(.open))
-        #expect(rows.contains(.fullDiskAccess("not checked yet")))
-        #expect(!rows.contains(.openFullDiskAccess))
+        #expect(rows.contains(.fullDiskAccess("not checked yet", opensSettings: false)))
+        #expect(!rows.contains(.relaunch))
         #expect(rows.last == .quit)
     }
 
@@ -128,12 +137,11 @@ struct MenuModelTests {
             tick: try tick(#","staged_bytes":2254857830"#), failure: TickFailure(code: "autotrim_locked", message: Self.lock),
             autotrim: true, fda: "denied", environment: "the login shell gave no answer within 5 s"))
         for action: MenuRow in [
-            .open, .scan, .autotrim(on: true), .copy(Self.engine + " prune go-build --yes"), .openFullDiskAccess, .relaunch,
+            .open, .scan, .autotrim(on: true), .copy(Self.engine + " prune go-build --yes"), .fullDiskAccess("not granted", opensSettings: true), .relaunch,
             .staging(2_254_857_830), .quit,
         ] {
             #expect(rows.contains(action), "\(action)")
         }
-        #expect(rows.contains(.fullDiskAccess("not granted")))
         #expect(rows.contains(.environment("Login environment not captured: the login shell gave no answer within 5 s")))
     }
 }

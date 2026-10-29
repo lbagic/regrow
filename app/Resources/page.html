@@ -42,7 +42,7 @@
 html, body { height: 100%; }
 body {
   margin: 0; background: var(--paper); color: var(--ink); font: 13px/1.4 var(--sans);
-  display: grid; grid-template: 42px minmax(0, 1fr) minmax(60px, auto) / minmax(0, 1fr); overflow: hidden;
+  display: grid; grid-template: 42px minmax(0, 1fr) minmax(60px, auto) / 196px minmax(0, 1fr); overflow: hidden;
   -webkit-font-smoothing: antialiased; cursor: default; -webkit-user-select: none;
 }
 h1, h2, h3, h4, p, dl, dd, ol { margin: 0; padding: 0; }
@@ -170,7 +170,7 @@ input[type="checkbox"] { accent-color: var(--accent); margin: 0; width: 15px; he
 
 /* the tray */
 .tray { display: flex; align-items: center; gap: 22px; padding: 0 32px; background: var(--panel); border-top: 1px solid var(--line-strong); }
-@media (max-width: 800px) { .tray { gap: 12px; } }
+@media (max-width: 996px) { .tray { gap: 12px; } }
 .steps { display: flex; align-items: center; gap: 8px; list-style: none; font-size: 12.5px; color: var(--ink-2); }
 .steps li { display: flex; align-items: center; gap: 6px; }
 .steps li i { display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--line-strong); font-style: normal; font-size: 11px; font-weight: 600; }
@@ -231,12 +231,47 @@ input[type="checkbox"] { accent-color: var(--accent); margin: 0; width: 15px; he
 .gate label { display: inline-flex; align-items: center; gap: 9px; font-size: 13.5px; font-weight: 600; }
 .gate input { accent-color: var(--danger); }
 .fine { margin-top: 12px; color: var(--ink-2); font-size: 12.5px; }
+
+/* the sidebar: the sections, and free space under them */
+.nav { grid-row: 1 / -1; grid-column: 1; display: flex; flex-direction: column; padding: 0 10px 14px; background: var(--panel); border-right: 1px solid var(--line-strong); }
+.top, .page, .tray { grid-column: 2; }
+#pane { grid-row: 2 / -1; }
+[data-pane="scan"] #pane, :root:not([data-pane="scan"]) #page, :root:not([data-pane="scan"]) #tray { display: none; }
+.nav .name { display: flex; align-items: center; height: 42px; padding: 0 8px; font: 600 17px/1 var(--serif); letter-spacing: -.005em; }
+.nav .group { margin: 16px 8px 4px; color: var(--ink-3); font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+.nav button { display: flex; align-items: center; gap: 8px; width: 100%; height: 30px; padding: 0 8px; border-radius: 8px; color: var(--ink-2); font-size: 13px; text-align: left; }
+.nav button svg { color: var(--ink-3); }
+.nav button[aria-current="page"] { background: var(--accent-soft); color: var(--ink); font-weight: 650; }
+.nav button[aria-current="page"] svg { color: var(--accent); }
+.nav .fig { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 400; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.nav .fig svg { color: var(--caution); }
+.nav .disk { margin-top: auto; padding: 0 8px; font-size: 12px; color: var(--ink-2); }
+.nav .disk b { color: var(--ink); font-size: 15px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.nav .disk .meter { margin: 7px 0 6px; }
+
+/* a setting: what it is on the left, its state and control on the right */
+.set { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 24px; padding: 10px 0 11px; border-bottom: 1px solid var(--line); }
+.set h4 { display: flex; align-items: center; gap: 7px; font: 650 13.5px/1.35 var(--sans); }
+.set h4 svg { color: var(--caution); }
+.set p { margin-top: 2px; color: var(--ink-2); font-size: 12.5px; max-width: 70ch; }
+.set p .mono { color: var(--ink); }
+.set .then { margin-top: 6px; }
+.set .ctl { display: flex; align-items: center; justify-content: flex-end; gap: 12px; white-space: nowrap; }
+.set .state { display: inline-flex; align-items: center; gap: 5px; color: var(--ink-2); font-size: 12.5px; }
+.set .state svg { color: var(--accent); }
+.btn.small { height: 28px; padding: 0 12px; font-size: 12.5px; }
+.switch { position: relative; width: 32px; height: 19px; border-radius: 10px; background: var(--line-strong); flex: none; }
+.switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 15px; height: 15px; border-radius: 50%; background: var(--paper); box-shadow: 0 1px 2px rgba(0, 0, 0, .25); }
+.switch[aria-checked="true"] { background: var(--accent); }
+.switch[aria-checked="true"]::after { left: 15px; }
 </style>
 </head>
 <body>
+<nav class="nav" id="nav" aria-label="Sections"></nav>
 <header class="top" id="top"></header>
 <main class="page" id="page"></main>
 <footer class="tray" id="tray"></footer>
+<main class="page" id="pane"></main>
 <script>
 'use strict';
 
@@ -244,6 +279,11 @@ input[type="checkbox"] { accent-color: var(--accent); margin: 0; width: 15px; he
 // The page has no rule about what may be deleted: a tick box exists where the engine sent a `select`, and what
 // a plan does is what the engine's plan says.
 const S = {
+  pane: 'scan',       // scan | general: the section the sidebar shows
+  scanTop: 0,         // where the scan section was scrolled to when another section was shown, on which screen:
+  scanScreen: '',     // the scroll position holds only for that screen
+  settings: null,     // the shell's settings event: login_item, notifications, finder, log, staging
+  finder: '',         // allowed | denied | not_asked | unknown: the last word on Control of Finder, the shell's or the confirm step's
   screen: 'findings', // findings | plan | confirm | running | result; an engine that is down is drawn over it
   hello: null,        // the engine's hello
   tick: null,         // the shell's latest tick: the forecast in the headline
@@ -345,10 +385,11 @@ const on = {
   },
   tick(e) { S.tick = e; },
   shell(e) {
+    if (e.state === 'settings') { S.settings = e; S.finder = e.finder || ''; }
     if (e.state === 'environment') S.env = e.captured === false ? e.reason || 'no reason given' : '';
-    if (e.state === 'automation') S.automation = e.allowed ? 'allowed' : 'denied';
+    if (e.state === 'automation') S.finder = S.automation = e.allowed ? 'allowed' : 'denied';
     // The menu's Scan, or a relaunch to apply Full Disk Access.
-    if (e.state === 'scan') { if (S.hello && !S.down) act.scan(); else S.wantScan = true; }
+    if (e.state === 'scan') { S.pane = 'scan'; if (S.hello && !S.down) act.scan(); else S.wantScan = true; }
     if (e.state === 'reloaded') S.reloaded = { running: e.running === true };
     if (e.state !== 'engine_down') return;
     if (S.run && !S.run.result) S.cut = { id: S.plan.id, done: S.plan.actions.filter((a) => stateOf(a).state === 'done').length, of: S.plan.actions.length, moves: S.plan.actions.length > S.plan.commands };
@@ -412,7 +453,7 @@ const on = {
 function scan() {
   counting = clearTimeout(counting);
   Object.assign(S, { screen: 'findings', scan: newScan(), reloaded: null, known: false, ticked: new Set(), tray: null, planning: '',
-    plan: null, note: '', run: null, error: null, safeOpen: false, open: new Set() });
+    plan: null, note: '', run: null, error: null, safeOpen: false, open: new Set(), scanScreen: '' });
   S.scan.req = ask('scan', 'scan');
 }
 
@@ -495,8 +536,23 @@ const act = {
     ask('cancel', 'cancel', { target: S.run.req });
   },
   copy(el) { if (el.dataset.text) { S.copied = el.dataset.text; post({ shell: 'copy', text: S.copied }); } },
-  fda() { if (S.hello && S.hello.fda === 'denied') { S.opened = true; post({ shell: 'open-full-disk-access' }); } },
+  fda() { if (S.hello && S.hello.fda !== 'granted') { S.opened = true; post({ shell: 'open-full-disk-access' }); } },
   relaunch() { if (S.opened) post({ shell: 'relaunch' }); },
+  section(el) {
+    if (S.pane === el.dataset.pane) return;
+    if (S.pane === 'scan') Object.assign(S, { scanTop: $('page').scrollTop, scanScreen: root.dataset.screen });
+    S.pane = el.dataset.pane;
+    $('pane').scrollTop = 0;
+  },
+  login() {
+    const item = S.settings && S.settings.login_item;
+    if (item === 'on' || item === 'off') post({ shell: item === 'on' ? 'login-item-off' : 'login-item-on' });
+  },
+  loginSettings() { post({ shell: 'login-item-settings' }); },
+  automationSettings() { post({ shell: 'automation-settings' }); },
+  noticeSettings() { post({ shell: 'notification-settings' }); },
+  showLog() { post({ shell: 'show-log' }); },
+  showStaging() { post({ shell: 'show-staging' }); },
 };
 
 // ---------- words and figures ----------
@@ -886,7 +942,8 @@ function drawTop() {
       : `${num(sc.rules, 'rule')} scanned` + (failed ? `, ${failed} ended with an error` : '') + (sc.phase === 'stale' ? ', now out of date' : '');
     right = S.hello && sc ? h`<button class="link" data-do="scan">Scan again</button>` : '';
   }
-  return h`<h1>regrow</h1><span class="status">${status}</span><span class="grow"></span>${right}`;
+  if (S.pane !== 'scan') return h`<h1>${PANES[S.pane]}</h1>`;
+  return h`<h1>Scan</h1><span class="status">${status}</span><span class="grow"></span>${right}`;
 }
 
 function drawTray() {
@@ -926,15 +983,102 @@ function drawTray() {
     <span class="say">${say}</span><span class="grow"></span>${buttons}`;
 }
 
+// ---------- General: the app, its grants, what it is ----------
+
+// A switch stands for a setting the shell holds: a click asks the shell to change it, and the switch moves
+// once the shell says it did.
+const switchOf = (on, act, label) => h`<button class="switch" role="switch" aria-checked="${String(on)}" aria-label="${label}" data-do="${act}"></button>`;
+const setting = (key, title, text, control, more) => h`<div class="set" data-setting="${key}"><div class="text"><h4>${title}</h4>${text ? h`<p>${text}</p>` : ''}${more || ''}</div><div class="ctl">${control}</div></div>`;
+const state = (word, ok) => h`<span class="state ${ok ? 'ok' : ''}">${ok ? ICON.done : ''}${word}</span>`;
+
+function startup() {
+  const item = S.settings && S.settings.login_item;
+  const text = 'Regrow opens in the menu bar when you log in, with no window.';
+  if (!S.settings) return setting('login', 'Start with Mac', text, state('…'));
+  if (!item) return setting('login', 'Start with Mac', 'Only the copy in ~/Applications can start with your Mac.', '');
+  if (item === 'needs_approval') {
+    return setting('login', 'Start with Mac', text + ' macOS holds it until you allow it in Login Items.', h`${state('needs approval')}<button class="link" data-do="loginSettings">Open Login Items settings</button>`);
+  }
+  return setting('login', 'Start with Mac', text, h`${state(item)}${switchOf(item === 'on', 'login', 'Start with Mac')}`);
+}
+
+// How many of the three grants are off: Full Disk Access, Control of Finder, Notifications. One macOS did not
+// say is not counted.
+function grantsOff() {
+  return [S.hello && S.hello.fda === 'denied', S.finder === 'denied', !!S.settings && S.settings.notifications === 'denied'].filter(Boolean).length;
+}
+
+function permissions() {
+  const fda = S.hello ? S.hello.fda : '', st = S.settings || {}, finder = S.finder;
+  const part = S.scan ? S.scan.rows.filter((r) => r.items.some((it) => it.lower)).length : 0;
+  const rows = [];
+  if (fda === 'granted') rows.push(setting('fda', 'Full Disk Access', 'regrow reads every folder it looks in.', state('on', true)));
+  else if (fda) {
+    rows.push(setting('fda', h`${ICON.lock}Full Disk Access`, `${fda === 'denied' ? 'Off' : 'Not known'}${part ? `: ${num(part, 'finding')} of the last scan ${part === 1 ? 'was' : 'were'} read only in part` : ''}. Folders macOS protects, such as Mail, Safari and other apps' containers, read as unreadable or as a lower bound.`,
+      h`${state(fda === 'denied' ? 'off' : 'unknown')}<button class="btn small" data-do="${S.opened ? 'relaunch' : 'fda'}">${S.opened ? 'Relaunch to apply' : 'Open settings'}</button>`,
+      h`<p class="then">${S.opened ? 'Turn Regrow on in the list, then relaunch: macOS applies the grant when the app starts again.' : 'Opens Privacy & Security ▸ Full Disk Access in System Settings. The grant applies once regrow relaunches.'}</p>`));
+  }
+  const FINDER = {
+    allowed: ['on', 'A Trash move goes through Finder, so Put Back works and emptying the Trash frees it.'],
+    denied: ['off', 'Trash moves land in regrow staging, which emptying the Trash does not free; regrow undo puts them back.'],
+    not_asked: ['not asked yet', 'macOS asks at the first confirm that holds a Trash move. Through Finder, Put Back works and emptying the Trash frees the space.'],
+    unknown: ['unknown', 'macOS did not say, as when Finder is not running. regrow reads it again when this window comes to the front.'],
+  };
+  const [word, text] = FINDER[finder] || ['…', ''];
+  rows.push(setting('finder', 'Control of Finder', text, h`${state(word, finder === 'allowed')}${finder === 'denied' ? h`<button class="link" data-do="automationSettings">Open settings</button>` : ''}`));
+  const NOTICES = { allowed: 'on', denied: 'off', not_asked: 'not asked yet', unknown: 'not available in this copy' };
+  rows.push(setting('notifications', 'Notifications', 'An alert when free space crosses a line or falls fast.',
+    h`${state(NOTICES[st.notifications] || '…', st.notifications === 'allowed')}${st.notifications === 'allowed' || st.notifications === 'denied' ? h`<button class="link" data-do="noticeSettings">Open settings</button>` : ''}`));
+  const off = grantsOff();
+  return section('Permissions', off ? `${off} of 3 off` : '', '', rows);
+}
+
+function about() {
+  const st = S.settings || {}, staged = S.tick && S.tick.staged_bytes;
+  return section('About', '', '', [
+    setting('version', 'Version', '', state(S.hello ? 'regrow ' + S.hello.version : '…')),
+    S.hello && S.hello.self ? setting('engine', 'Engine', h`<span class="mono">${unbroken(tilde(S.hello.self))}</span>${copy(S.hello.self, 'path')}`, '') : '',
+    st.log ? setting('log', 'Logs', h`<span class="mono">${unbroken(tilde(st.log))}</span>, with the engine's <span class="mono">engine.log</span> beside it`, h`<button class="link" data-do="showLog">Show in Finder</button>`) : '',
+    st.staging ? setting('staging', 'Regrow staging', 'What a run moved there when Finder was not available, and the exports made before a docker volume is removed. Emptying the Trash does not free it.',
+      staged ? h`${state(human(staged))}<button class="link" data-do="showStaging">Show in Finder</button>` : state(S.tick ? 'empty' : '…')) : '',
+  ]);
+}
+
+const drawGeneral = () => h`${section('Startup', '', '', startup())}${permissions()}${about()}`;
+
+// ---------- the sidebar ----------
+
+const PANES = { scan: 'Scan', general: 'General' };
+const PANE_ICON = {
+  scan: svg('<rect x="2" y="4.5" width="12" height="7" rx="1.6"/><path d="M4.6 9h.1M7.2 9h4.2"/>'),
+  general: svg('<circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6l1.4 1.4M11 11l1.4 1.4M3.6 12.4L5 11M11 5l1.4-1.4"/>'),
+};
+
+// What a section's line in the sidebar says beside its name: the scan while it is busy, the grants that are off.
+function figure(pane) {
+  if (pane === 'scan') return S.down ? 'stopped' : S.screen === 'running' ? 'running' : S.scan && S.scan.phase === 'scanning' ? 'scanning' : '';
+  const off = grantsOff();
+  return off ? h`${ICON.caution}${off}` : '';
+}
+
+const paneButton = (pane) => h`<button id="nav-${pane}" data-do="section" data-pane="${pane}" aria-current="${S.pane === pane ? 'page' : 'false'}">${PANE_ICON[pane]}${PANES[pane]}<span class="fig">${figure(pane)}</span></button>`;
+
+function drawNav() {
+  const t = S.tick;
+  const disk = t ? h`<div class="disk"><b>${human(t.free)}</b> free<br>of ${human(t.total)}${meter(t, 0, 0)}${t.days_to_full != null ? `Full in ${t.days_to_full < 1 ? 'under a day' : 'about ' + num(Math.round(t.days_to_full), 'day')} at the recent pace` : ''}</div>` : '';
+  return h`<div class="name">regrow</div>${paneButton('scan')}<div class="group">Settings</div>${paneButton('general')}${disk}`;
+}
+
 // ---------- drawing and wiring ----------
 
+const SECTIONS = { general: drawGeneral };
 const SCREENS = { findings: drawFindings, plan: drawPlan, confirm: drawConfirm, running: drawRunning, result: drawResult, down: drawDown };
 const root = document.documentElement, $ = (id) => document.getElementById(id);
 let clockDrawn = '', renders = 0;
 
 // A region is drawn again only when its markup changed, so text selected in it stays selected. `all` draws
 // every region: a tick box the user just changed may show what the state does not.
-const painted = { top: '', page: '', tray: '' };
+const painted = { nav: '', top: '', page: '', tray: '', pane: '' };
 function paint(id, markup, all) {
   const html = show(markup);
   if (!all && html === painted[id]) return false;
@@ -942,17 +1086,29 @@ function paint(id, markup, all) {
   return true;
 }
 
+// A scrollbar that takes room takes it from the side padding, so the rows keep their width.
+const pad = (el) => { el.style.paddingRight = 32 - (el.offsetWidth - el.clientWidth) + 'px'; };
+
 function render(all) {
-  const page = $('page'), screen = S.down ? 'down' : S.screen, at = page.scrollTop;
+  const page = $('page'), screen = S.down ? 'down' : S.screen, back = root.dataset.pane !== 'scan';
+  // A section that is not shown has no scroll position of its own: the scan's is kept as it was left, for as
+  // long as the scan shows the screen it was left on.
+  const at = back ? S.scanTop : page.scrollTop, kept = back ? S.scanScreen === screen : root.dataset.screen === screen;
   const had = document.activeElement || {}, focus = had.id ? '#' + had.id : had.dataset && had.dataset.do ? '[data-do="' + had.dataset.do + '"]' + (had.dataset.text ? '[data-text="' + CSS.escape(had.dataset.text) + '"]' : '') : '';
+  root.dataset.pane = S.pane;
+  paint('nav', drawNav(), all);
   paint('top', drawTop(), all);
-  if (paint('page', SCREENS[screen](), all)) for (const box of page.querySelectorAll('[data-some]')) box.indeterminate = true;
-  paint('tray', drawTray(), all);
-  // A scrollbar that takes room takes it from the side padding, so the rows keep their width.
-  page.style.paddingRight = 32 - (page.offsetWidth - page.clientWidth) + 'px';
-  page.scrollTop = root.dataset.screen === screen ? at : 0;
+  if (S.pane === 'scan') {
+    if (paint('page', SCREENS[screen](), all)) for (const box of page.querySelectorAll('[data-some]')) box.indeterminate = true;
+    paint('tray', drawTray(), all);
+    pad(page);
+    page.scrollTop = kept ? at : 0;
+  } else {
+    paint('pane', SECTIONS[S.pane](), all);
+    pad($('pane'));
+  }
   if (focus && document.querySelector(focus)) document.querySelector(focus).focus();
-  if (screen === 'running' && page.querySelector('.fresh')) page.querySelector('.fresh').scrollIntoView({ block: 'nearest' });
+  if (S.pane === 'scan' && screen === 'running' && page.querySelector('.fresh')) page.querySelector('.fresh').scrollIntoView({ block: 'nearest' });
   clockDrawn = clock();
   root.dataset.screen = screen;
   root.dataset.scan = S.scan ? S.scan.phase : '';

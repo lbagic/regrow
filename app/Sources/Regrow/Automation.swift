@@ -1,3 +1,4 @@
+import CoreServices
 import Foundation
 import RegrowKit
 
@@ -17,6 +18,22 @@ enum Automation {
                 onExit: { exit in answer(exit.status == 0) })
         } catch {
             queue.async { answer(false) }
+        }
+    }
+
+    /// Whether regrow may control Finder, read without asking: macOS
+    /// shows no dialog for it. It waits for macOS's answer, so it is
+    /// called off the main thread.
+    static func finderGrant() -> WindowSettings.Grant {
+        var target = AEAddressDesc()
+        let id = Array("com.apple.finder".utf8)
+        guard AECreateDesc(typeApplicationBundleID, id, id.count, &target) == OSErr(noErr) else { return .unknown }
+        defer { AEDisposeDesc(&target) }
+        switch AEDeterminePermissionToAutomateTarget(&target, typeWildCard, typeWildCard, false) {
+        case OSStatus(noErr): return .allowed
+        case OSStatus(errAEEventNotPermitted): return .denied
+        case OSStatus(errAEEventWouldRequireUserConsent): return .notAsked
+        default: return .unknown
         }
     }
 }

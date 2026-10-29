@@ -29,6 +29,58 @@ struct RouterTests {
         return Wire.decode(Wire.Head.self, from: line)
     }
 
+    private let runTick = #"{"autotrim":false,"id":"shell-run-tick-1","type":"tick"}"#
+
+    @Test("a run's end sends a tick without autotrim before anything waiting, the shell's ticks and the page's scan")
+    func tickAfterARun() {
+        var router = started()
+        _ = page(&router, ["type": "execute", "id": "x1", "plan_id": "p"])
+        _ = router.shellRequest(tick("shell-tick-1", autotrim: true))
+        _ = page(&router, ["type": "scan", "id": "s1"])
+
+        let ran = #"{"event":"done","re":"x1","result":{},"canceled":false}"#
+        #expect(engine(&router, ran) == [.page(ran), .engine(runTick)])
+        let ticked = #"{"event":"done","re":"shell-run-tick-1"}"#
+        #expect(engine(&router, ticked) == [.shell(ticked), .engine(#"{"autotrim":true,"id":"shell-tick-1","type":"tick"}"#)])
+        let watched = #"{"event":"done","re":"shell-tick-1"}"#
+        #expect(engine(&router, watched) == [.shell(watched), .engine(#"{"id":"s1","type":"scan"}"#)])
+    }
+
+    @Test("a run that fails, or ends with no page to hear it, is followed by its tick")
+    func tickAfterAnyEnd() {
+        var router = started()
+        _ = page(&router, ["type": "execute", "id": "x1", "plan_id": "gone"])
+        let failed = #"{"event":"error","re":"x1","code":"unknown_plan","message":"unknown plan"}"#
+        #expect(engine(&router, failed) == [.page(failed), .engine(runTick)])
+
+        var orphan = started()
+        _ = page(&orphan, ["type": "execute", "id": "x1", "plan_id": "p"])
+        _ = orphan.pageClosed()
+        _ = page(&orphan, ["type": "scan", "id": "s1"])
+        #expect(engine(&orphan, #"{"event":"done","re":"x1","result":{},"canceled":false}"#) == [.engine(runTick)])
+    }
+
+    @Test("a run, or its tick, that ends with the engine is followed by a tick before anything else on the next hello")
+    func tickAfterTheEngine() {
+        for owed in ["execute", "tick"] {
+            var router = started()
+            _ = page(&router, ["type": "execute", "id": "x1", "plan_id": "p"])
+            if owed == "tick" {
+                _ = engine(&router, #"{"event":"done","re":"x1","result":{},"canceled":false}"#)
+            }
+            _ = router.engineExited(message: "exited with status 2")
+            _ = router.shellRequest(tick("shell-tick-1", autotrim: true))
+            let outputs = router.engineLine(Data(hello.utf8))
+            let id = owed == "execute" ? 1 : 2
+            #expect(outputs.last == .engine(#"{"autotrim":false,"id":"shell-run-tick-\#(id)","type":"tick"}"#), "\(owed): \(outputs)")
+            #expect(!outputs.contains(.engine(#"{"autotrim":true,"id":"shell-tick-1","type":"tick"}"#)), "\(owed): the watch's tick waits")
+        }
+
+        var quiet = started()
+        _ = quiet.engineExited(message: "exited with status 2")
+        #expect(!quiet.engineLine(Data(hello.utf8)).contains { if case .engine = $0 { return true } else { return false } })
+    }
+
     @Test("a tick waits behind a scan and goes out on the scan's done")
     func tickBehindScan() {
         var router = started()
@@ -101,10 +153,10 @@ struct RouterTests {
     @Test("a terminal error releases the slot as a done does")
     func errorReleasesTheSlot() {
         var router = started()
-        _ = page(&router, ["type": "execute", "id": "x1", "plan_id": "gone"])
+        _ = page(&router, ["type": "scan", "id": "s1"])
         _ = router.shellRequest(tick("shell-tick-1"))
 
-        let failed = #"{"event":"error","re":"x1","code":"unknown_plan","message":"unknown plan"}"#
+        let failed = #"{"event":"error","re":"s1","code":"busy","message":"a tick is in flight"}"#
         #expect(engine(&router, failed) == [
             .page(failed), .engine(#"{"autotrim":false,"id":"shell-tick-1","type":"tick"}"#),
         ])
@@ -287,10 +339,10 @@ struct RouterTests {
 
         _ = router.shellRequest(tick("shell-tick-1"))
         #expect(engine(&router, #"{"event":"journal","re":"x1","entry":{"seq":1}}"#) == [])
-        #expect(engine(&router, #"{"event":"done","re":"x1","result":{},"canceled":false}"#) == [
-            .engine(#"{"autotrim":false,"id":"shell-tick-1","type":"tick"}"#)
-        ])
+        #expect(engine(&router, #"{"event":"done","re":"x1","result":{},"canceled":false}"#) == [.engine(runTick)])
         #expect(!router.executeInFlight)
+        let ticked = #"{"event":"done","re":"shell-run-tick-1"}"#
+        #expect(engine(&router, ticked) == [.shell(ticked), .engine(#"{"autotrim":false,"id":"shell-tick-1","type":"tick"}"#)])
     }
 
     @Test("a page opened later may reuse the id of a scan the earlier page left in flight: it waits for that one's end")

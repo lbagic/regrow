@@ -22,6 +22,9 @@ public struct Router {
 
     /// Ids with this prefix are the shell's; the page may not use them.
     public static let shellPrefix = "shell-"
+    /// The id of the tick that follows a run starts with this. It is the
+    /// router's own: the watch does not count it as its tick.
+    public static let runTickPrefix = "\(shellPrefix)run-tick-"
     /// The engine discards a longer request line, unanswered by id.
     public static let maxLine = 1 << 20
 
@@ -47,6 +50,9 @@ public struct Router {
     /// `plan` and `cancel` sent while no engine was up.
     private var parked: [Request] = []
     private var serial = 0
+    /// A run ended with the engine that held it, or the tick after a run
+    /// did: the engine that starts next ticks first.
+    private var runTickOwed = false
 
     public init() {}
 
@@ -115,6 +121,10 @@ public struct Router {
             var outputs: [Output] = [.shell(line), .page(line)]
             outputs += parked.map { .engine($0.line) }
             parked = []
+            if runTickOwed {
+                runTickOwed = false
+                queueRunTick()
+            }
             return outputs + sendNext()
         }
         let answersInFlight = head.re != nil && head.re == inFlight?.id
@@ -123,15 +133,31 @@ public struct Router {
             outputs.append((head.re ?? "").hasPrefix(Self.shellPrefix) ? .shell(line) : .page(line))
         }
         if head.isTerminal, answersInFlight {
+            let ran = inFlight?.type == "execute"
             inFlight = nil
             orphaned = false
+            if ran {
+                queueRunTick()
+            }
             outputs += sendNext()
         }
         return outputs
     }
 
+    /// A run changed the disk and what regrow staging holds: a tick goes
+    /// ahead of anything waiting, so the figures are the run's whether or
+    /// not a page saw it end. Not with autotrim: a prune would hold the
+    /// engine right after the run.
+    private mutating func queueRunTick() {
+        serial += 1
+        let fields: [String: Any] = ["type": "tick", "id": "\(Self.runTickPrefix)\(serial)", "autotrim": false]
+        waiting.insert(request(type: "tick", id: "\(Self.runTickPrefix)\(serial)", line: Wire.line(fields)!, origin: .shell, fields: fields), at: 0)
+    }
+
     /// The engine has gone: nothing held will be answered.
     public mutating func engineExited(message: String) -> [Output] {
+        runTickOwed = runTickOwed || inFlight?.type == "execute" || inFlight?.id.hasPrefix(Self.runTickPrefix) == true
+            || waiting.contains { $0.id.hasPrefix(Self.runTickPrefix) }
         up = false
         inFlight = nil
         orphaned = false

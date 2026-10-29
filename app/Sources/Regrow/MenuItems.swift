@@ -50,14 +50,16 @@ enum MenuItems {
                     .fixedSize(horizontal: false, vertical: true).padding(.vertical, 2))
             case .copy(let command):
                 return ActionItem("Copy the command to run in Terminal") { actions.copy(command) }
-            case .fullDiskAccess(let state):
+            case .fullDiskAccess(let state, opensSettings: true):
+                let item = ActionItem("Full Disk Access", actions.openFullDiskAccess)
+                item.attributedTitle = paired("Full Disk Access", state)
+                return item
+            case .fullDiskAccess(let state, opensSettings: false):
                 return hosted(HStack {
                     Text("Full Disk Access")
                     Spacer()
                     Text(state).foregroundStyle(.secondary)
                 }.font(Font(NSFont.menuFont(ofSize: 0))).padding(.vertical, 3))
-            case .openFullDiskAccess:
-                return ActionItem("Open Full Disk Access settings", actions.openFullDiskAccess)
             case .relaunch:
                 return ActionItem("Relaunch to apply", actions.relaunch)
             case .staging(let bytes):

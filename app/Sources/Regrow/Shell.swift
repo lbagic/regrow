@@ -37,6 +37,14 @@ final class Shell: ObservableObject {
     private var window: ScanWindow?
     private var stateDirectory: URL?
     private var helloLine: String?
+    /// The settings the page was last handed.
+    private var settings: WindowSettings?
+    /// A read of the settings is under way since then; another asked
+    /// meanwhile runs once it ends, or at once after 10 s, in case macOS
+    /// never answers that one. Only the newest read counts.
+    private var readingSettings: Date?
+    private var readSettingsAgain = false
+    private var settingsSerial = 0
     private var tickLine: String?
     private var downLine: String?
     private var lockNoticed = false
@@ -145,6 +153,11 @@ final class Shell: ObservableObject {
     }
 
     func chooseLoginItem(_ choice: LoginItemChoice) {
+        // A copy outside ~/Applications would register that copy.
+        guard Config.installed else {
+            log("not ~/Applications/Regrow.app: no login item to change")
+            return
+        }
         // Either way the owner has chosen, so the launch does not register again.
         UserDefaults.standard.set(true, forKey: Self.loginItemKey)
         do {
@@ -163,6 +176,59 @@ final class Shell: ObservableObject {
             log("could not change the login item: \(error.localizedDescription)")
         }
         objectWillChange.send()
+        readSettings()
+    }
+
+    /// Reads the grants off the main thread and hands the page the
+    /// settings when they changed. The owner may change any of them in
+    /// System Settings, so they are read again each time the window
+    /// comes to the front.
+    private func readSettings() {
+        if let since = readingSettings, Date().timeIntervalSince(since) < 10 {
+            readSettingsAgain = true
+            return
+        }
+        readingSettings = Date()
+        settingsSerial += 1
+        let serial = settingsSerial
+        let notifier = self.notifier, installed = Config.installed
+        DispatchQueue.global(qos: .userInitiated).async {
+            let finder = Automation.finderGrant()
+            // A copy elsewhere shares the installed app's bundle id, and with
+            // it the grant, but posts nothing.
+            guard installed else {
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        self.settingsRead(serial, notifications: .unknown, finder: finder)
+                    }
+                }
+                return
+            }
+            notifier.grant { notifications in
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        self.settingsRead(serial, notifications: notifications, finder: finder)
+                    }
+                }
+            }
+        }
+    }
+
+    private func settingsRead(_ serial: Int, notifications: WindowSettings.Grant, finder: WindowSettings.Grant) {
+        guard serial == settingsSerial else { return }
+        readingSettings = nil
+        if readSettingsAgain {
+            readSettingsAgain = false
+            readSettings()
+        }
+        let read = WindowSettings(
+            loginItem: loginItemState, notifications: notifications, finder: finder, log: config.log.path,
+            staging: stateDirectory?.appendingPathComponent("staging").path)
+        guard read != settings else { return }
+        settings = read
+        if pageReady {
+            window?.deliver(read.line)
+        }
     }
 
     private func environmentRead(_ captured: Result<[String: String], LoginEnvironment.Failure>) {
@@ -316,7 +382,9 @@ final class Shell: ObservableObject {
 
     private func shellEvent(_ line: String) {
         guard let head = Wire.decode(Wire.Head.self, from: line) else { return }
-        let ofTick = head.re?.hasPrefix(Self.tickPrefix) ?? false
+        // The router's tick after a run is a tick the watch did not send.
+        let ofRunTick = head.re?.hasPrefix(Router.runTickPrefix) ?? false
+        let ofTick = ofRunTick || head.re?.hasPrefix(Self.tickPrefix) ?? false
         switch head.event {
         case "hello":
             guard let hello = Wire.decode(Wire.Hello.self, from: line) else { return }
@@ -326,6 +394,7 @@ final class Shell: ObservableObject {
             downLine = nil
             log("hello: protocol \(hello.protocol), engine \(hello.version), fda \(hello.fda)")
             startWatch()
+            readSettings()
         case "tick":
             guard let tick = Wire.decode(Wire.Tick.self, from: line) else { return }
             self.tick = tick
@@ -339,7 +408,9 @@ final class Shell: ObservableObject {
         case "done" where ofTick:
             tickFailure = nil
             lockNoticed = false
-            watch?.settled()
+            if !ofRunTick {
+                watch?.settled()
+            }
         case "error" where ofTick:
             tickFailure = TickFailure(code: head.code, message: head.message)
             // A locked gate fails every tick while headroom stays low:
@@ -352,7 +423,9 @@ final class Shell: ObservableObject {
             } else {
                 lockNoticed = false
             }
-            watch?.settled()
+            if !ofRunTick {
+                watch?.settled()
+            }
         default:
             break
         }
@@ -439,6 +512,9 @@ final class Shell: ObservableObject {
                 let closing = self.window
                 self.window = nil
                 DispatchQueue.main.async { _ = closing }
+            },
+            onKey: { [weak self] in
+                self?.readSettings()
             })
         self.window = window
         pageReady = false
@@ -461,7 +537,7 @@ final class Shell: ObservableObject {
         switch name {
         case "ready":
             log("page ready")
-            var standing = [helloLine, tickLine, downLine].compactMap { $0 }
+            var standing = [helloLine, tickLine, downLine, settings?.line].compactMap { $0 }
             if let environmentFailure {
                 standing.append(environmentLine(environmentFailure))
             }
@@ -471,6 +547,7 @@ final class Shell: ObservableObject {
                 window?.deliver(Router.shellEvent("reloaded", ["running": reloadedMidRun]))
             }
             pageReady = true
+            readSettings()
             if scanAsked {
                 scanAsked = false
                 window?.deliver(Router.shellEvent("scan"))
@@ -489,10 +566,31 @@ final class Shell: ObservableObject {
                     self.askingFinder = false
                     self.log("automation \(allowed ? "allowed" : "denied")")
                     self.window?.deliver(Router.shellEvent("automation", ["allowed": allowed]))
+                    // Finder can refuse a question with the grant given, as
+                    // when it times out: the page then hears the grant again.
+                    self.settings = nil
+                    self.readSettings()
                 }
             }
         case "open-full-disk-access":
             openFullDiskAccess()
+        case "login-item-on":
+            chooseLoginItem(.register)
+        case "login-item-off":
+            chooseLoginItem(.unregister)
+        case "login-item-settings":
+            chooseLoginItem(.openSettings)
+        case "notification-settings":
+            openNotificationSettings()
+        case "automation-settings":
+            log("opening Automation settings")
+            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation") {
+                NSWorkspace.shared.open(url)
+            }
+        case "show-log":
+            NSWorkspace.shared.activateFileViewerSelecting([config.log])
+        case "show-staging":
+            showStaging()
         case "relaunch":
             relaunch()
         default:
@@ -509,6 +607,14 @@ final class Shell: ObservableObject {
     func openFullDiskAccess() {
         log("opening Full Disk Access settings")
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    private func openNotificationSettings() {
+        log("opening Notifications settings")
+        let id = Bundle.main.bundleIdentifier.map { "?id=\($0)" } ?? ""
+        if let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension\(id)") {
             NSWorkspace.shared.open(url)
         }
     }
