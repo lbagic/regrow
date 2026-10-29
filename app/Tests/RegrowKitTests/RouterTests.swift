@@ -154,6 +154,7 @@ struct RouterTests {
         #expect(page(&router, ["type": "set_rules", "id": "r1", "rule": "npm-cache", "off": true]) == [
             .engine(#"{"id":"r1","off":true,"rule":"npm-cache","type":"set_rules"}"#)
         ])
+        #expect(page(&router, ["type": "updates", "id": "u1"]) == [.engine(#"{"id":"u1","type":"updates"}"#)])
     }
 
     @Test("a plan's done does not release the slot a scan holds")
