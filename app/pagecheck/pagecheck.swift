@@ -1159,8 +1159,8 @@ struct Scenario {
             ["at": "2026-10-28T10:00:00Z", "total": 1e12, "free": 6e10, "purgeable": 0, "swap_used": 0],
             ["at": "2026-10-29T10:00:00Z", "total": 1e12, "free": 5e10, "purgeable": 0, "swap_used": 0],
         ], "runs": [
-            // The tick sampled before it pruned, so the prune starts after the last sample.
-            ["id": "20261029-100001-0123456789abcdef0123456789abcdef", "start": "2026-10-29T10:00:01Z", "done": 1, "failed": 0, "undone": 0, "restorable": 0,
+            // After the last sample: the tick samples before it prunes, and the next sample may not be in yet.
+            ["id": "20261029-160000-0123456789abcdef0123456789abcdef", "start": "2026-10-29T16:00:00Z", "done": 1, "failed": 0, "undone": 0, "restorable": 0,
              "prune": true, "frees_now": 1_073_741_824, "after_trash": 0, "staged": 0, "exported": 0, "rules": ["go-build-cache": 1_073_741_824]],
         ]])) { r in
             // A watch tick whose autotrim pruned is a run of its own: Stats, open, reads the history again.
@@ -1169,7 +1169,7 @@ struct Scenario {
             let asked = r.sent("history").count
             var tick = r.transcript.event("tick", "tick")
             tick["re"] = "shell-tick-2"
-            tick["pruned"] = ["rule_id": "go-build-cache", "run": "20261029-100001-0123456789abcdef0123456789abcdef", "files": 12, "bytes": 1_073_741_824]
+            tick["pruned"] = ["rule_id": "go-build-cache", "run": "20261029-160000-0123456789abcdef0123456789abcdef", "files": 12, "bytes": 1_073_741_824]
             r.send(tick)
             await r.settle()
             r.same(r.sent("history").count, asked + 1, "history requests after a tick that pruned")

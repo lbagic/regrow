@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -149,12 +150,13 @@ func TestHistoryPastTheGraceDoesNotHoldTheExit(t *testing.T) {
 	srv := newMachine(t).server()
 	srv.exitGrace = 20 * time.Millisecond
 	release := make(chan struct{})
-	t.Cleanup(func() { close(release) })
 	srv.History = func() (History, error) {
 		<-release
 		return History{}, nil
 	}
 	p := start(t, srv)
+	// Before the peer's cleanup, so the history's goroutine ends too.
+	t.Cleanup(func() { close(release) })
 	p.expect("hello")
 	p.send(`{"type":"history","id":"h"}`)
 	rest, err := p.closeAndWait()
@@ -163,5 +165,34 @@ func TestHistoryPastTheGraceDoesNotHoldTheExit(t *testing.T) {
 	}
 	if len(rest) != 0 {
 		t.Errorf("after stdin ended: %v, want nothing", rest)
+	}
+}
+
+// A canceled scan and a history share one deadline at exit, not one
+// each after the other.
+func TestAHistoryAndAScanShareTheExitDeadline(t *testing.T) {
+	srv := newMachine(t).server()
+	srv.exitGrace = time.Second
+	release, entered := make(chan struct{}), make(chan struct{})
+	srv.Scan = func(context.Context, []engine.Rule, func(int, engine.Finding, time.Duration)) {
+		close(entered)
+		<-release
+	}
+	srv.History = func() (History, error) {
+		<-release
+		return History{}, nil
+	}
+	p := start(t, srv)
+	t.Cleanup(func() { close(release) })
+	p.expect("hello")
+	p.send(`{"type":"scan","id":"s"}`)
+	waitFor(t, entered, "the scan to start")
+	p.send(`{"type":"history","id":"h"}`)
+	began := time.Now()
+	if _, err := p.closeAndWait(); err != nil {
+		t.Fatal(err)
+	}
+	if took := time.Since(began); took > 1600*time.Millisecond {
+		t.Errorf("the exit took %v with a 1s grace: the waits ran one after another", took)
 	}
 }

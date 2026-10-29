@@ -159,8 +159,8 @@ type session struct {
 // Serve runs the protocol until in ends or ctx is canceled, then shuts
 // down: a scan in flight is canceled, an execute finishes and journals
 // its current action and stops there, a tick runs to its end, and a
-// history being read is answered if it ends within the exit grace. It
-// returns in's read error, nil at EOF.
+// history being read is answered if it ends within the exit grace or
+// before the execute or tick. It returns in's read error, nil at EOF.
 func (srv *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 	s := srv.newSession(out)
 
