@@ -9,8 +9,11 @@
 #                                      "regrow local signing", for this Mac alone
 #   scripts/signing-cert.sh --release  create "regrow release signing", which CI
 #                                      signs each release's app with: store it in
-#                                      the repository's Actions secrets, import it
-#                                      here, record it and pin it in install.sh
+#                                      the secrets of the repository's "release"
+#                                      environment, which only a v* tag or main may
+#                                      use, import it here, record it and pin it in
+#                                      install.sh; with the identity already here,
+#                                      record and pin it, and create nothing
 #   --dry-run, with either             say what would happen; the keychain is only read
 #
 # The first signature with a new key raises a keychain dialog: choose
@@ -20,6 +23,7 @@ set -eu
 LOCAL="regrow local signing"
 RELEASE="regrow release signing"
 REPO=lbagic/regrow
+ENVIRONMENT=release
 DAYS=3653
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 RECORD="$ROOT/.signing-identity"
@@ -112,18 +116,53 @@ EOF
 		-out "$work/identity.p12" -passout "pass:$pass"
 }
 
-# Imports $work/identity.p12, then signs a scratch file with it, while
-# someone is watching for the keychain dialog.
+# Imports $work/identity.p12.
 import_identity() {
 	security import "$work/identity.p12" -k "$KEYCHAIN" -P "$pass" -T /usr/bin/codesign >/dev/null
 	if ! has_key "$sha1"; then
 		echo "The import ran, but the keychain does not list $sha1 as a signing identity." >&2
 		exit 1
 	fi
+}
+
+# Signs a scratch file with the new key, while someone is watching for
+# the keychain dialog.
+probe() {
 	cp /usr/bin/true "$work/probe"
 	echo "Signing a scratch file with the new key. If a keychain dialog appears, choose \"Always Allow\"."
 	if ! codesign --force --sign "$sha1" "$work/probe"; then
-		echo "codesign could not use the new identity ($sha1). It stays in the keychain; nothing was recorded." >&2
+		echo "codesign could not use the new identity ($sha1). It stays in the keychain; run this again to sign with it once more." >&2
+		exit 1
+	fi
+}
+
+pin() {
+	if [ "$dry" -eq 1 ]; then
+		echo "dry run: would set app_signer=$1 in $INSTALLER"
+		return
+	fi
+	sed "s/^app_signer=.*/app_signer=$1/" "$INSTALLER" >"$work/install.sh"
+	cat "$work/install.sh" >"$INSTALLER"
+}
+
+# The environment the release workflow reads the key from, which only a
+# v* tag or main may run a job in.
+make_environment() {
+	gh api -X PUT "repos/$REPO/environments/$ENVIRONMENT" \
+		-F 'deployment_branch_policy[protected_branches]=false' \
+		-F 'deployment_branch_policy[custom_branch_policies]=true' >/dev/null
+	policies="repos/$REPO/environments/$ENVIRONMENT/deployment-branch-policies"
+	have=$(gh api "$policies" --jq '.branch_policies[] | "\(.type) \(.name)"')
+	for want in "tag v*" "branch main"; do
+		if ! printf '%s\n' "$have" | grep -qxF "$want"; then
+			gh api -X POST "$policies" -f "type=${want%% *}" -f "name=${want#* }" >/dev/null
+		fi
+	done
+	have=$(gh api "$policies" --jq '.branch_policies[] | "\(.type) \(.name)"')
+	if [ "$(printf '%s\n' "$have" | sort)" != "$(printf 'branch main\ntag v*\n')" ]; then
+		echo "The environment $ENVIRONMENT lets these run a job, not only main and v* tags:" >&2
+		printf '  %s\n' "$have" >&2
+		echo "Remove the others in the repository's Settings > Environments, then run this again." >&2
 		exit 1
 	fi
 }
@@ -144,13 +183,18 @@ if [ "$release" -eq 0 ]; then
 		exit 0
 	fi
 else
+	pinned_line
 	found=$(identity "$RELEASE")
 	if [ -n "$found" ]; then
-		echo "The keychain already holds \"$RELEASE\" ($found); nothing was created." >&2
-		echo "A new one changes the signature every installed Regrow.app holds its grants by. To make one anyway, delete this one in Keychain Access (login, My Certificates), then run this again." >&2
-		exit 1
+		work=$(mktemp -d "${TMPDIR:-/tmp}/regrow-signing.XXXXXX")
+		trap 'rm -rf "${work:?}"' EXIT
+		record "$found"
+		pin "$found"
+		echo "$found"
+		echo "The keychain already holds \"$RELEASE\": recorded and pinned it, and created nothing; the secrets were left as they are."
+		echo "A new key changes the signature every installed Regrow.app holds its grants by. To make one anyway, delete this one in Keychain Access (login, My Certificates), then run this again."
+		exit 0
 	fi
-	pinned_line
 	if ! gh secret list -R "$REPO" >/dev/null; then
 		echo "gh cannot list $REPO's secrets, so it could not set them; run \`gh auth login\` as the repository's owner, then this again." >&2
 		exit 1
@@ -173,6 +217,7 @@ if [ "$release" -eq 0 ]; then
 		exit 0
 	fi
 	import_identity
+	probe
 	record "$sha1"
 	echo "$sha1"
 	echo "Created \"$LOCAL\", valid $DAYS days, and recorded it in $RECORD."
@@ -184,21 +229,23 @@ if [ "$dry" -eq 1 ]; then
 	"$OPENSSL" pkcs12 -in "$work/identity.p12" -nokeys -passin "pass:$pass" 2>/dev/null |
 		"$OPENSSL" x509 -noout -subject -enddate -fingerprint -sha1 | sed 's/^/  /'
 	echo "dry run: a throwaway identity was made, packed and read back, and is deleted now."
-	echo "dry run: would store it in $REPO's Actions secrets REGROW_SIGNING_P12 and REGROW_SIGNING_PASSWORD,"
-	echo "dry run: import it with: security import <p12> -k $KEYCHAIN -T /usr/bin/codesign"
+	echo "dry run: would make $REPO's environment $ENVIRONMENT, open to v* tags and main alone,"
+	echo "dry run: store the identity in its secrets REGROW_SIGNING_P12 and REGROW_SIGNING_PASSWORD,"
+	echo "dry run: and import it with: security import <p12> -k $KEYCHAIN -T /usr/bin/codesign"
 	record "<its SHA-1>"
-	echo "dry run: would set app_signer=<its SHA-1> in $INSTALLER"
+	pin "<its SHA-1>"
 	exit 0
 fi
 
 # The secrets first: they take a new value on every run, while an
-# identity in the keychain stops the next run.
-base64 -i "$work/identity.p12" | gh secret set REGROW_SIGNING_P12 -R "$REPO"
-printf '%s' "$pass" | gh secret set REGROW_SIGNING_PASSWORD -R "$REPO"
+# identity in the keychain makes the next run create nothing.
+make_environment
+base64 -i "$work/identity.p12" | gh secret set REGROW_SIGNING_P12 --env "$ENVIRONMENT" -R "$REPO"
+printf '%s' "$pass" | gh secret set REGROW_SIGNING_PASSWORD --env "$ENVIRONMENT" -R "$REPO"
 import_identity
 record "$sha1"
-sed "s/^app_signer=.*/app_signer=$sha1/" "$INSTALLER" >"$work/install.sh"
-cat "$work/install.sh" >"$INSTALLER"
+pin "$sha1"
+probe
 echo "$sha1"
-echo "Created \"$RELEASE\", valid $DAYS days: stored in $REPO's Actions secrets, imported into the login keychain, recorded in $RECORD and pinned in $INSTALLER."
+echo "Created \"$RELEASE\", valid $DAYS days: stored in the secrets of $REPO's environment $ENVIRONMENT, imported into the login keychain, recorded in $RECORD and pinned in $INSTALLER."
 echo "Commit install.sh: the release workflow signs only with the identity it pins."

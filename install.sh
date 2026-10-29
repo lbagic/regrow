@@ -22,25 +22,37 @@ die() {
 	exit 1
 }
 
-fetch() {
+# Downloads $1 into $tmp.
+get() {
 	curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
-		--output "$tmp/$1" "$release_url/$1" ||
-		die "could not download $release_url/$1"
+		--output "$tmp/$1" "$release_url/$1"
 }
 
-# Fails unless $tmp/$1 matches its line in the release's checksums.txt.
-check_sum() {
+fetch() {
+	get "$1" || die "could not download $release_url/$1"
+}
+
+# Whether $tmp/$1 matches its line in the release's checksums.txt; when
+# it does not, says why.
+sum_matches() {
 	want=$(awk -v f="$1" '$2 == f { print $1 }' "$tmp/checksums.txt")
-	[ -n "$want" ] || die "checksums.txt has no line for $1; nothing was installed."
+	[ -n "$want" ] || { say "checksums.txt has no line for $1"; return 1; }
 	got=$(shasum -a 256 "$tmp/$1" | awk '{ print $1 }')
-	[ -n "$got" ] || die "shasum could not read $1; nothing was installed."
-	[ "$got" = "$want" ] ||
-		die "$1 does not match the release's checksums.txt; nothing was installed."
+	[ -n "$got" ] || { say "shasum could not read $1"; return 1; }
+	[ "$got" = "$want" ] || { say "$1 does not match the release's checksums.txt"; return 1; }
 }
 
-# The executable a pid runs, or nothing when the pid is gone.
-exe_of() {
-	ps -o comm= -p "$1" 2>/dev/null || true
+# Each pid running the executable at path $1.
+pids_of() {
+	ps -axo pid=,comm= | awk -v want="$1" '{ line = $0; sub(/^ *[0-9]+ /, "", line); if (line == want) print $1 }'
+}
+
+# Signals pid $1 with $3 only while it still runs the executable $2: a
+# pid that has gone may have passed to another program.
+signal_if() {
+	if [ "$(ps -o comm= -p "$1" 2>/dev/null || true)" = "$2" ]; then
+		kill "-$3" "$1" 2>/dev/null || true
+	fi
 }
 
 # Waits until pid $1 is gone or $2 seconds pass; fails when it is still there.
@@ -53,44 +65,79 @@ gone_within() {
 	done
 }
 
-# Asks a running Regrow to quit and waits for its engine to finish the
-# action it is on, as scripts/app.sh does: only pids from the app's own
-# pid file are signalled, and only while they run the installed bundle.
-stop_app() {
-	pids=${XDG_STATE_HOME:-$HOME/.local/state}/regrow/app.pid
-	[ -f "$pids" ] || return 0
-	app_pid=$(sed -n 1p "$pids" | tr -cd '0-9')
-	engine_pid=$(sed -n 2p "$pids" | tr -cd '0-9')
-	if [ -n "$app_pid" ] && [ "$(exe_of "$app_pid")" = "$app_dest/Contents/MacOS/Regrow" ]; then
-		say "Quitting the running Regrow..."
-		kill -TERM "$app_pid" 2>/dev/null || true
-		gone_within "$app_pid" 45 ||
-			die "Regrow is still running after 45 seconds; quit it from its menu and run this line again. $version was installed, Regrow.app was not."
+# Downloads Regrow.app into $tmp/app and checks its checksum and its
+# signer; on a failure, sets app_note to why.
+check_app() {
+	say "Downloading Regrow.app..."
+	if ! get "$app_zip"; then
+		app_note="could not download $release_url/$app_zip"
+		return 1
 	fi
-	engine=$app_dest/Contents/MacOS/regrow-engine
-	if [ -n "$engine_pid" ] && [ "$(exe_of "$engine_pid")" = "$engine" ]; then
-		if ! gone_within "$engine_pid" 45; then
-			say "Regrow's engine is still running an action after 45 seconds; stopping it."
-			if [ "$(exe_of "$engine_pid")" = "$engine" ]; then
-				kill -TERM "$engine_pid" 2>/dev/null || true
-			fi
-			gone_within "$engine_pid" 5 ||
-				die "Regrow's engine (pid $engine_pid) did not stop; run this line again once it has. $version was installed, Regrow.app was not."
-		fi
+	app_note=$(sum_matches "$app_zip") || return 1
+	mkdir "$tmp/app"
+	if ! ditto -x -k "$tmp/$app_zip" "$tmp/app"; then
+		app_note="could not unpack $app_zip"
+		return 1
+	fi
+	if ! codesign --verify --strict --deep \
+		-R="identifier \"com.github.lbagic.regrow\" and certificate leaf = H\"$app_signer\"" \
+		"$tmp/app/Regrow.app" 2>/dev/null; then
+		app_note="the release's Regrow.app is not signed as regrow's releases are"
+		return 1
 	fi
 }
 
+# Quits every Regrow running the installed bundle, as its menu's Quit
+# does, then stops an engine of it still running, as scripts/app.sh
+# does; on a failure, sets app_note to why.
+stop_app() {
+	app_exe=$app_dest/Contents/MacOS/Regrow
+	engine=$app_dest/Contents/MacOS/regrow-engine
+	for pid in $(pids_of "$app_exe"); do
+		say "Quitting the running Regrow..."
+		signal_if "$pid" "$app_exe" TERM
+		if ! gone_within "$pid" 45; then
+			app_note="Regrow is still running after 45 seconds; quit it from its menu and run this line again"
+			return 1
+		fi
+	done
+	for pid in $(pids_of "$engine"); do
+		gone_within "$pid" 45 && continue
+		say "Regrow's engine is still running an action after 45 seconds; stopping it."
+		signal_if "$pid" "$engine" TERM
+		gone_within "$pid" 5 && continue
+		# The engine stops at once on its second SIGTERM.
+		signal_if "$pid" "$engine" TERM
+		gone_within "$pid" 2 && continue
+		signal_if "$pid" "$engine" KILL
+		if ! gone_within "$pid" 2; then
+			app_note="Regrow's engine (pid $pid) did not stop; run this line again once it has"
+			return 1
+		fi
+	done
+}
+
 # Puts the checked bundle in $tmp/app in ~/Applications in one step,
-# through the new bundle's own --swap, and opens it.
+# through the new bundle's own --swap, and opens it; on a failure, sets
+# app_note to why and leaves no staged copy.
 install_app() {
 	staged=$HOME/Applications/.Regrow.app.staged
-	failed="$version was installed, Regrow.app was not"
-	mkdir -p "$HOME/Applications" || die "could not create ~/Applications; $failed."
-	rm -rf "${staged:?}" || die "could not clear $staged; $failed."
-	ditto "$tmp/app/Regrow.app" "$staged" || die "could not copy Regrow.app to ~/Applications; $failed."
-	stop_app
-	"$staged/Contents/MacOS/Regrow" --swap "$staged" "$app_dest" ||
-		die "could not put Regrow.app in ~/Applications; $failed."
+	if ! mkdir -p "$HOME/Applications" || ! rm -rf "${staged:?}" || ! ditto "$tmp/app/Regrow.app" "$staged"; then
+		app_note="could not copy it to ~/Applications"
+		rm -rf "${staged:?}" || true
+		return 1
+	fi
+	if ! stop_app; then
+		rm -rf "${staged:?}" || true
+		return 1
+	fi
+	if ! "$staged/Contents/MacOS/Regrow" --swap "$staged" "$app_dest"; then
+		app_note="could not put it in ~/Applications"
+		rm -rf "${staged:?}" || true
+		# The Regrow it quit, if there was one, runs again.
+		open "$app_dest" 2>/dev/null || true
+		return 1
+	fi
 	# After a swap the old bundle is here.
 	rm -rf "${staged:?}" || true
 	app_version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app_dest/Contents/Info.plist" 2>/dev/null || true)
@@ -127,7 +174,7 @@ main() {
 	say "Downloading regrow for $chip..."
 	fetch "$asset"
 	fetch checksums.txt
-	check_sum "$asset"
+	why=$(sum_matches "$asset") || die "$why; nothing was installed."
 
 	tar -xzf "$tmp/$asset" -C "$tmp" regrow ||
 		die "could not unpack $asset; nothing was installed."
@@ -135,32 +182,22 @@ main() {
 	version=$("$tmp/regrow" version) ||
 		die "the downloaded regrow does not run on this Mac; nothing was installed."
 
-	app=yes
+	# app: yes to install it, skip when this Mac or release has none,
+	# failed when it could not be installed, with app_note saying why.
+	app=yes app_note=
 	if [ "${macos%%.*}" -lt 14 ]; then
-		app="Regrow.app, the menu bar app, needs macOS 14 or later; this Mac has macOS $macos"
+		app=skip app_note="Regrow.app, the menu bar app, needs macOS 14 or later; this Mac has macOS $macos, so only the command line tool was installed."
 	elif ! awk -v f="$app_zip" '$2 == f { found = 1 } END { exit !found }' "$tmp/checksums.txt"; then
-		app="The latest release has no Regrow.app"
-	fi
-	if [ "$app" = yes ]; then
-		say "Downloading Regrow.app..."
-		fetch "$app_zip"
-		check_sum "$app_zip"
-		mkdir "$tmp/app"
-		ditto -x -k "$tmp/$app_zip" "$tmp/app" ||
-			die "could not unpack $app_zip; nothing was installed."
-		codesign --verify --strict --deep \
-			-R="identifier \"com.github.lbagic.regrow\" and certificate leaf = H\"$app_signer\"" \
-			"$tmp/app/Regrow.app" 2>/dev/null ||
-			die "Regrow.app in the release is not signed as regrow's releases are; nothing was installed."
+		app=skip app_note="The latest release has no Regrow.app, so only the command line tool was installed."
+	elif ! check_app; then
+		app=failed
 	fi
 
 	mkdir -p "$bin_dir" || die "could not create ~/.local/bin; nothing was installed."
 	mv -f "$tmp/regrow" "$bin_dir/regrow" || die "could not write ~/.local/bin/regrow."
 	say "Installed $version to ~/.local/bin/regrow."
-	if [ "$app" = yes ]; then
-		install_app
-	else
-		say "$app, so only the command line tool was installed."
+	if [ "$app" = yes ] && ! install_app; then
+		app=failed
 	fi
 
 	next='~/.local/bin/regrow'
@@ -203,8 +240,13 @@ main() {
 		say "Another regrow, at $found, is on your PATH and may run instead of this one; remove it, or run ~/.local/bin/regrow."
 		next='~/.local/bin/regrow'
 	fi
+	case $app in
+	skip) say "$app_note" ;;
+	failed) printf 'regrow install: Regrow.app was not installed: %s.\n' "$app_note" >&2 ;;
+	esac
 	say "Next, run:  $next"
 	say "It shows what fills your disk and removes nothing until you confirm."
+	[ "$app" != failed ]
 }
 
 main "$@"

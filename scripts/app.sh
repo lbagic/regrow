@@ -135,8 +135,11 @@ if xcode-select -p 2>/dev/null | grep -q CommandLineTools; then
 	echo "Toolchain: Command Line Tools ($(swift --version 2>&1 | sed -n 's/.*\(Swift version [0-9.]*\).*/\1/p' | head -1))"
 fi
 
+# The engine says `regrow 0.3.0`, as the release's CLI does; the bundle
+# version is the plain number macOS compares bundles by.
 version=$(git describe --tags --always --dirty 2>/dev/null || echo dev)
-short=$(printf '%s' "$version" | sed 's/^v//; s/-.*//')
+version=${version#v}
+short=$(printf '%s' "$version" | sed 's/-.*//')
 case "$short" in
 [0-9]*.[0-9]*) ;;
 *) short=0.0.0 ;;
@@ -183,7 +186,7 @@ cp "$ROOT/app/Resources/page.html" "$BUNDLE/Contents/Resources/page.html"
 cp -R "$ROOT/app/Resources/smoke" "$BUNDLE/Contents/Resources/smoke"
 cp "$ROOT/app/Resources/Info.plist" "$BUNDLE/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $short" \
-	-c "Set :CFBundleVersion $version" "$BUNDLE/Contents/Info.plist"
+	-c "Set :CFBundleVersion $short" "$BUNDLE/Contents/Info.plist"
 
 # The engine first: the bundle's signature seals it.
 sign "$BUNDLE/Contents/MacOS/regrow-engine"
