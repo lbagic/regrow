@@ -40,9 +40,9 @@ type devTools struct {
 // library (or, in older layouts, xcrun): $DEVELOPER_DIR, else the first
 // select link there is, read through the link, either of them an Xcode
 // app or its Contents/Developer; else the first default that holds it.
-// A link whose folder lacks it, or a path that hangs, means no tools; a
-// path that is refused is passed over, so a hung volume costs one stall
-// window.
+// A link whose folder lacks it, a link that cannot be read, or a path
+// that hangs means no tools, which bounds a hung volume to one stall
+// window; a default that fails in another way is passed over.
 func (d devTools) present(ctx context.Context) bool {
 	unread := false
 	holds := func(dir string, app bool) bool {
