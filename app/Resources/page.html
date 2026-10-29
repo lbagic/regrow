@@ -403,7 +403,7 @@ function ask(type, role, fields) {
   return id;
 }
 
-const OUT_OF_DATE = { scan_spent: 1, scan_superseded: 1, scan_canceled: 1, unknown_scan: 1, rules_changed: 1 };
+const OUT_OF_DATE = { scan_spent: 1, scan_superseded: 1, scan_canceled: 1, unknown_scan: 1, rules_changed: 1, rules_failed: 1 };
 
 window.regrow = { receive(line) {
   try {
@@ -491,7 +491,7 @@ const on = {
       S.scan.phase = 'stale';
       S.scan.why = e.message || '';
       // A run and its result keep their plan: the scan was spent by that run.
-      if (S.screen !== 'running' && S.screen !== 'result') Object.assign(S, { screen: 'findings', planning: '', plan: null });
+      if (S.screen !== 'running' && S.screen !== 'result') Object.assign(S, { screen: 'findings', planning: '', plan: null, note: '' });
     } else if (role === 'history') {
       Object.assign(S, { history: { failed: e.message || e.code }, historyAsk: '' });
       if (S.historyAgain) askHistory();

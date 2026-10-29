@@ -170,10 +170,14 @@ func LoadFile(path string) (Config, error) {
 	if err := dec.Decode(&c); err != nil && !errors.Is(err, io.EOF) {
 		return Config{}, fmt.Errorf("%s: %w", path, err)
 	}
-	// Only the first document is read: a key in a later one would go
-	// unseen, a rule it turns off still running.
-	var more yaml.Node
-	if err := dec.Decode(&more); !errors.Is(err, io.EOF) {
+	// Only the first document is decoded: a key in any later one would
+	// go unseen, a rule it turns off still running.
+	for {
+		var more yaml.Node
+		err := dec.Decode(&more)
+		if errors.Is(err, io.EOF) {
+			break
+		}
 		if err == nil && !isEmptyDocument(&more) {
 			err = errors.New("the file holds more than one YAML document; regrow reads one")
 		}

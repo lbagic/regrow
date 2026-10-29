@@ -136,13 +136,15 @@ func (s *ruleSwitch) State() protocol.Rules {
 
 // state is the rules as they stand. The caller holds mu.
 func (s *ruleSwitch) state() protocol.Rules {
-	st := protocol.Rules{Rules: make([]protocol.RuleState, len(s.all)), Beta: s.rules.Beta, BetaFlag: s.betaFlag, Config: s.path, UnknownOff: unknownOff(s.all, s.rules)}
+	st := protocol.Rules{Rules: make([]protocol.RuleState, len(s.all)), Beta: s.rules.Beta, BetaFlag: s.betaFlag, Config: s.path}
 	for i, r := range s.all {
 		off := s.rules.IsOff(r.ID)
 		st.Rules[i] = protocol.RuleState{Rule: r, Off: off, Runs: s.err == nil && !off && (!r.Beta || s.betaFlag || s.rules.Beta)}
 	}
 	if s.err != nil {
 		st.Error = s.err.Error()
+	} else {
+		st.UnknownOff = unknownOff(s.all, s.rules)
 	}
 	return st
 }

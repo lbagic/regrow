@@ -147,6 +147,9 @@ func TestSetRulesToNothingKeepsTheCommentsAroundTheKey(t *testing.T) {
 		{"between keys", "docker:\n  volume_export_cap: 2GiB\n# rule switches\nrules:\n  off: [pip-cache]\n# tail note\n"},
 		{"before a key", "# rule switches\nrules:\n  off: [pip-cache]\n# about docker\ndocker:\n  volume_export_cap: 2GiB\n"},
 		{"alone", "# my regrow settings\nrules:\n  off: [pip-cache]\n"},
+		{"after a blank line", "rules:\n  off: [pip-cache]\n\n# tail note\n"},
+		{"on the key's line", "docker:\n  volume_export_cap: 2GiB\nrules: # my switches\n  off: [pip-cache]\n"},
+		{"after a flow mapping", "docker:\n  volume_export_cap: 2GiB\nrules: {off: [pip-cache]} # my switches\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := writeConfig(t, tc.file)
@@ -158,8 +161,8 @@ func TestSetRulesToNothingKeepsTheCommentsAroundTheKey(t *testing.T) {
 				t.Fatal(err)
 			}
 			for _, line := range strings.Split(tc.file, "\n") {
-				if strings.HasPrefix(line, "#") && !strings.Contains(string(data), line) {
-					t.Errorf("%q is gone:\n%s", line, data)
+				if _, c, ok := strings.Cut(line, "#"); ok && !strings.Contains(string(data), "#"+c) {
+					t.Errorf("%q is gone:\n%s", "#"+c, data)
 				}
 			}
 			if strings.Contains(string(data), "pip-cache") {
@@ -189,25 +192,19 @@ func TestSetRulesAfterAnEmptyFileWritesBlockStyle(t *testing.T) {
 	}
 }
 
-// A link to a file not there yet is written through: the file is made
-// where it points, and the link stays.
-func TestSetRulesWritesThroughALinkToNoFileYet(t *testing.T) {
+// A link to a file not there is refused: where the file would go
+// depends on links regrow cannot follow, and the link stays a link.
+func TestSetRulesRefusesALinkToNoFile(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.Mkdir(filepath.Join(dir, "dotfiles"), 0o700); err != nil {
-		t.Fatal(err)
-	}
 	link := filepath.Join(dir, "config.yaml")
 	if err := os.Symlink(filepath.Join("dotfiles", "regrow.yaml"), link); err != nil {
 		t.Fatal(err)
 	}
-	if err := SetRules(link, Rules{Off: []string{"npm-cache"}}); err != nil {
-		t.Fatal(err)
+	if err := SetRules(link, Rules{Off: []string{"npm-cache"}}); err == nil || !strings.Contains(err.Error(), "not there") {
+		t.Errorf("SetRules = %v, want the link refused", err)
 	}
 	if info, err := os.Lstat(link); err != nil || info.Mode()&os.ModeSymlink == 0 {
 		t.Fatalf("the link was replaced: %v, %v", info, err)
-	}
-	if c, err := LoadFile(filepath.Join(dir, "dotfiles", "regrow.yaml")); err != nil || !c.Rules.IsOff("npm-cache") {
-		t.Errorf("the file the link names: %+v, %v", c.Rules, err)
 	}
 }
 
@@ -225,9 +222,31 @@ func TestAFileOfTwoDocumentsDoesNotLoad(t *testing.T) {
 	if data, _ := os.ReadFile(p); string(data) != text {
 		t.Errorf("the file changed:\n%s", data)
 	}
-	for _, ok := range []string{"---\ndocker:\n  volume_export_cap: 2GiB\n", "docker:\n  volume_export_cap: 2GiB\n---\n"} {
+	third := writeConfig(t, "docker:\n  volume_export_cap: 2GiB\n---\n---\nrules:\n  off: [pip-cache]\n")
+	if _, err := LoadFile(third); err == nil {
+		t.Error("a rules: in a third document loaded unseen")
+	}
+	for _, ok := range []string{"---\ndocker:\n  volume_export_cap: 2GiB\n", "docker:\n  volume_export_cap: 2GiB\n---\n", "---\n---\n"} {
 		if _, err := LoadFile(writeConfig(t, ok)); err != nil {
 			t.Errorf("%q: %v", ok, err)
+		}
+	}
+}
+
+// A file of "---" lines, comments or not, takes a switch: the markers
+// past the first go, its comments stay.
+func TestSetRulesOnAFileOfMarkers(t *testing.T) {
+	for _, file := range []string{"---\n---\n", "# my settings\n---\n---\n", "---\n...\n"} {
+		p := writeConfig(t, file)
+		if err := SetRules(p, Rules{Off: []string{"npm-cache"}}); err != nil {
+			t.Fatalf("%q: %v", file, err)
+		}
+		data, _ := os.ReadFile(p)
+		if strings.HasPrefix(file, "#") && !strings.Contains(string(data), "# my settings") {
+			t.Errorf("%q: the comment is gone:\n%s", file, data)
+		}
+		if c, err := LoadFile(p); err != nil || !c.Rules.IsOff("npm-cache") {
+			t.Errorf("%q: %+v, %v\n%s", file, c.Rules, err, data)
 		}
 	}
 }

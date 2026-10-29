@@ -164,4 +164,12 @@ func TestUnknownOff(t *testing.T) {
 	if st := s.state(); strings.Join(st.UnknownOff, " ") != "npm-cahce" {
 		t.Errorf("state's unknown_off = %v", st.UnknownOff)
 	}
+	// The typo fixed, but the file broken another way: the last load's
+	// typo is not said.
+	if err := os.WriteFile(path, []byte("rules:\n  off: [npm-cache]\n  bta: true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if st := s.State(); st.Error == "" || st.UnknownOff != nil {
+		t.Errorf("state with a broken file: error %q, unknown_off %v; want the error alone", st.Error, st.UnknownOff)
+	}
 }

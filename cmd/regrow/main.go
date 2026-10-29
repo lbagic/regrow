@@ -137,11 +137,6 @@ func run(args []string) error {
 		return runHistory(opts.asJSON)
 	}
 
-	switch cmd {
-	case "scan", "plan", "clean", "doctor", "tick", "prune", "rules", "engine":
-	default:
-		return fmt.Errorf("unknown command %q (`regrow help` lists commands)", cmd)
-	}
 	all, err := loadCatalog(opts.rulesDir)
 	if err != nil {
 		return err

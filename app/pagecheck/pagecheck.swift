@@ -451,7 +451,6 @@ final class Run: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHa
             var event = parse(answering("rules", id)[0])
             event["catalog"] = event.objs("catalog").map { rule -> [String: Any] in var rule = rule; rule["runs"] = false; return rule }
             event["error"] = why
-            event["unknown_off"] = ["npm-cahce"]
             send(event)
             send(["event": "done", "re": id])
         case "set_rules":
@@ -1308,7 +1307,7 @@ struct Scenario {
             r.same(await r.text("#pane .lead h2"), "0 of \(catalog.count) rules run.", "the headline")
             r.has(await r.text("#pane .lead"), "so no rule runs until it does", "the note on a file that has not loaded")
             r.has(await r.text("#pane .lead"), "field kep not found", "the engine's reason")
-            r.has(await r.text("#pane .lead"), "turns off npm-cahce, which no rule is called", "the id no rule has")
+            r.same(await r.text("#pane .lead").contains("which no rule is called"), false, "a warning of ids from a load that no longer stands")
             r.has(await r.text("[data-setting=autotrim]"), "Until the config file loads, it prunes nothing.", "autotrim while the file does not load")
             r.same(await r.text("[data-setting=autotrim]").contains("off below"), false, "no word of a switch that is not off")
             await r.shoot()
@@ -1638,6 +1637,21 @@ struct Scenario {
             r.same(await r.screen(), "findings", "the screen")
             r.same(await r.texts(".note").filter { $0.contains("answered with an error") }.count, 0, "the engine's error beside the tray's word")
             r.has(await r.text(".tray .say"), "This scan is out of date", "the tray")
+            r.same(await r.text(".tray .btn"), "Scan again", "the tray's action")
+            await r.shoot()
+        },
+        Scenario(name: "execute-rules-unloaded") { r in
+            // config.yaml broke between the plan and the confirm: nothing runs, and the scan is out of date, said once.
+            let broken = "/Users/dev/.config/regrow/config.yaml: yaml: unmarshal errors: line 3: field bta not found in type config.Rules"
+            await toConfirm(r)
+            await r.click("#read")
+            r.play.executeError = ("rules_failed", broken)
+            r.play.planError = ("rules_failed", broken)
+            await r.click("#go")
+            r.same(await r.screen(), "findings", "the screen")
+            r.same(await r.texts(".note").filter { $0.contains("answered with an error") }.count, 0, "the engine's error beside the tray's word")
+            r.same(await r.text("#pane").contains("this is a fresh one"), false, "words of a fresh plan that is not there")
+            r.has(await r.text(".tray .say"), "field bta not found", "the engine's reason in the tray")
             r.same(await r.text(".tray .btn"), "Scan again", "the tray's action")
             await r.shoot()
         },

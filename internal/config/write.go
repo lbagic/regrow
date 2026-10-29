@@ -17,16 +17,13 @@ import (
 // file, its comments included; the `rules:` key itself is written whole.
 // Empty rules drop the key, the comments around it kept. The file must
 // load as it is, and the new one before it replaces it, which it does in
-// one rename; a link is written through to the file it names, there yet
-// or not.
+// one rename; a link is written through to the file it names, and a
+// link to no file is refused.
 func SetRules(path string, r Rules) error {
 	if real, err := filepath.EvalSymlinks(path); err == nil {
 		path = real
-	} else if target, lerr := os.Readlink(path); lerr == nil {
-		if !filepath.IsAbs(target) {
-			target = filepath.Join(filepath.Dir(path), target)
-		}
-		path = target
+	} else if info, lerr := os.Lstat(path); lerr == nil && info.Mode()&fs.ModeSymlink != 0 {
+		return fmt.Errorf("%s is a link to a file that is not there; regrow writes no file through it", path)
 	}
 	if _, err := LoadFile(path); err != nil {
 		return err
@@ -43,8 +40,20 @@ func SetRules(path string, r Rules) error {
 	// A file of comments alone, or of "---", holds no mapping: its text
 	// stays as it is, and the keys follow it.
 	var kept []byte
-	if doc.Kind == 0 || len(doc.Content) == 0 || doc.Content[0].Tag == "!!null" {
-		kept = bytes.TrimRight(data, " \t\n")
+	if isEmptyDocument(&doc) {
+		// Past its first "---", a "---" or "..." would put the keys after
+		// it in a document of their own: those lines go.
+		started := false
+		for _, line := range bytes.SplitAfter(data, []byte("\n")) {
+			t := string(bytes.TrimSpace(line))
+			start, end := marker(t, "---"), marker(t, "...")
+			if end || (start && started) {
+				continue
+			}
+			started = started || start
+			kept = append(kept, line...)
+		}
+		kept = bytes.TrimRight(kept, " \t\n")
 		doc = yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{{Kind: yaml.MappingNode, Tag: "!!map"}}}
 	}
 	top := doc.Content[0]
@@ -84,7 +93,7 @@ func SetRules(path string, r Rules) error {
 		out.Write(kept)
 		out.WriteByte('\n')
 	}
-	if len(top.Content) > 0 || top.HeadComment != "" || top.FootComment != "" || doc.HeadComment != "" {
+	if len(top.Content) > 0 || top.HeadComment != "" || top.FootComment != "" || doc.HeadComment != "" || doc.FootComment != "" {
 		enc := yaml.NewEncoder(&out)
 		enc.SetIndent(2)
 		if err := enc.Encode(&doc); err != nil {
@@ -131,7 +140,7 @@ func SetRules(path string, r Rules) error {
 func dropKey(doc, top *yaml.Node, at int) {
 	key, value := top.Content[at], top.Content[at+1]
 	var around []string
-	for _, c := range []string{key.HeadComment, key.FootComment, value.FootComment} {
+	for _, c := range []string{key.HeadComment, key.LineComment, value.LineComment, key.FootComment, value.FootComment} {
 		if c != "" {
 			around = append(around, c)
 		}
@@ -159,4 +168,11 @@ func dropKey(doc, top *yaml.Node, at int) {
 	default:
 		doc.HeadComment = join(append([]string{doc.HeadComment}, around...)...)
 	}
+}
+
+// marker says whether line is the document marker m, a comment after it
+// or not.
+func marker(line, m string) bool {
+	rest, ok := strings.CutPrefix(line, m)
+	return ok && (rest == "" || rest[0] == ' ' || rest[0] == '\t')
 }
