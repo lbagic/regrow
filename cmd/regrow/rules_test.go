@@ -111,21 +111,22 @@ func TestRuleSwitchWritesTheConfigAndReadsItBack(t *testing.T) {
 		t.Error("a rule the catalog lacks must be refused")
 	}
 
-	// An edit by hand counts; one that breaks the file leaves the last rules.
+	// An edit by hand counts; one that breaks the file runs no rule, as
+	// no command runs one: the edit may have meant to turn one off.
 	if err := os.WriteFile(path, []byte("rules:\n  off: [go-build-cache]\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if got := runs(t, s); got != "npm-cache" {
 		t.Errorf("catalog after an edit by hand = %q", got)
 	}
-	if err := os.WriteFile(path, []byte("rules:\n  of: [npm-cache]\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("rules:\n  off: [go-build-cache, npm-cache]\n  bta: true\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if got := runs(t, s); got != "npm-cache" {
-		t.Errorf("catalog with a broken file = %q, want the last that loaded", got)
+	if catalog, err := s.Catalog(); err == nil || catalog != nil {
+		t.Errorf("catalog with a broken file = %v, %v; want none and the load's error", catalog, err)
 	}
-	if st := s.State(); st.Error == "" {
-		t.Error("the state must say the file does not load")
+	if st := s.State(); st.Error == "" || st.Rules[0].Runs || !st.Rules[1].Off {
+		t.Errorf("state with a broken file = %+v; want its error, no rule running, off as it last loaded", st)
 	}
 	if _, err := s.Set("npm-cache", &yes, nil); err == nil {
 		t.Error("a change to a file that does not load must fail")

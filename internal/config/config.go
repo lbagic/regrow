@@ -170,6 +170,17 @@ func LoadFile(path string) (Config, error) {
 	if err := dec.Decode(&c); err != nil && !errors.Is(err, io.EOF) {
 		return Config{}, fmt.Errorf("%s: %w", path, err)
 	}
+	// Only the first document is read: a key in a later one would go
+	// unseen, a rule it turns off still running.
+	var more yaml.Node
+	if err := dec.Decode(&more); !errors.Is(err, io.EOF) {
+		if err == nil && !isEmptyDocument(&more) {
+			err = errors.New("the file holds more than one YAML document; regrow reads one")
+		}
+		if err != nil {
+			return Config{}, fmt.Errorf("%s: %w", path, err)
+		}
+	}
 	if err := c.validate(); err != nil {
 		return Config{}, fmt.Errorf("%s: %w", path, err)
 	}
@@ -203,4 +214,9 @@ func ParseSize(s string) (int64, error) {
 		return 0, fmt.Errorf("size %q: unknown unit (use B, kB, MB, GB, TB, KiB, MiB, GiB, TiB)", s)
 	}
 	return int64(val * mult), nil
+}
+
+// isEmptyDocument is a document of nothing, as "a: 1\n---\n" ends.
+func isEmptyDocument(n *yaml.Node) bool {
+	return len(n.Content) == 0 || (len(n.Content) == 1 && n.Content[0].Tag == "!!null")
 }

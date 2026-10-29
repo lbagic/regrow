@@ -90,24 +90,22 @@ func printRules(catalog []engine.Rule, rules config.Rules, asJSON bool) error {
 // ruleSwitch is the engine's catalog: the whole catalog, beta rules
 // included, run as config.yaml's `rules:` says. It reads the file again
 // whenever a scan or tick starts, so an edit by hand counts as one made
-// in the app; a file that stops loading leaves the rules as it last
-// loaded and says why, and one that has not loaded since the engine
-// started runs no rule.
+// in the app; while the file does not load, no rule runs, as no command
+// runs one.
 type ruleSwitch struct {
 	all      []engine.Rule
 	betaFlag bool
 	path     string
 
-	mu     sync.Mutex
-	rules  config.Rules
-	loaded bool
-	err    error
+	mu    sync.Mutex
+	rules config.Rules // as the file last loaded, shown while it does not
+	err   error
 }
 
 // newRuleSwitch starts from the file as the command read it, err its
 // load's error.
 func newRuleSwitch(all []engine.Rule, betaFlag bool, path string, rules config.Rules, err error) *ruleSwitch {
-	return &ruleSwitch{all: all, betaFlag: betaFlag, path: path, rules: rules, loaded: err == nil, err: err}
+	return &ruleSwitch{all: all, betaFlag: betaFlag, path: path, rules: rules, err: err}
 }
 
 // read takes the file as it is now. The caller holds mu.
@@ -115,7 +113,7 @@ func (s *ruleSwitch) read() {
 	c, err := config.LoadFile(s.path)
 	s.err = err
 	if err == nil {
-		s.rules, s.loaded = c.Rules, true
+		s.rules = c.Rules
 	}
 }
 
@@ -123,7 +121,7 @@ func (s *ruleSwitch) Catalog() ([]engine.Rule, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.read()
-	if !s.loaded {
+	if s.err != nil {
 		return nil, s.err
 	}
 	return commandCatalog("engine", nil, s.betaFlag, s.all, s.rules, s.path)
@@ -141,7 +139,7 @@ func (s *ruleSwitch) state() protocol.Rules {
 	st := protocol.Rules{Rules: make([]protocol.RuleState, len(s.all)), Beta: s.rules.Beta, BetaFlag: s.betaFlag, Config: s.path, UnknownOff: unknownOff(s.all, s.rules)}
 	for i, r := range s.all {
 		off := s.rules.IsOff(r.ID)
-		st.Rules[i] = protocol.RuleState{Rule: r, Off: off, Runs: s.loaded && !off && (!r.Beta || s.betaFlag || s.rules.Beta)}
+		st.Rules[i] = protocol.RuleState{Rule: r, Off: off, Runs: s.err == nil && !off && (!r.Beta || s.betaFlag || s.rules.Beta)}
 	}
 	if s.err != nil {
 		st.Error = s.err.Error()

@@ -514,15 +514,8 @@ func (s *session) history(req request) {
 	if h.Samples == nil {
 		h.Samples = []headroom.Sample{}
 	}
-	all := s.srv.Catalog
-	if s.srv.Switch != nil {
-		all = nil
-		for _, r := range s.srv.Switch.State().Rules {
-			all = append(all, r.Rule)
-		}
-	}
-	titles := make(map[string]string, len(all))
-	for _, r := range all {
+	titles := make(map[string]string, len(s.srv.Catalog))
+	for _, r := range s.srv.Catalog {
 		titles[r.ID] = r.Title
 	}
 	h.Titles = map[string]string{}

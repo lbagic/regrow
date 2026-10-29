@@ -140,3 +140,94 @@ func TestSetRulesLeavesABrokenFileAlone(t *testing.T) {
 		t.Errorf("a temp file stayed beside the config: %v", entries)
 	}
 }
+
+// Every rule back on drops the key, and the comments around it stay.
+func TestSetRulesToNothingKeepsTheCommentsAroundTheKey(t *testing.T) {
+	for _, tc := range []struct{ name, file string }{
+		{"between keys", "docker:\n  volume_export_cap: 2GiB\n# rule switches\nrules:\n  off: [pip-cache]\n# tail note\n"},
+		{"before a key", "# rule switches\nrules:\n  off: [pip-cache]\n# about docker\ndocker:\n  volume_export_cap: 2GiB\n"},
+		{"alone", "# my regrow settings\nrules:\n  off: [pip-cache]\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := writeConfig(t, tc.file)
+			if err := SetRules(p, Rules{}); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, line := range strings.Split(tc.file, "\n") {
+				if strings.HasPrefix(line, "#") && !strings.Contains(string(data), line) {
+					t.Errorf("%q is gone:\n%s", line, data)
+				}
+			}
+			if strings.Contains(string(data), "pip-cache") {
+				t.Errorf("the key stayed:\n%s", data)
+			}
+			if _, err := LoadFile(p); err != nil {
+				t.Errorf("the file does not load: %v\n%s", err, data)
+			}
+		})
+	}
+}
+
+// A file written {} goes back to one key a line when a key is added.
+func TestSetRulesAfterAnEmptyFileWritesBlockStyle(t *testing.T) {
+	p := writeConfig(t, "rules:\n  off: [npm-cache]\n")
+	for _, r := range []Rules{{}, {Off: []string{"pip-cache"}}} {
+		if err := SetRules(p, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	data, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "{") {
+		t.Errorf("a flow mapping:\n%s", data)
+	}
+}
+
+// A link to a file not there yet is written through: the file is made
+// where it points, and the link stays.
+func TestSetRulesWritesThroughALinkToNoFileYet(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "dotfiles"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "config.yaml")
+	if err := os.Symlink(filepath.Join("dotfiles", "regrow.yaml"), link); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetRules(link, Rules{Off: []string{"npm-cache"}}); err != nil {
+		t.Fatal(err)
+	}
+	if info, err := os.Lstat(link); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("the link was replaced: %v, %v", info, err)
+	}
+	if c, err := LoadFile(filepath.Join(dir, "dotfiles", "regrow.yaml")); err != nil || !c.Rules.IsOff("npm-cache") {
+		t.Errorf("the file the link names: %+v, %v", c.Rules, err)
+	}
+}
+
+// A second YAML document would be read by nothing, a rule it turns off
+// still running: the file does not load, and nothing writes over it.
+func TestAFileOfTwoDocumentsDoesNotLoad(t *testing.T) {
+	text := "docker:\n  volume_export_cap: 2GiB\n---\nrules:\n  off: [pip-cache]\n"
+	p := writeConfig(t, text)
+	if _, err := LoadFile(p); err == nil || !strings.Contains(err.Error(), "more than one YAML document") {
+		t.Errorf("LoadFile = %v, want the second document named", err)
+	}
+	if err := SetRules(p, Rules{Off: []string{"npm-cache"}}); err == nil {
+		t.Error("SetRules wrote over a file that does not load")
+	}
+	if data, _ := os.ReadFile(p); string(data) != text {
+		t.Errorf("the file changed:\n%s", data)
+	}
+	for _, ok := range []string{"---\ndocker:\n  volume_export_cap: 2GiB\n", "docker:\n  volume_export_cap: 2GiB\n---\n"} {
+		if _, err := LoadFile(writeConfig(t, ok)); err != nil {
+			t.Errorf("%q: %v", ok, err)
+		}
+	}
+}

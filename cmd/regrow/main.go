@@ -137,6 +137,11 @@ func run(args []string) error {
 		return runHistory(opts.asJSON)
 	}
 
+	switch cmd {
+	case "scan", "plan", "clean", "doctor", "tick", "prune", "rules", "engine":
+	default:
+		return fmt.Errorf("unknown command %q (`regrow help` lists commands)", cmd)
+	}
 	all, err := loadCatalog(opts.rulesDir)
 	if err != nil {
 		return err
@@ -154,18 +159,27 @@ func run(args []string) error {
 	if cmd == "engine" {
 		return runEngine(host, newRuleSwitch(all, opts.betaRules, cfgPath, cfg.Rules, err), opts)
 	}
-	if err != nil {
-		return err
-	}
-	if unknown := unknownOff(all, cfg.Rules); len(unknown) > 0 {
-		fmt.Fprintf(os.Stderr, "regrow: %s: rules: off names %s, which no rule has\n", cfgPath, strings.Join(unknown, ", "))
-	}
 	if cmd == "rules" {
+		// It runs no rule: the list prints whatever the file holds, and
+		// then why the file does not load.
+		if err == nil {
+			warnUnknownOff(all, cfg.Rules, cfgPath)
+		}
 		if !opts.betaRules && !cfg.Rules.Beta {
 			all = engine.WithoutBeta(all)
 		}
-		return printRules(all, cfg.Rules, opts.asJSON)
+		if perr := printRules(all, cfg.Rules, opts.asJSON); perr != nil {
+			return perr
+		}
+		if err != nil {
+			return fmt.Errorf("%w; no command runs a rule until it loads, and none is marked off above", err)
+		}
+		return nil
 	}
+	if err != nil {
+		return err
+	}
+	warnUnknownOff(all, cfg.Rules, cfgPath)
 	catalog, err := commandCatalog(cmd, ids, opts.betaRules, all, cfg.Rules, cfgPath)
 	if err != nil {
 		return err
@@ -337,4 +351,10 @@ func writeJSON(w io.Writer, v any) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(v)
+}
+
+func warnUnknownOff(all []engine.Rule, rules config.Rules, cfgPath string) {
+	if unknown := unknownOff(all, rules); len(unknown) > 0 {
+		fmt.Fprintf(os.Stderr, "regrow: %s: rules: off names %s, which no rule has\n", cfgPath, strings.Join(unknown, ", "))
+	}
 }

@@ -8,18 +8,28 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
 
 // SetRules writes r as the file's `rules:` and keeps the rest of the
 // file, its comments included; the `rules:` key itself is written whole.
-// Empty rules drop the key. The new file must load before it replaces
-// the old one, which it does in one rename; a link is written through
-// to the file it names.
+// Empty rules drop the key, the comments around it kept. The file must
+// load as it is, and the new one before it replaces it, which it does in
+// one rename; a link is written through to the file it names, there yet
+// or not.
 func SetRules(path string, r Rules) error {
 	if real, err := filepath.EvalSymlinks(path); err == nil {
 		path = real
+	} else if target, lerr := os.Readlink(path); lerr == nil {
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(filepath.Dir(path), target)
+		}
+		path = target
+	}
+	if _, err := LoadFile(path); err != nil {
+		return err
 	}
 	data, err := os.ReadFile(path)
 	existed := err == nil
@@ -52,7 +62,7 @@ func SetRules(path string, r Rules) error {
 	r.Off = off
 	switch {
 	case len(r.Off) == 0 && !r.Beta && at >= 0:
-		top.Content = append(top.Content[:at], top.Content[at+2:]...)
+		dropKey(&doc, top, at)
 	case len(r.Off) == 0 && !r.Beta:
 	default:
 		var value yaml.Node
@@ -66,12 +76,15 @@ func SetRules(path string, r Rules) error {
 			top.Content = append(top.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "rules"}, &value)
 		}
 	}
+	// A file written {} once is a flow mapping, which would keep every
+	// key after on one line.
+	top.Style &^= yaml.FlowStyle
 	var out bytes.Buffer
 	if len(kept) > 0 {
 		out.Write(kept)
 		out.WriteByte('\n')
 	}
-	if len(top.Content) > 0 || top.HeadComment != "" || top.FootComment != "" {
+	if len(top.Content) > 0 || top.HeadComment != "" || top.FootComment != "" || doc.HeadComment != "" {
 		enc := yaml.NewEncoder(&out)
 		enc.SetIndent(2)
 		if err := enc.Encode(&doc); err != nil {
@@ -110,4 +123,40 @@ func SetRules(path string, r Rules) error {
 		}
 	}
 	return os.Rename(tmp.Name(), path)
+}
+
+// dropKey removes the pair at top.Content[at] and moves the comments
+// above and below it to the pair after, or the pair before, or the
+// document when none is left.
+func dropKey(doc, top *yaml.Node, at int) {
+	key, value := top.Content[at], top.Content[at+1]
+	var around []string
+	for _, c := range []string{key.HeadComment, key.FootComment, value.FootComment} {
+		if c != "" {
+			around = append(around, c)
+		}
+	}
+	top.Content = append(top.Content[:at], top.Content[at+2:]...)
+	if len(around) == 0 {
+		return
+	}
+	join := func(a ...string) string {
+		var out []string
+		for _, s := range a {
+			if s != "" {
+				out = append(out, s)
+			}
+		}
+		return strings.Join(out, "\n")
+	}
+	switch {
+	case at < len(top.Content):
+		next := top.Content[at]
+		next.HeadComment = join(append(around, next.HeadComment)...)
+	case at > 0:
+		prev := top.Content[at-2]
+		prev.FootComment = join(append([]string{prev.FootComment}, around...)...)
+	default:
+		doc.HeadComment = join(append([]string{doc.HeadComment}, around...)...)
+	}
 }

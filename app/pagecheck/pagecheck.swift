@@ -1309,7 +1309,8 @@ struct Scenario {
             r.has(await r.text("#pane .lead"), "so no rule runs until it does", "the note on a file that has not loaded")
             r.has(await r.text("#pane .lead"), "field kep not found", "the engine's reason")
             r.has(await r.text("#pane .lead"), "turns off npm-cahce, which no rule is called", "the id no rule has")
-            r.has(await r.text("[data-setting=autotrim]"), "The Go build cache rule is off below, so it prunes nothing.", "autotrim with its rule not running")
+            r.has(await r.text("[data-setting=autotrim]"), "Until the config file loads, it prunes nothing.", "autotrim while the file does not load")
+            r.same(await r.text("[data-setting=autotrim]").contains("off below"), false, "no word of a switch that is not off")
             await r.shoot()
         },
         Scenario(name: "rules-refused", play: Play(rulesError: "/Users/dev/.config/regrow/config.yaml: yaml: line 2: field of not found in type config.Rules")) { r in
@@ -1624,6 +1625,20 @@ struct Scenario {
             r.same(await r.screen(), "plan", "the screen after the refusal")
             r.has(await r.text(".lead .aside"), "did not run, so this is a fresh one. Nothing has run.", "why the plan is a fresh one")
             r.same(await r.text(".tray .btn:not(.quiet)"), "Run plan…", "the tray's action on the fresh plan")
+            await r.shoot()
+        },
+        Scenario(name: "execute-out-of-date") { r in
+            // A rule turned off since the scan: the execute is refused as out of date, which the tray says, once.
+            await toConfirm(r)
+            await r.click("#read")
+            r.play.executeError = ("rules_changed", "npm-cache no longer runs, as config.yaml's rules now say: scan again")
+            r.play.planError = ("rules_changed", "npm-cache no longer runs, as config.yaml's rules now say: scan again")
+            await r.click("#go")
+            r.same(r.sent("execute").count, 1, "executes sent")
+            r.same(await r.screen(), "findings", "the screen")
+            r.same(await r.texts(".note").filter { $0.contains("answered with an error") }.count, 0, "the engine's error beside the tray's word")
+            r.has(await r.text(".tray .say"), "This scan is out of date", "the tray")
+            r.same(await r.text(".tray .btn"), "Scan again", "the tray's action")
             await r.shoot()
         },
         Scenario(name: "stale-review") { r in
