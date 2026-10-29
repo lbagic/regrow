@@ -38,6 +38,10 @@ Usage:
   regrow rules [--json]           list the rule catalog
   regrow engine                   JSON-lines protocol on stdin/stdout for a
                                   shell app (docs/ENGINE.md)
+  regrow update                   install the latest release now; a release
+                                  installed with the install line also checks
+                                  once a day as it runs (REGROW_NO_AUTO_UPDATE=1
+                                  turns that off)
   regrow version                  print the version
   regrow help                     print this help
 
@@ -49,7 +53,10 @@ Flags go before ids:
 `
 
 func main() {
-	if err := run(os.Args[1:]); err != nil {
+	finishUpdate := startAutoUpdate(os.Args[1:])
+	err := run(os.Args[1:])
+	finishUpdate()
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "regrow:", err)
 		os.Exit(1)
 	}
@@ -112,9 +119,12 @@ func run(args []string) error {
 		printUsage(os.Stdout)
 		return nil
 	}
-	if cmd == "version" {
+	switch cmd {
+	case "version":
 		fmt.Println("regrow", version)
 		return nil
+	case "update":
+		return runUpdate(os.Stdout, ids)
 	}
 
 	catalog, err := loadCatalog(opts.rulesDir)
