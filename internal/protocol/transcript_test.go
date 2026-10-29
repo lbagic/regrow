@@ -42,12 +42,15 @@ const (
 	pageNonce       = "3fa9c1d2"
 	pagePlanDefault = "6f1d2c8a94b3e07d5a61c2f8930be4d7"
 	pagePlanAll     = "b82e41f7c09d3a65e1f4a7c20d9358b6"
+	// pagePlanAgain is the second run's plan in the history section, where
+	// it is a run of its own; everywhere else it is pagePlanAll.
+	pagePlanAgain = "4d07e9a1c35b8f2e6a19d0c7b84f3e52"
 )
 
 // pageSections are the transcript's sections, in file order.
 var pageSections = []string{
 	"hello", "scan", "scan-errors", "plan-default", "plan-all", "execute", "execute-trash-failed",
-	"tick", "tick-short", "tick-steady", "tick-locked",
+	"tick", "tick-short", "tick-steady", "tick-locked", "history",
 }
 
 var (
@@ -487,6 +490,7 @@ func recordPage(t *testing.T) []string {
 	}
 	planAt, runAt := pageScanAt.Add(100*time.Second), pageScanAt.Add(125*time.Second)
 	clock := &fakeClock{now: pageScanAt}
+	samplesPath := filepath.Join(filepath.Dir(logPath), headroom.FileName)
 	srv := &Server{
 		Version: "0.5.0",
 		Host:    host,
@@ -506,9 +510,10 @@ func recordPage(t *testing.T) []string {
 			return pageExecutor(t, logPath, runID, runAt, fails)
 		},
 		StagingDir: func(runID string) string { return filepath.Join(pageStaging, runID) },
-		ProbeFDA: func() FDA { return FDAGranted },
-		Now:      clock.Now,
-		Self:     pageSelf,
+		History:    func() (History, error) { return ReadHistory(logPath, samplesPath) },
+		ProbeFDA:   func() FDA { return FDAGranted },
+		Now:        clock.Now,
+		Self:       pageSelf,
 		LookPath: func(file string) (string, error) {
 			if file == "pnpm" {
 				return "", fmt.Errorf("exec: %q: executable file not found in $PATH", file)
@@ -585,6 +590,21 @@ func recordPage(t *testing.T) []string {
 	clock.set(runAt)
 	rec.add("execute-trash-failed", execute(planAgain[0].PlanID))
 
+	// The two runs in the journal, beside two days of samples a quarter
+	// of an hour apart: free space falling, and back up after the runs.
+	for i := 0; i <= 192; i++ {
+		at := runAt.Add(-36*time.Hour + time.Duration(i)*15*time.Minute)
+		free := 61.5 - 0.2*float64(i)
+		if at.After(runAt) {
+			free += 58
+		}
+		if err := headroom.Append(samplesPath, pageSample(at, gb(free))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	p.send(`{"type":"history","id":"REQ"}`)
+	rec.add("history", p.until("REQ"))
+
 	history := func(step time.Duration, freeGiB ...float64) []headroom.Sample {
 		samples := make([]headroom.Sample, len(freeGiB))
 		for i, free := range freeGiB {
@@ -631,6 +651,10 @@ func recordPage(t *testing.T) []string {
 		return line
 	}
 	rec.fix(func(section, line string) string {
+		if section == "history" {
+			id := planAgain[0].PlanID
+			line = strings.ReplaceAll(line, id, id[:len(id)-len(pagePlanAgain)]+pagePlanAgain)
+		}
 		line = fixIDs(line)
 		line = daysRe.ReplaceAllString(line, `"days_to_full":$1`)
 		// A scan ends a moment after its slowest rule.
@@ -748,11 +772,13 @@ func TestPageTranscript(t *testing.T) {
 // pageLine is a transcript line decoded for the checks below.
 type pageLine struct {
 	event
-	Section     string           `json:"section"`
-	DaysToFull  *float64         `json:"days_to_full"`
-	NoForecast  string           `json:"no_forecast"`
-	Alerts      []headroom.Alert `json:"alerts"`
-	StagedBytes int64            `json:"staged_bytes"`
+	Section     string            `json:"section"`
+	DaysToFull  *float64          `json:"days_to_full"`
+	NoForecast  string            `json:"no_forecast"`
+	Alerts      []headroom.Alert  `json:"alerts"`
+	StagedBytes int64             `json:"staged_bytes"`
+	Runs        []oplog.Summary   `json:"runs"`
+	Samples     []headroom.Sample `json:"samples"`
 }
 
 // checkPageTranscript holds the file to what the page has to draw:
@@ -1042,4 +1068,24 @@ func checkPageTranscript(t *testing.T, lines []string) {
 	}
 	need("tick-locked", "the tick event, then the autotrim_locked error",
 		names("tick-locked") == "tick error" && sections["tick-locked"][1].Code == CodeAutotrimLocked)
+
+	// The history: both runs, each with something freed, one with a Trash
+	// move and a failure, and the samples around them.
+	h := sections["history"][0]
+	var freed, moved, broke int
+	for _, r := range h.Runs {
+		if r.FreesNow > 0 {
+			freed++
+		}
+		if r.AfterTrash > 0 {
+			moved++
+		}
+		if r.Failed > 0 {
+			broke++
+		}
+	}
+	need("history", "a history and its done", names("history") == "history done")
+	need("history", "two runs that freed space, one with a Trash move and one with a failure", len(h.Runs) == 2 && freed == 2 && moved >= 1 && broke >= 1)
+	need("history", "a run id of its own for each run", len(h.Runs) == 2 && h.Runs[0].ID != h.Runs[1].ID)
+	need("history", "samples from before the runs to after them", len(h.Samples) > 100 && h.Samples[0].At.Before(h.Runs[0].Start) && h.Samples[len(h.Samples)-1].At.After(h.Runs[1].Start))
 }

@@ -342,22 +342,10 @@ func runHistory(asJSON bool) error {
 func historyLines(runs []oplog.Run) []string {
 	lines := make([]string, 0, len(runs)+len(historyNote))
 	for _, r := range runs {
-		var done, failed, undone int
-		for _, e := range r.Entries {
-			switch e.Event {
-			case oplog.EventDone:
-				done++
-			case oplog.EventFail:
-				failed++
-			case oplog.EventUndo:
-				if e.Error == "" {
-					undone++
-				}
-			}
-		}
-		status := fmt.Sprintf("%d ok, %d failed", done, failed)
-		if undone > 0 {
-			status += fmt.Sprintf(", %d undone", undone)
+		s := r.Summary()
+		status := fmt.Sprintf("%d ok, %d failed", s.Done, s.Failed)
+		if s.Undone > 0 {
+			status += fmt.Sprintf(", %d undone", s.Undone)
 		}
 		switch present, gone := r.OnDisk(); {
 		case len(present) > 0 && len(gone) > 0:
@@ -367,7 +355,7 @@ func historyLines(runs []oplog.Run) []string {
 		case len(gone) > 0:
 			status += fmt.Sprintf(" (nothing restorable: %s)", goneText(gone))
 		}
-		lines = append(lines, fmt.Sprintf("%s  %s  %10s cleaned  %s", r.ID, r.Start.Local().Format("2006-01-02 15:04"), tui.HumanBytes(runBytes(r)), status))
+		lines = append(lines, fmt.Sprintf("%s  %s  %10s cleaned  %s", r.ID, r.Start.Local().Format("2006-01-02 15:04"), tui.HumanBytes(s.Bytes()), status))
 	}
 	return append(lines, historyNote...)
 }
@@ -393,6 +381,6 @@ func goneText(gone []oplog.Entry) string {
 }
 
 var historyNote = []string{
-	"Cleaned counts finished actions only: a prune at what it deleted, anything else at its planned size; a failed or cut-short action counts nothing.",
+	"Cleaned counts finished actions only: a prune at what it deleted, anything else at its planned size; a failed or cut-short action, and a move regrow undo put back, counts nothing.",
 	"A Trash move frees its space only once the Trash is emptied; a move to regrow staging (Finder unavailable) is not freed by that.",
 }

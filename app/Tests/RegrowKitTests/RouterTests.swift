@@ -126,7 +126,7 @@ struct RouterTests {
         #expect(!router.executeInFlight)
     }
 
-    @Test("plan and cancel pass an engine that is busy")
+    @Test("plan, cancel and history pass an engine that is busy")
     func planAndCancelPass() {
         var router = started()
         _ = page(&router, ["type": "scan", "id": "s1"])
@@ -137,6 +137,7 @@ struct RouterTests {
         #expect(page(&router, ["type": "cancel", "id": "c1", "target": "s1"]) == [
             .engine(#"{"id":"c1","target":"s1","type":"cancel"}"#)
         ])
+        #expect(page(&router, ["type": "history", "id": "h1"]) == [.engine(#"{"id":"h1","type":"history"}"#)])
     }
 
     @Test("a plan's done does not release the slot a scan holds")

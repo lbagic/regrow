@@ -22,8 +22,8 @@ Protocol version: **1**.
 
 1. The engine starts and writes `hello` before it reads anything.
 2. The peer sends requests. Each request gets exactly one terminal event: `done` or `error`, with `re` set to the request's `id`.
-3. Only one **scan, execute or tick** is in flight at a time. Another one sent meanwhile is refused with `error{code:"busy"}` and changes nothing. `plan` and `cancel` are answered at any time.
-4. When stdin ends, or the process gets SIGINT or SIGTERM, the engine shuts down: a scan in flight is canceled, an execute finishes the action it is running, journals it and stops there, and a tick runs to its end. Their terminal events are still written. Then the engine exits 0. It waits for that action however long it takes, so a peer that cannot wait out a hung steward command sends SIGTERM twice: the first signal asks for the clean stop, the second kills the engine at once.
+3. Only one **scan, execute or tick** is in flight at a time. Another one sent meanwhile is refused with `error{code:"busy"}` and changes nothing. `plan`, `cancel` and `history` are answered at any time.
+4. When stdin ends, or the process gets SIGINT or SIGTERM, the engine shuts down: a scan in flight is canceled, an execute finishes the action it is running, journals it and stops there, and a tick runs to its end. It waits for the execute or the tick however long it takes, and for a canceled scan up to 5 s from the start of the shutdown; for a `history` being read it waits as long, or until the execute or tick ends if that is later. Each that ends in that time writes its terminal event; a scan still going, a `cancel` waiting on it, or a `history` still going gets none. A peer that stopped reading is given 5 s more to read what is queued, and what is left then is dropped. Then the engine exits 0. A peer that cannot wait out a hung steward command sends SIGTERM twice: the first signal asks for the clean stop, the second kills the engine at once.
 
 Request ids are the peer's own; the engine echoes them and does not check that they are unique.
 
@@ -36,6 +36,7 @@ Request ids are the peer's own; the engine echoes them and does not check that t
 | `execute` | `id`, `plan_id` | one `journal` per oplog line, then `done`; or `error` |
 | `cancel` | `id`, `target` | `done`, once `target` has ended |
 | `tick` | `id`, `autotrim` (optional, default `false`) | `tick`, then `done`; or `error` |
+| `history` | `id` | `history`, then `done`; or `error` |
 
 ### scan
 
@@ -170,6 +171,21 @@ One pass of the watch loop, as `regrow tick` runs it: a free-space sample append
 
 A tick that sampled sends its `tick` event even when it then fails, so the alerts arrive. Errors: `autotrim_locked` (the gate refused a prune that low headroom called for), `tick_failed` (no sample, a history that could not be written, or a prune that failed).
 
+### history
+
+```json
+{"type":"history","id":"h1"}
+```
+
+What regrow has done on this Mac, read from the oplog and the headroom history, answered beside whatever is in flight; the engine reads them off its request loop, so a `cancel` sent meanwhile is not held up.
+
+| Event | Fields |
+|---|---|
+| `history` | `runs`: every run in the oplog, oldest first; `samples`: the headroom history's free-space samples, oldest first, each with the `headroom` event's fields (`at`, `total`, `free`, `purgeable`, `swap_used`); `samples_unreadable: true` when that history could not be read, `samples` then empty; `titles`: rule id → title, for each rule the runs counted bytes for that the catalog still holds |
+| `done` | — |
+
+A run counts as `regrow history` counts it: an action once its done line is in the journal, a prune at what it deleted, any other action at its planned size; a failed or cut-short action, and a move `regrow undo` put back, counts nothing. Its fields: `id`; `start`; `done`, `failed` and `undone`, counts of actions; `restorable`, the moves `regrow undo` can still put back; `prune`, true when every action was a prune (autotrim's or `regrow prune`'s); its bytes split by where the space went, as the run's summary splits them: `frees_now` (commands and prunes), `after_trash` (moved to the Trash), `staged` (moved to regrow staging, Finder being unavailable) and `exported` (a docker volume removed after its export); and `rules`, rule id → bytes. A journal that cannot be read fails the request with `history_failed`, since the journal is never read past a bad line.
+
 ## hello
 
 ```json
@@ -195,6 +211,7 @@ A tick that sampled sends its `tick` event even when it then fails, so the alert
 | `unknown_scan`, `scan_running`, `scan_canceled`, `scan_superseded`, `scan_spent`, `unmatched` | see plan |
 | `unknown_plan`, `plan_expired`, `execute_failed` | see execute |
 | `autotrim_locked`, `tick_failed` | see tick |
+| `history_failed` | see history |
 
 `message` is for people; peers branch on `code`. An `unmatched` error also lists the selectors in `unmatched`, and an `execute_failed` that ran something carries its `result`.
 
