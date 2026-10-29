@@ -9,7 +9,6 @@ import (
 
 	"github.com/lbagic/regrow/internal/autopilot"
 	"github.com/lbagic/regrow/internal/engine"
-	"github.com/lbagic/regrow/internal/oplog"
 	"github.com/lbagic/regrow/internal/tui"
 )
 
@@ -124,7 +123,3 @@ func previewLines(r engine.Rule, p autopilot.Preview) []string {
 	}
 	return append(lines, fmt.Sprintf("Run `regrow prune %s --yes` to execute.", autopilot.Name(r)))
 }
-
-// runBytes is what a run's finished actions cleaned, the size `regrow
-// history` prints, as oplog.Run.Summary counts it.
-func runBytes(r oplog.Run) int64 { return r.Summary().Bytes() }

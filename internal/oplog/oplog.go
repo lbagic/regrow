@@ -253,15 +253,21 @@ func (r Run) OnDisk() (present, gone []Entry) {
 	return present, gone
 }
 
-// pending is the run's restorable done receipts not yet undone, last
-// moved first.
-func (r Run) pending() []Entry {
+// undone is the seqs `regrow undo` put back: an undo line with no error.
+func (r Run) undone() map[int]bool {
 	undone := map[int]bool{}
 	for _, e := range r.Entries {
 		if e.Event == EventUndo && e.Error == "" {
 			undone[e.Seq] = true
 		}
 	}
+	return undone
+}
+
+// pending is the run's restorable done receipts not yet undone, last
+// moved first.
+func (r Run) pending() []Entry {
+	undone := r.undone()
 	var out []Entry
 	for _, e := range r.Entries {
 		if e.Event == EventDone && e.Receipt != nil && e.Receipt.Restorable() && !undone[e.Seq] {

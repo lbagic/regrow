@@ -41,12 +41,7 @@ func (s Summary) Bytes() int64 { return s.FreesNow + s.AfterTrash + s.Staged + s
 // over the whole journal, as OnDisk is.
 func (r Run) Summary() Summary {
 	s := Summary{ID: r.ID, Start: r.Start, Rules: map[string]int64{}}
-	undone := map[int]bool{}
-	for _, e := range r.Entries {
-		if e.Event == EventUndo && e.Error == "" {
-			undone[e.Seq] = true
-		}
-	}
+	undone := r.undone()
 	planned := map[int]Entry{}
 	prunes := 0
 	for _, e := range r.Entries {

@@ -1155,6 +1155,19 @@ struct Scenario {
             r.same(r.sent("history").count, asked + 1, "history requests once the one on its way has ended: one more, for the run")
             await r.shoot()
         },
+        Scenario(name: "stats-after-a-prune") { r in
+            // A watch tick whose autotrim pruned is a run of its own: Stats, open, reads the history again.
+            await results(r)
+            await r.click("#nav-stats")
+            let asked = r.sent("history").count
+            var tick = r.transcript.event("tick", "tick")
+            tick["re"] = "shell-run-tick-1"
+            tick["pruned"] = ["rule_id": "go-build-cache", "run": "20261029-100000-0123456789abcdef0123456789abcdef", "files": 12, "bytes": 1_073_741_824]
+            r.send(tick)
+            await r.settle()
+            r.same(r.sent("history").count, asked + 1, "history requests after a tick that pruned")
+            await r.shoot()
+        },
         Scenario(name: "stats-down", play: Play(holdHello: true)) { r in
             r.send(["event": "shell", "state": "engine_down", "message": "the engine exited with status 2"])
             await r.settle()

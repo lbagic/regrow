@@ -150,6 +150,10 @@ type session struct {
 	scan     *scanState
 	plans    map[string]heldPlan
 	inflight *operation
+
+	// answering counts the requests answered off the read loop, which
+	// shutdown waits for as it waits for a scan.
+	answering sync.WaitGroup
 }
 
 // Serve runs the protocol until in ends or ctx is canceled, then shuts
@@ -201,6 +205,7 @@ loop:
 		grace = defaultExitGrace
 	}
 	s.shutdown(grace)
+	s.waitAnswers(grace)
 	s.out.close(grace)
 	return err
 }
@@ -273,7 +278,11 @@ func (s *session) handle(l requestLine) {
 	case reqTick:
 		s.startTick(req)
 	case reqHistory:
-		go s.history(req)
+		s.answering.Add(1)
+		go func() {
+			defer s.answering.Done()
+			s.history(req)
+		}()
 	default:
 		s.emit(failure(req.ID, CodeUnknownRequest, fmt.Sprintf("unknown request type %q", req.Type)))
 	}
@@ -693,6 +702,22 @@ func (s *session) shutdown(grace time.Duration) {
 	defer timer.Stop()
 	select {
 	case <-op.finished:
+	case <-timer.C:
+	}
+}
+
+// waitAnswers waits up to grace for the requests answered off the read
+// loop, so each still gets its terminal event.
+func (s *session) waitAnswers(grace time.Duration) {
+	answered := make(chan struct{})
+	go func() {
+		s.answering.Wait()
+		close(answered)
+	}()
+	timer := time.NewTimer(grace)
+	defer timer.Stop()
+	select {
+	case <-answered:
 	case <-timer.C:
 	}
 }

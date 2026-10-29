@@ -68,8 +68,8 @@ func TestRunBytesCountsOnlyFinishedActions(t *testing.T) {
 		if len(runs) != 1 {
 			t.Fatalf("%s: %d runs, want 1", tt.name, len(runs))
 		}
-		if got := runBytes(runs[0]); got != tt.want {
-			t.Errorf("%s: runBytes = %d, want %d", tt.name, got, tt.want)
+		if got := runs[0].Summary().Bytes(); got != tt.want {
+			t.Errorf("%s: Bytes = %d, want %d", tt.name, got, tt.want)
 		}
 	}
 }

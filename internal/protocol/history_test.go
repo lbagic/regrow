@@ -118,3 +118,27 @@ func TestReadHistory(t *testing.T) {
 		t.Error("a journal with a bad line must fail the history")
 	}
 }
+
+// A history still being read when stdin ends is answered before the
+// engine exits: each request gets its terminal event.
+func TestHistoryReadAtShutdownIsAnswered(t *testing.T) {
+	srv := newMachine(t).server()
+	srv.History = func() (History, error) {
+		time.Sleep(50 * time.Millisecond)
+		return History{}, nil
+	}
+	p := start(t, srv)
+	p.expect("hello")
+	p.send(`{"type":"history","id":"h"}`)
+	rest, err := p.closeAndWait()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, e := range rest {
+		got = append(got, e.Event+"/"+e.Re)
+	}
+	if strings.Join(got, " ") != "history/h done/h" {
+		t.Errorf("after stdin ended: %v, want [history/h done/h]", got)
+	}
+}

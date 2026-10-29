@@ -1086,5 +1086,6 @@ func checkPageTranscript(t *testing.T, lines []string) {
 	}
 	need("history", "a history and its done", names("history") == "history done")
 	need("history", "two runs that freed space, one with a Trash move and one with a failure", len(h.Runs) == 2 && freed == 2 && moved >= 1 && broke >= 1)
+	need("history", "a run id of its own for each run", len(h.Runs) == 2 && h.Runs[0].ID != h.Runs[1].ID)
 	need("history", "samples from before the runs to after them", len(h.Samples) > 100 && h.Samples[0].At.Before(h.Runs[0].Start) && h.Samples[len(h.Samples)-1].At.After(h.Runs[1].Start))
 }

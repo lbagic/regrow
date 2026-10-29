@@ -419,7 +419,8 @@ const on = {
     askHistory();
   },
   history(e, role) { if (role === 'history') S.history = e; },
-  tick(e) { S.tick = e; },
+  // An autotrim prune is a run of its own.
+  tick(e) { S.tick = e; if (e.pruned && e.pruned.run) askHistory(); },
   shell(e) {
     if (e.state === 'settings') { S.settings = e; S.finder = e.finder || ''; }
     if (e.state === 'environment') S.env = e.captured === false ? e.reason || 'no reason given' : '';
@@ -1116,7 +1117,7 @@ function chart(samples, runs) {
   const sm = samples.map((s) => [time(s.at), s.free]), t0 = sm[0][0], t1 = sm[sm.length - 1][0];
   const top = Math.max(...sm.map((s) => s[1])), quarter = Math.max(1, top / GIB / 4), unit = 10 ** Math.floor(Math.log10(quarter));
   const step = [1, 2, 5, 10].find((m) => m * unit >= quarter) * unit * GIB;
-  const y1 = Math.max(step, Math.ceil(top / step) * step), X = (t) => (t1 > t0 ? (t - t0) / (t1 - t0) * 1000 : 500), Y = (b) => 150 - b / y1 * 150;
+  const y1 = Math.max(step, Math.ceil(top / step) * step), X = (t) => (t - t0) / (t1 - t0) * 1000, Y = (b) => 150 - b / y1 * 150;
   const line = sm.map((s, i) => (i ? 'L' : 'M') + X(s[0]).toFixed(1) + ' ' + Y(s[1]).toFixed(1)).join('');
   const ticks = [];
   for (let v = 0; v <= y1; v += step) ticks.push(v);
@@ -1157,7 +1158,7 @@ function drawStats() {
     <p class="apart">${totals.length > 1 ? 'Never added up: each came back at a different time, or not at all. ' : ''}${staged ? `${human(staged)} more went to regrow staging, which emptying the Trash does not free.` : ''}</p>` : '';
   const span = samples.length > 1 ? Math.round((time(samples[samples.length - 1].at) - time(samples[0].at)) / 864e5) : 0;
   const free = hi.samples_unreadable ? h`<p class="aside">The history of free space could not be read.</p>`
-    : samples.length < 2 ? h`<p class="aside">Not enough samples yet: the watch takes one every 15 minutes.</p>` : chart(samples, runs);
+    : samples.length < 2 || time(samples[samples.length - 1].at) <= time(samples[0].at) ? h`<p class="aside">Not enough samples yet: the watch takes one every 15 minutes.</p>` : chart(samples, runs);
   const rules = Object.entries(runs.reduce((all, r) => { for (const [id, n] of Object.entries(r.rules || {})) all[id] = (all[id] || 0) + n; return all; }, {})).sort((a, b) => b[1] - a[1]);
   const top = rules.slice(0, 8), scale = top.length ? top[0][1] : 1, runScale = Math.max(1, ...runs.map(sizeOfRun));
   return h`${lead}${four}
