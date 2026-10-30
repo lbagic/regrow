@@ -232,11 +232,11 @@ The engine runs the whole catalog as `~/.config/regrow/config.yaml`'s `rules:` s
 {"type":"updates","id":"u1"}
 ```
 
-The `regrow` the install line put in `~/.local/bin`, the one that updates itself, as the engine finds it: answered beside whatever is in flight and off the request loop, since the engine runs that binary's `version`, with `REGROW_NO_AUTO_UPDATE` set so the run checks for nothing, and waits up to 5 s for it. The app's own update is not the engine's to know.
+The `regrow` the install line put in `~/.local/bin`, the one that updates itself, as the engine finds it: answered beside whatever is in flight and off the request loop, since the engine runs that binary's `version`, with `REGROW_NO_AUTO_UPDATE` set so the run checks for nothing, stops it after 5 s and waits 1 s more for its output to close. The app's own update is not the engine's to know.
 
 | Event | Fields |
 |---|---|
-| `updates` | `cli`: `path`, the binary, the folder's links resolved, absent when there is none; `version`, what its `version` says, absent when it said none; `why`, why it does not update itself (a development build, not a plain file, another user's, a folder it cannot write, a binary that does not run or is not regrow), absent when it does or there is none; `off`, true when `REGROW_NO_AUTO_UPDATE` is set in the engine's environment, which the app takes from the login shell; `checked_at`, when its last daily check began, absent when none is recorded |
+| `updates` | `cli`: `path`, the binary, the folder's links resolved, absent when there is none; `version`, what its `version` says, absent when it said none; `why`, why it does not update itself (a development build, 0.1.0, which came before the self-update, not a plain file, another user's, a folder it cannot write, a binary that does not run or is not regrow), absent when it does or there is none; `off`, true when `REGROW_NO_AUTO_UPDATE` is set in the engine's environment, which the app takes from the login shell once, as it starts; `checked_at`, when its last daily check began, absent when none is recorded |
 | `done` | — |
 
 An engine that cannot name its own path, the home folder or its state folder fails it with `updates_failed`. An engine older than this request answers `unknown_request`.

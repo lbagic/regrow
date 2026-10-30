@@ -538,6 +538,16 @@ func TestInspect(t *testing.T) {
 				return Install{Path: bin, Version: "0.0.0-dev", Why: "it is a development build (0.0.0-dev); only a release installed with the install line updates itself"}
 			},
 		},
+		"a release from before the self-update": {
+			setup: func(t *testing.T, _ *Updater, bin string) {
+				if err := os.WriteFile(bin, script("0.1.0"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: func(bin string) Install {
+				return Install{Path: bin, Version: "0.1.0", Why: "0.1.0 came before regrow updated itself; run the install line once more"}
+			},
+		},
 		"a symlink": {
 			setup: func(t *testing.T, u *Updater, bin string) {
 				real := filepath.Join(u.Home, "elsewhere")

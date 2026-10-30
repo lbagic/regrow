@@ -195,8 +195,14 @@ func (u Updater) Inspect(ctx context.Context) Install {
 		in.Why = err.Error()
 		return in
 	}
-	if _, ok := parseVersion(in.Version); !ok {
+	v, ok := parseVersion(in.Version)
+	if !ok {
 		in.Why = fmt.Sprintf("it is a development build (%s); only a release installed with the install line updates itself", in.Version)
+		return in
+	}
+	// 0.1.0 shipped before the self-update.
+	if v.compare(version{0, 2, 0}) < 0 {
+		in.Why = fmt.Sprintf("%s came before regrow updated itself; run the install line once more", in.Version)
 		return in
 	}
 	if err := u.replaceable(dir, target); err != nil {

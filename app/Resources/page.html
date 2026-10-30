@@ -439,6 +439,7 @@ const on = {
     if (S.wantScan || (again && S.scan)) { S.wantScan = false; scan(); }
     askHistory();
     askRules();
+    if (S.pane === 'general') askUpdates();
   },
   // A change that took ends the note on one that did not; the answer to a plain rules request keeps it.
   rules(e, role) { if (role === 'rules') Object.assign(S, { rules: e, rulesNote: e.re === S.rulesAsk ? S.rulesNote : '' }); },
@@ -1193,15 +1194,15 @@ function cliRow() {
   if (!c.path) return setting('cli-update', title, h`Not installed with the install line, which puts it in <span class="mono">~/.local/bin</span>, where it updates itself.`, state('not installed'));
   const at = h`${c.version ? `Version ${c.version}` : 'The regrow'} at <span class="mono">${unbroken(tilde(c.path))}</span>`;
   if (c.why) return setting('cli-update', title, h`${at}. It does not update itself: ${String(c.why).replace(/\.$/, '')}.`, state('off'));
-  if (c.off) return setting('cli-update', title, h`${at}. <span class="mono">REGROW_NO_AUTO_UPDATE</span> is set in your login shell, so it does not check for updates.`, state('off'));
+  if (c.off) return setting('cli-update', title, h`${at}. <span class="mono">REGROW_NO_AUTO_UPDATE</span> was set in your login shell when Regrow started, which turns its daily check off.`, state('off'));
   return setting('cli-update', title,
-    h`${at} checks for a new release once a day as it runs, and updates itself; ${c.checked_at ? `last checked ${stamp(time(c.checked_at))}` : 'not checked yet'}. To turn that off, add <span class="mono">${OFF_LINE}</span>${copy(OFF_LINE, 'line')} to <span class="mono">~/.zprofile</span>.`,
+    h`${at} checks for a new release once a day as it runs, and updates itself; ${c.checked_at ? `last checked ${stamp(time(c.checked_at))}` : 'not checked yet'}. To turn that off, add <span class="mono">${OFF_LINE}</span>${copy(OFF_LINE, 'line')} to <span class="mono">~/.zprofile</span>; this row reads it again when Regrow next starts.`,
     state('on', true));
 }
 
 function updates() {
-  const u = S.update, cli = cliRow();
-  if (!u) return cli ? section('Updates', '', '', cli) : '';
+  const u = S.update, row = cliRow();
+  if (!u) return row ? section('Updates', '', '', row) : '';
   const check = (label) => h`<button class="link" data-do="updateCheck">${label}</button>`;
   const ROW = {
     unchecked: [`Version ${u.running}.`, h`<button class="btn small" data-do="updateCheck">Check for update</button>`],
@@ -1215,7 +1216,7 @@ function updates() {
     unavailable: [`Version ${u.running}. This copy does not update itself: ${u.reason}.`, ''],
   };
   const [text, control] = ROW[u.phase] || ROW.unchecked;
-  return section('Updates', '', '', [setting('app-update', 'Regrow.app', text, control), cli]);
+  return section('Updates', '', '', [setting('app-update', 'Regrow.app', text, control), row]);
 }
 
 function about() {

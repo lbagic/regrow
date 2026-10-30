@@ -1088,13 +1088,14 @@ struct Scenario {
             let on = await r.text("\(row) p")
             r.has(on, "Version 0.5.0 at ~/.local/bin/regrow checks for a new release once a day as it runs, and updates itself; last checked", "the row while it updates itself")
             r.has(on, "To turn that off, add export REGROW_NO_AUTO_UPDATE=1", "the line that turns it off")
+            r.has(on, "this row reads it again when Regrow next starts.", "when the row reads it again")
             r.same(await r.text("\(row) .ctl"), "on", "its state")
             await r.shoot()
             await r.click("\(row) .copy")
             r.same(r.pasted.last ?? "", "export REGROW_NO_AUTO_UPDATE=1", "what Copy put on the pasteboard")
 
             await reopen(["path": "/Users/dev/.local/bin/regrow", "version": "0.5.0", "off": true])
-            r.same(await r.text("\(row) p"), "Version 0.5.0 at ~/.local/bin/regrow. REGROW_NO_AUTO_UPDATE is set in your login shell, so it does not check for updates.", "the row with the check turned off")
+            r.same(await r.text("\(row) p"), "Version 0.5.0 at ~/.local/bin/regrow. REGROW_NO_AUTO_UPDATE was set in your login shell when Regrow started, which turns its daily check off.", "the row with the check turned off")
             r.same(await r.text("\(row) .ctl"), "off", "its state")
             await reopen(["path": "/Users/dev/.local/bin/regrow", "version": "0.0.0-dev", "off": false,
                           "why": "it is a development build (0.0.0-dev); only a release installed with the install line updates itself"])
@@ -1109,6 +1110,23 @@ struct Scenario {
             r.same(await r.count(row), 0, "the row from an engine older than the request")
             r.same(await r.count("[data-setting=app-update]"), 1, "the app's own row beside it")
             r.same(r.sent("updates").count, 6, "updates requests, one each time General opens")
+            await r.shoot("-older-engine")
+        },
+        Scenario(name: "general-cli-update-hello", play: Play(opened: true, holdHello: true)) { r in
+            // General open before the engine said hello, then across a restart: the row is asked for at each hello.
+            await r.click("#nav-general")
+            r.send([r.transcript.lines("hello")[0]])
+            await r.settle()
+            r.same(r.sent("updates").count, 1, "updates requests once the engine said hello, General open")
+            r.same(await r.count("[data-setting=cli-update]"), 1, "the row")
+            r.send(["event": "shell", "state": "engine_down", "message": "the engine exited with status 2"])
+            await r.settle()
+            r.play.cli = ["path": "/Users/dev/.local/bin/regrow", "version": "0.6.0", "off": false]
+            r.send([r.transcript.lines("hello")[0]])
+            await r.settle()
+            r.same(r.sent("updates").count, 2, "updates requests once the engine came back")
+            r.has(await r.text("[data-setting=cli-update] p"), "Version 0.6.0", "the row from the engine that came back")
+            await r.shoot()
         },
         Scenario(name: "general-off", play: Play(fdaDenied: true, settings: [
             "event": "shell", "state": "settings", "login_item": "needs_approval", "notifications": "denied", "finder": "denied",
