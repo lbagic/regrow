@@ -34,6 +34,10 @@ Usage:
   regrow doctor [--json]          runaway bugs, causes to fix, phantom space; read-only
   regrow tick [--autotrim]        one headroom sample: free space, forecast, alerts
   regrow prune go-build [--yes]   delete old Go build cache entries; dry run without --yes
+  regrow aerials [status|off|on]  macOS's aerial video downloads: status reads the
+                                  picks they follow; off clears them and stops the
+                                  downloader, asking for your password; on puts
+                                  them back (macOS 15 and earlier)
   regrow undo [run-id]            restore the newest (or given) run's Trash moves
   regrow history [--json]         past runs from the oplog
   regrow rules [--json]           list the rule catalog
@@ -92,7 +96,7 @@ func parseArgs(args []string) (cmd string, opts options, ids []string, help bool
 	fs := newFlagSet(cmd, &opts)
 	err = fs.Parse(args)
 	ids = fs.Args()
-	if err == nil && cmd == "prune" {
+	if err == nil && (cmd == "prune" || cmd == "aerials") {
 		ids, err = interspersedArgs(fs, ids)
 	}
 	if err != nil {
@@ -128,13 +132,16 @@ func run(args []string) error {
 		return runUpdate(os.Stdout, ids)
 	}
 
-	// Undo and history read only the journal: a config that does not load
-	// must not keep a move from being put back.
+	// Undo and history read only the journal, and aerials runs no rule: a
+	// config that does not load must not keep a move or a pick from being
+	// put back.
 	switch cmd {
 	case "undo":
 		return runUndo(ids)
 	case "history":
 		return runHistory(opts.asJSON)
+	case "aerials":
+		return runAerials(engine.DetectHost(), ids, opts.asJSON)
 	}
 
 	all, err := loadCatalog(opts.rulesDir)

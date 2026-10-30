@@ -369,8 +369,8 @@ func TestStagedBytesMeasuresTheStagingDirectory(t *testing.T) {
 }
 
 // `regrow clean` and the engine build their executor in one place, and
-// it registers every hook a rule may declare: a hook known to the
-// schema but missing here would fail each of its actions.
+// it registers every hook and measure a rule may declare: one known to
+// the schema but missing here would fail each of its actions.
 func TestRunExecutorRegistersEveryPreAction(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
@@ -388,6 +388,14 @@ func TestRunExecutorRegistersEveryPreAction(t *testing.T) {
 		}
 		if len(ex.PreActions) != len(engine.KnownPreActions()) {
 			t.Errorf("%s's executor registers %d hooks, the schema knows %d", name, len(ex.PreActions), len(engine.KnownPreActions()))
+		}
+		for _, m := range engine.KnownMeasures() {
+			if ex.Measures[m] == nil {
+				t.Errorf("%s's executor has no %s measure", name, m)
+			}
+		}
+		if len(ex.Measures) != len(engine.KnownMeasures()) {
+			t.Errorf("%s's executor registers %d measures, the schema knows %d", name, len(ex.Measures), len(engine.KnownMeasures()))
 		}
 	}
 }

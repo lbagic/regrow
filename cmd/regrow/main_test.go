@@ -8,6 +8,7 @@ import (
 
 	"github.com/lbagic/regrow/internal/engine"
 	"github.com/lbagic/regrow/internal/executor"
+	"github.com/lbagic/regrow/internal/oplog"
 )
 
 func TestSelectionFor(t *testing.T) {
@@ -89,6 +90,20 @@ func TestNothingToCleanShowsSkipReasons(t *testing.T) {
 	}
 	if got := nothingToClean(engine.Plan{}); len(got) != 1 || !strings.Contains(got[0], "found anything") {
 		t.Fatalf("an empty plan = %q", got)
+	}
+}
+
+// A direct delete that fails midway has still freed what it deleted:
+// the summary says so beside "Freed now", which counts done actions.
+func TestRunSummarySaysWhatAFailedDeleteFreed(t *testing.T) {
+	res := executor.Result{Failed: 1, Failures: []string{"aerial-wallpapers: exit status 1"},
+		Pruned: oplog.Pruned{Files: 2, Bytes: 2 << 30}, FailedPruned: oplog.Pruned{Files: 2, Bytes: 2 << 30}}
+	out := strings.Join(runSummary(res, "/state/staging/run"), "\n")
+	if !lineWith(out, "Freed now", " 0 B") || !lineWith(out, "Partly deleted", "2.0 GiB", "2 files", "free too") {
+		t.Errorf("summary of a failed delete:\n%s", out)
+	}
+	if strings.Contains(strings.Join(runSummary(executor.Result{Done: 1, Bytes: 1 << 30}, "/s"), "\n"), "Partly deleted") {
+		t.Error("a run with no failed delete says Partly deleted")
 	}
 }
 

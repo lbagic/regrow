@@ -35,6 +35,9 @@ type Action struct {
 	// Command runs or the Trash move happens (docker volume export to
 	// staging, agent session recheck).
 	PreAction string `json:"pre_action,omitempty"`
+	// Measure names how the executor counts what Command deletes
+	// directly, before and after it runs (Rule.Measure).
+	Measure string `json:"measure,omitempty"`
 	// Path is the filesystem target for trash actions.
 	Path string `json:"path,omitempty"`
 	// Bytes counts only items that no other action of the plan
@@ -357,7 +360,11 @@ func BuildPlanWith(host Host, findings []Finding, selected map[string]bool, opts
 			continue
 		}
 		if !f.Rule.Risk.Actionable() {
-			plan.Skipped = append(plan.Skipped, Skip{RuleID: f.Rule.ID, Reason: "surface-only: report, never delete"})
+			reason := "surface-only: report, never delete"
+			if f.Held != "" {
+				reason = f.Held
+			}
+			plan.Skipped = append(plan.Skipped, Skip{RuleID: f.Rule.ID, Reason: reason})
 			continue
 		}
 		if len(idx) == 0 {
@@ -496,6 +503,8 @@ func nativeDrafts(findings []Finding, tree forest, host Host, r Rule, refs []ite
 				RuleID:       r.ID,
 				Kind:         ActionNative,
 				Command:      withSudo(r.Sudo, r.NativeCommand),
+				PreAction:    r.PreAction,
+				Measure:      r.Measure,
 				EmptiesTrash: r.EmptiesTrash,
 				Sudo:         r.Sudo,
 			},
@@ -525,6 +534,7 @@ func nativeDrafts(findings []Finding, tree forest, host Host, r Rule, refs []ite
 				Kind:      ActionNative,
 				Command:   withSudo(r.Sudo, cmd),
 				PreAction: r.PreAction,
+				Measure:   r.Measure,
 				Path:      it.Path,
 				Sudo:      r.Sudo,
 			},

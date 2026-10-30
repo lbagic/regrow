@@ -60,7 +60,14 @@ var preActions = map[string]string{
 	engine.PreActionDockerUpdateRecheck:        "regrow judges the download again, as the scan did, and leaves it in place if any reason to keep it holds now.",
 	engine.PreActionCaskRecordRecheck:          "regrow asks brew about the cask again and leaves it installed unless its app is still gone and its uninstall still only quits the app and asks for no password.",
 	engine.PreActionRunningRecheck:             "regrow reads your running processes again, as the scan did, and leaves the item in place while what keeps it runs, your processes cannot be listed, the rule is not in the catalog regrow runs, or, for a rule that names apps, a running app's `Info.plist` cannot be read.",
+	engine.PreActionHoldRecheck:                "regrow runs the rule's hold check again, as the scan did, and leaves everything in place while it holds or cannot be read.",
 	engine.PreActionAppLeftoverRecheck:         "regrow judges the folder and the other folders of its maker again, as the scan did, and leaves it in place unless it is still offered: an app installed since, a change, or anything pointing into one of them keeps it, and so does a source that cannot be read.",
+}
+
+// measures says what each measure counts, as a sentence that follows
+// the command's.
+var measures = map[string]string{
+	engine.MeasureAerialVideos: "regrow counts the videos in the folder before and after it runs, and the run's journal keeps what it deleted.",
 }
 
 // PreActionText is the sentence for a hook, and false when the page has
@@ -201,7 +208,7 @@ func writeRule(b *strings.Builder, r engine.Rule) {
 		p("- **Doctor:** `regrow doctor` flags it above %s. %s\n", size(int64(r.Doctor.FlagAbove)), sentence(prose(r.Doctor.Story)))
 	}
 	for _, c := range r.Causes {
-		p("- **Fix the cause:** %s%s. `regrow doctor` says whether it is in effect here and prints the fix; regrow changes nothing.\n", prose(c.Title), versionText(c.OSMin, c.OSMax))
+		p("- **Fix the cause:** %s%s. `regrow doctor` says whether it is in effect here and prints the fix; doctor itself changes nothing.\n", prose(c.Title), versionText(c.OSMin, c.OSMax))
 	}
 	if r.Note != "" {
 		p("- **Note:** %s\n", sentence(prose(r.Note)))
@@ -284,6 +291,13 @@ func removedBy(r engine.Rule) string {
 			s += " It runs as root through `sudo`, which asks for your password in a terminal; the app leaves it for you to run there."
 		}
 		s += " It deletes for good: `regrow undo` cannot bring it back."
+		if r.Measure != "" {
+			if text, ok := measures[r.Measure]; ok {
+				s += " " + text
+			} else {
+				s += " regrow counts what it deletes with the `" + r.Measure + "` measure."
+			}
+		}
 		if r.EmptiesTrash {
 			s += " It runs before every other action of the plan, so the plan's own Trash moves stay restorable."
 		}
