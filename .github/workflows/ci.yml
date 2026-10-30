@@ -28,7 +28,7 @@ jobs:
         with:
           go-version-file: go.mod
       - run: swift build -c release --package-path app
-      - run: swift test --package-path app
+      - run: bash .github/probe/probe.sh
 
   lint:
     runs-on: ubuntu-latest
