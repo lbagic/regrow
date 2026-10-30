@@ -111,10 +111,11 @@ From the engine's `history`: the oplog's runs and the free-space samples. Asked 
 
 ## General
 
-Startup, Permissions, About. A setting is a row: on the left its name (sans 650 13.5) and a sentence on what it does or what being off costs (12.5 `--ink-2`); on the right its state in words, then its control, a switch, a link, or the small filled button when that is the one thing to do. The switch is 32×19, `--line-strong` off, `--accent` on, a `--paper` knob; it moves when the shell says the setting changed, not on the click.
+Startup, Permissions, Updates, About. A setting is a row: on the left its name (sans 650 13.5) and a sentence on what it does or what being off costs (12.5 `--ink-2`); on the right its state in words, then its control, a switch, a link, or the small filled button when that is the one thing to do. The switch is 32×19, `--line-strong` off, `--accent` on, a `--paper` knob; it moves when the shell says the setting changed, not on the click.
 
 - **Start with Mac**: a switch, as the menu's row; "needs approval" with a link to Login Items settings; outside `~/Applications`, a sentence and no control.
 - **Permissions**, its header counting those off: Full Disk Access (the lock beside its name while off, what that cost the last scan, "Open settings", then "Relaunch to apply"); Control of Finder; Notifications. A grant that is off links to its pane in System Settings, and Notifications on does too.
+- **Updates**: Regrow.app, its version and "Check for update", then "Update and relaunch" when a release is newer; `regrow` in Terminal, the install line's, read as General opens: "on" with its version, its path, when it last checked and the line that turns that off with Copy; "off" with why; "not installed" when the install line put none there. That row has no button, since it updates itself.
 - **About**: the version, the engine's path with Copy, the logs with "Show in Finder", and regrow staging, its size and "Show in Finder" once something is there.
 
 A grant macOS did not report, Full Disk Access or Control of Finder "unknown", is said so and not counted as off.

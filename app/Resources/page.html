@@ -332,6 +332,8 @@ const S = {
   rules: null,        // the engine's rules event, or {failed: why} when they could not be read
   rulesAsk: '',       // the id of the rules request on its way
   rulesNote: '',      // why the last change of the rules did not take
+  cli: null,          // the install line's regrow, as the engine's updates event says, or {failed: why}
+  cliAsk: '',         // the id of the updates request on its way
   ruleFilter: '',     // what the Rules section's filter holds
   ruleShow: 'all',    // all | on | off | beta: which rules the Rules section lists
   screen: 'findings', // findings | plan | confirm | running | result; an engine that is down is drawn over it
@@ -416,8 +418,8 @@ window.regrow = { receive(line) {
     const e = JSON.parse(line), from = asked.get(e.re);
     if (e.event === 'done' || e.event === 'error') asked.delete(e.re);
     // An answer about a scan that is no longer shown changes nothing; an error it has no word for is still shown.
-    // The history and the rules are about no scan.
-    const current = !!from && (from.scan === S.scan || from.role === 'history' || from.role === 'rules');
+    // The history, the rules and the updates are about no scan.
+    const current = !!from && (from.scan === S.scan || from.role === 'history' || from.role === 'rules' || from.role === 'updates');
     if (from && !current && (e.event !== 'error' || OUT_OF_DATE[e.code])) return;
     if (on[e.event]) on[e.event](e, current ? from.role : '');
   } catch (err) {
@@ -433,7 +435,7 @@ const on = {
   hello(e) {
     if (S.hello && !S.down) return;
     const again = !!S.down;
-    asked.clear(); S.down = ''; S.hello = e; S.historyAsk = ''; S.rulesAsk = '';
+    asked.clear(); S.down = ''; S.hello = e; S.historyAsk = S.rulesAsk = S.cliAsk = '';
     if (S.wantScan || (again && S.scan)) { S.wantScan = false; scan(); }
     askHistory();
     askRules();
@@ -441,6 +443,7 @@ const on = {
   // A change that took ends the note on one that did not; the answer to a plain rules request keeps it.
   rules(e, role) { if (role === 'rules') Object.assign(S, { rules: e, rulesNote: e.re === S.rulesAsk ? S.rulesNote : '' }); },
   history(e, role) { if (role === 'history') S.history = e; },
+  updates(e, role) { if (role === 'updates') S.cli = e.cli; },
   // An autotrim prune is a run of its own.
   tick(e) { S.tick = e; if (e.pruned && e.pruned.run) askHistory(); },
   shell(e) {
@@ -455,7 +458,7 @@ const on = {
     if (e.state !== 'engine_down') return;
     if (S.run && !S.run.result) S.cut = { id: S.plan.id, done: S.plan.actions.filter((a) => stateOf(a).state === 'done').length, of: S.plan.actions.length, moves: S.plan.actions.length > S.plan.commands };
     asked.clear();
-    S.historyAsk = S.rulesAsk = '';
+    S.historyAsk = S.rulesAsk = S.cliAsk = '';
     counting = clearTimeout(counting);
     S.down = e.message || 'no reason given';
   },
@@ -495,6 +498,8 @@ const on = {
       if (S.historyAgain) askHistory();
     } else if (role === 'rules' && e.re === S.rulesAsk) {
       S.rulesAsk = '';
+    } else if (role === 'updates' && e.re === S.cliAsk) {
+      S.cliAsk = '';
     }
   },
   error(e, role) {
@@ -512,6 +517,9 @@ const on = {
     } else if (role === 'rules') {
       if (e.re === S.rulesAsk) Object.assign(S, { rulesAsk: '', rules: S.rules || { failed: e.message || e.code } });
       else S.rulesNote = e.message || e.code;
+    } else if (role === 'updates') {
+      // An engine older than the request has no row to show.
+      if (e.re === S.cliAsk) Object.assign(S, { cliAsk: '', cli: e.code === 'unknown_request' ? null : { failed: e.message || e.code } });
     } else if (role === 'run' && e.result) {
       ended(e.result, false, e.message || e.code);
     } else if (role === 'run') {
@@ -624,6 +632,7 @@ const act = {
     $('pane').scrollTop = 0;
     if (S.pane === 'stats') askHistory();
     if (S.pane === 'rules') { S.rulesNote = ''; askRules(); }
+    if (S.pane === 'general') askUpdates();
   },
   rule(el) {
     const r = S.rules && S.rules.catalog && S.rules.catalog.find((x) => x.id === el.dataset.rule);
@@ -1173,9 +1182,26 @@ function permissions() {
   return section('Permissions', off ? `${off} of 3 off` : '', '', rows);
 }
 
+const askUpdates = () => { if (S.hello && !S.down && !S.cliAsk) S.cliAsk = ask('updates', 'updates'); };
+const OFF_LINE = 'export REGROW_NO_AUTO_UPDATE=1';
+
+// The install line's regrow, which updates itself; the app only reads it.
+function cliRow() {
+  const c = S.cli, title = 'regrow in Terminal';
+  if (!c) return '';
+  if (c.failed) return setting('cli-update', title, h`It could not be read: <span class="err mono">${c.failed}</span>`, state('unknown'));
+  if (!c.path) return setting('cli-update', title, h`Not installed with the install line, which puts it in <span class="mono">~/.local/bin</span>, where it updates itself.`, state('not installed'));
+  const at = h`${c.version ? `Version ${c.version}` : 'The regrow'} at <span class="mono">${unbroken(tilde(c.path))}</span>`;
+  if (c.why) return setting('cli-update', title, h`${at}. It does not update itself: ${String(c.why).replace(/\.$/, '')}.`, state('off'));
+  if (c.off) return setting('cli-update', title, h`${at}. <span class="mono">REGROW_NO_AUTO_UPDATE</span> is set in your login shell, so it does not check for updates.`, state('off'));
+  return setting('cli-update', title,
+    h`${at} checks for a new release once a day as it runs, and updates itself; ${c.checked_at ? `last checked ${stamp(time(c.checked_at))}` : 'not checked yet'}. To turn that off, add <span class="mono">${OFF_LINE}</span>${copy(OFF_LINE, 'line')} to <span class="mono">~/.zprofile</span>.`,
+    state('on', true));
+}
+
 function updates() {
-  const u = S.update;
-  if (!u) return '';
+  const u = S.update, cli = cliRow();
+  if (!u) return cli ? section('Updates', '', '', cli) : '';
   const check = (label) => h`<button class="link" data-do="updateCheck">${label}</button>`;
   const ROW = {
     unchecked: [`Version ${u.running}.`, h`<button class="btn small" data-do="updateCheck">Check for update</button>`],
@@ -1189,7 +1215,7 @@ function updates() {
     unavailable: [`Version ${u.running}. This copy does not update itself: ${u.reason}.`, ''],
   };
   const [text, control] = ROW[u.phase] || ROW.unchecked;
-  return section('Updates', '', '', setting('app-update', 'Regrow.app', text, control));
+  return section('Updates', '', '', [setting('app-update', 'Regrow.app', text, control), cli]);
 }
 
 function about() {

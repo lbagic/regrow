@@ -121,6 +121,8 @@ struct Play {
     var holdHistory = false              // history requests wait in heldHistory until the scenario answers them
     var rulesError: String?              // a set_rules request fails with this message
     var rulesUnloaded: String?           // the rules file has not loaded since the engine started, for this reason
+    var cli: [String: Any]?              // the updates event's cli in place of the transcript's
+    var updatesError: (code: String, message: String)?  // the answer to an updates request
 
     /// The settings of the installed app on a Mac that has granted it all but Control of Finder.
     static let installed: [String: Any] = [
@@ -476,6 +478,14 @@ final class Run: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHa
                 return rule
             }
             rulesNow = event
+            send(event)
+            send(["event": "done", "re": id])
+        case "updates":
+            if let (code, message) = play.updatesError {
+                return send(["event": "error", "re": id, "code": code, "message": message])
+            }
+            var event = parse(answering("updates", id)[0])
+            if let cli = play.cli { event["cli"] = cli }
             send(event)
             send(["event": "done", "re": id])
         case "history":
@@ -1061,6 +1071,44 @@ struct Scenario {
             await phase(["phase": "unavailable", "reason": "this copy is a development build, signed ad hoc"])
             r.same(await r.text("\(row) p"), "Version 0.5.0. This copy does not update itself: this copy is a development build, signed ad hoc.", "the row in a copy that does not update")
             r.same(await r.count("\(row) button"), 0, "actions in a copy that does not update")
+        },
+        Scenario(name: "general-cli-update") { r in
+            await results(r)
+            await r.click("#nav-general")
+            let row = "[data-setting=cli-update]"
+            @MainActor func reopen(_ cli: [String: Any]?, _ error: (code: String, message: String)? = nil) async {
+                r.play.cli = cli
+                r.play.updatesError = error
+                await r.click("#nav-scan")
+                await r.click("#nav-general")
+                await r.settle()
+            }
+            r.same(r.sent("updates").count, 1, "updates requests as General opens")
+            r.same(await r.text("\(row) h4"), "regrow in Terminal", "the row's title")
+            let on = await r.text("\(row) p")
+            r.has(on, "Version 0.5.0 at ~/.local/bin/regrow checks for a new release once a day as it runs, and updates itself; last checked", "the row while it updates itself")
+            r.has(on, "To turn that off, add export REGROW_NO_AUTO_UPDATE=1", "the line that turns it off")
+            r.same(await r.text("\(row) .ctl"), "on", "its state")
+            await r.shoot()
+            await r.click("\(row) .copy")
+            r.same(r.pasted.last ?? "", "export REGROW_NO_AUTO_UPDATE=1", "what Copy put on the pasteboard")
+
+            await reopen(["path": "/Users/dev/.local/bin/regrow", "version": "0.5.0", "off": true])
+            r.same(await r.text("\(row) p"), "Version 0.5.0 at ~/.local/bin/regrow. REGROW_NO_AUTO_UPDATE is set in your login shell, so it does not check for updates.", "the row with the check turned off")
+            r.same(await r.text("\(row) .ctl"), "off", "its state")
+            await reopen(["path": "/Users/dev/.local/bin/regrow", "version": "0.0.0-dev", "off": false,
+                          "why": "it is a development build (0.0.0-dev); only a release installed with the install line updates itself"])
+            r.same(await r.text("\(row) p"), "Version 0.0.0-dev at ~/.local/bin/regrow. It does not update itself: it is a development build (0.0.0-dev); only a release installed with the install line updates itself.", "the row for a build that does not update itself")
+            r.same(await r.text("\(row) .ctl"), "off", "its state")
+            await reopen(["off": false])
+            r.same(await r.text("\(row) p"), "Not installed with the install line, which puts it in ~/.local/bin, where it updates itself.", "the row with nothing installed")
+            r.same(await r.text("\(row) .ctl"), "not installed", "its state")
+            await reopen(nil, ("updates_failed", "user: unknown userid 501"))
+            r.same(await r.text("\(row) p"), "It could not be read: user: unknown userid 501", "the row when the engine could not read it")
+            await reopen(nil, ("unknown_request", "unknown request type \"updates\""))
+            r.same(await r.count(row), 0, "the row from an engine older than the request")
+            r.same(await r.count("[data-setting=app-update]"), 1, "the app's own row beside it")
+            r.same(r.sent("updates").count, 6, "updates requests, one each time General opens")
         },
         Scenario(name: "general-off", play: Play(fdaDenied: true, settings: [
             "event": "shell", "state": "settings", "login_item": "needs_approval", "notifications": "denied", "finder": "denied",
