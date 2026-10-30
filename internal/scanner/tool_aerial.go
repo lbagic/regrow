@@ -2,8 +2,11 @@ package scanner
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
+	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 
@@ -126,11 +129,55 @@ func aerialFolder(ctx context.Context, w *walker, dir string) ([]engine.Item, er
 	}
 	items := []engine.Item{{Path: dir, Bytes: frees, LastUsed: u.Newest, Partial: u.Partial}}
 	if files > 0 {
-		label := fmt.Sprintf("%d files a link outside the folder also holds, such as the downloader's temp copies: deleting them here frees nothing", files)
+		label := fmt.Sprintf("%d files a link outside the folder also holds, such as the downloader's temp copies: each frees its space only once that link goes too", files)
 		if files == 1 {
-			label = "1 file a link outside the folder also holds, such as the downloader's temp copies: deleting it here frees nothing"
+			label = "1 file a link outside the folder also holds, such as the downloader's temp copies: it frees its space only once that link goes too"
 		}
 		items = append(items, engine.Item{Label: label, Bytes: held})
 	}
 	return items, nil
+}
+
+// MeasureAerialVideos counts the videos in host's aerial folders, the
+// files the row's command deletes there, each file once however many
+// links it has. A folder that is not there counts nothing; one that
+// cannot be read in full is an error, so the command does not run.
+func MeasureAerialVideos(ctx context.Context, host engine.Host) (engine.CacheUsage, error) {
+	var u engine.CacheUsage
+	seen := map[uint64]bool{}
+	for _, dir := range aerialFolders(host) {
+		err := filepath.WalkDir(dir, func(path string, e fs.DirEntry, err error) error {
+			if err != nil {
+				if path == dir && errors.Is(err, fs.ErrNotExist) {
+					return fs.SkipDir
+				}
+				return err
+			}
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if !e.Type().IsRegular() || !strings.HasSuffix(e.Name(), ".mov") {
+				return nil
+			}
+			fi, err := e.Info()
+			if errors.Is(err, fs.ErrNotExist) {
+				return nil
+			} else if err != nil {
+				return err
+			}
+			if st, ok := fi.Sys().(*syscall.Stat_t); ok {
+				if seen[st.Ino] {
+					return nil
+				}
+				seen[st.Ino] = true
+			}
+			u.Files++
+			u.Bytes += physicalSize(fi)
+			return nil
+		})
+		if err != nil {
+			return engine.CacheUsage{}, fmt.Errorf("count the aerial videos in %s: %w", dir, err)
+		}
+	}
+	return u, nil
 }

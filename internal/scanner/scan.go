@@ -29,6 +29,8 @@ type Scanner struct {
 	// running reads the owner's processes for unless_running; nil
 	// means readRunning.
 	running func(context.Context) (*runningSet, error)
+	// Holds are the checks rules name in hold, by name.
+	Holds map[string]HoldCheck
 }
 
 // toolQueryTimeout bounds one tool query. A wedged Docker VM or
@@ -38,7 +40,7 @@ const toolQueryTimeout = 2 * time.Minute
 
 // New builds a scanner for the host with the built-in tool queries.
 func New(host engine.Host) *Scanner {
-	return &Scanner{Host: host, Queries: DefaultQueries(host), CauseQueries: DefaultCauseQueries(host)}
+	return &Scanner{Host: host, Queries: DefaultQueries(host), CauseQueries: DefaultCauseQueries(host), Holds: DefaultHolds(host)}
 }
 
 func (s *Scanner) walker() *walker {
@@ -134,6 +136,11 @@ func (s *Scanner) scanRule(ctx context.Context, r engine.Rule, running *runningO
 		f.Items, f.Err = nil, joinErr(f.Err, err)
 	} else {
 		f.Items = items
+	}
+	if r.Hold != "" && len(f.Items) > 0 {
+		if why := s.held(ctx, r); why != "" {
+			f.Held, f.Rule.Risk, f.Rule.Note = why, engine.RiskSurfaceOnly, why
+		}
 	}
 
 	// A cancelled scan's findings are incomplete: the error keeps

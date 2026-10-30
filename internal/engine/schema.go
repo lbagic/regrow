@@ -318,6 +318,15 @@ type Rule struct {
 	// Its pre_action is PreActionRunningRecheck. Not serialized: the
 	// recheck reads it from the catalog by rule id.
 	UnlessRunning *UnlessRunning `yaml:"unless_running" json:"-"`
+	// Hold names a check that keeps the rule's items from being offered
+	// while it is in effect: the scan shows the finding as surface-only,
+	// with the reason as its note. Its pre_action is PreActionHoldRecheck.
+	// Not serialized: the recheck reads it from the catalog by rule id.
+	Hold string `yaml:"hold" json:"-"`
+	// Measure names how regrow counts what a native command deletes
+	// directly, with no Trash and no steward: before and after it runs,
+	// journaled as a prune is.
+	Measure string `yaml:"measure" json:"measure,omitempty"`
 	// Fixture is the rule's golden-test data; never serialized to JSON.
 	Fixture *Fixture `yaml:"fixture" json:"-"`
 }
@@ -370,6 +379,8 @@ func (r Rule) PerItemActionable() bool {
 // PreActionAppLeftoverRecheck judges an app's leftover folder again
 // right before it goes to the Trash and refuses unless it is still
 // offered.
+// PreActionHoldRecheck runs a rule's hold check again right before
+// each action and refuses while it holds or cannot be read.
 // A hook failure leaves the target in place. The registry of hook names
 // lives here so a typo'd pre_action fails at load, like a typo'd
 // placeholder; the implementations are registered on the executor.
@@ -386,13 +397,40 @@ const (
 	PreActionCaskRecordRecheck          = "cask-record-recheck"
 	PreActionRunningRecheck             = "running-recheck"
 	PreActionAppLeftoverRecheck         = "app-leftover-recheck"
+	PreActionHoldRecheck                = "hold-recheck"
 )
+
+// HoldAerialPicks keeps the aerial videos while macOS has anything picked
+// to download them for, or the picks cannot be read: deleted then, they
+// come back. The registry of hold names lives here so a typo'd hold fails
+// at load; the checks live in the scanner.
+const HoldAerialPicks = "aerial-picks"
+
+var knownHolds = map[string]bool{HoldAerialPicks: true}
+
+// MeasureAerialVideos counts the aerial videos in the folders the
+// aerial-videos query reads. The registry of measure names lives here
+// so a typo'd measure fails at load; the implementations are
+// registered on the executor.
+const MeasureAerialVideos = "aerial-videos"
+
+var knownMeasures = map[string]bool{MeasureAerialVideos: true}
+
+// KnownMeasures lists every measure name a rule may declare, sorted.
+func KnownMeasures() []string {
+	names := make([]string, 0, len(knownMeasures))
+	for name := range knownMeasures {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
 
 var knownPreActions = map[string]bool{
 	PreActionVolumeExport: true, PreActionAgentScratchRecheck: true, PreActionWorktreeRecheck: true, PreActionBuildOutputRecheck: true,
 	PreActionNpxRecheck: true, PreActionDownloadedInstallerRecheck: true, PreActionFnmVersionRecheck: true,
 	PreActionSupersededBuildRecheck: true, PreActionDockerUpdateRecheck: true, PreActionCaskRecordRecheck: true,
-	PreActionRunningRecheck: true, PreActionAppLeftoverRecheck: true,
+	PreActionRunningRecheck: true, PreActionAppLeftoverRecheck: true, PreActionHoldRecheck: true,
 }
 
 // KnownPreActions lists every hook name a rule may declare, sorted. An
@@ -513,12 +551,32 @@ func (r Rule) Validate() error {
 	} else if r.PreAction == PreActionRunningRecheck {
 		errs = append(errs, "pre_action "+PreActionRunningRecheck+" requires unless_running, the guard it checks")
 	}
+	switch {
+	case r.Hold != "" && !knownHolds[r.Hold]:
+		errs = append(errs, fmt.Sprintf("unknown hold %q", r.Hold))
+	case r.Hold != "" && r.PreAction != PreActionHoldRecheck:
+		errs = append(errs, "hold requires pre_action "+PreActionHoldRecheck+", which checks again right before each action")
+	case r.Hold == "" && r.PreAction == PreActionHoldRecheck:
+		errs = append(errs, "pre_action "+PreActionHoldRecheck+" requires hold, the check it runs")
+	}
 	if r.PreAction != "" {
 		if !knownPreActions[r.PreAction] {
 			errs = append(errs, fmt.Sprintf("unknown pre_action %q", r.PreAction))
 		}
-		if !r.PerItemActionable() {
+		// The hold recheck reads no item, so it may guard a whole-rule command.
+		if !r.PerItemActionable() && (r.PreAction != PreActionHoldRecheck || len(r.NativeCommand) == 0) {
 			errs = append(errs, "pre_action requires a per-item action, a Trash move or a per-item native_command — the hook runs once per item")
+		}
+	}
+	if r.Measure != "" {
+		if !knownMeasures[r.Measure] {
+			errs = append(errs, fmt.Sprintf("unknown measure %q", r.Measure))
+		}
+		if len(r.NativeCommand) == 0 {
+			errs = append(errs, "measure requires a native_command, the command whose deletions it counts")
+		}
+		if r.Risk == RiskSafe {
+			errs = append(errs, "a measured rule must not be safe — its command deletes with no Trash and no undo")
 		}
 	}
 	if len(errs) > 0 {

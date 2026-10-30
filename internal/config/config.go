@@ -7,6 +7,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path"
@@ -97,6 +98,28 @@ const DefaultVolumeExportCap = 10 << 30
 // Config is the whole file.
 type Config struct {
 	Docker Docker `yaml:"docker"`
+	Rules  Rules  `yaml:"rules"`
+}
+
+// Rules is which of the catalog's rules regrow runs. The app's Rules
+// section writes it; every command reads it.
+type Rules struct {
+	// Off lists the ids of rules regrow does not look at: no scan,
+	// plan, clean, tick or doctor runs them. An id no rule has is
+	// ignored, so a rule dropped from the catalog leaves the file valid.
+	Off []string `yaml:"off,omitempty"`
+	// Beta runs the rules still in staged rollout, as --beta-rules does.
+	Beta bool `yaml:"beta,omitempty"`
+}
+
+// IsOff reports whether the rule is turned off.
+func (r Rules) IsOff(id string) bool {
+	for _, off := range r.Off {
+		if off == id {
+			return true
+		}
+	}
+	return false
 }
 
 func (c Config) validate() error {
@@ -131,10 +154,19 @@ func Load() (Config, error) {
 	return LoadFile(p)
 }
 
-// LoadFile reads one config file. Unknown keys are an error.
+// LoadFile reads one config file. Unknown keys are an error; an empty
+// file is the defaults, and so is no file, unless a link on its path
+// names nothing.
 func LoadFile(path string) (Config, error) {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
+		if link := danglingLink(path); link != "" {
+			target := missingTarget(link)
+			if link == path {
+				return Config{}, fmt.Errorf("%s leads to %s, which is not there, so the config cannot be read", path, target)
+			}
+			return Config{}, fmt.Errorf("%s: %s leads to %s, which is not there, so the config cannot be read", path, link, target)
+		}
 		return Config{}, nil
 	}
 	if err != nil {
@@ -143,8 +175,23 @@ func LoadFile(path string) (Config, error) {
 	var c Config
 	dec := yaml.NewDecoder(strings.NewReader(string(data)))
 	dec.KnownFields(true)
-	if err := dec.Decode(&c); err != nil {
+	if err := dec.Decode(&c); err != nil && !errors.Is(err, io.EOF) {
 		return Config{}, fmt.Errorf("%s: %w", path, err)
+	}
+	// Only the first document is decoded: a key in any later one would
+	// go unseen, a rule it turns off still running.
+	for {
+		var more yaml.Node
+		err := dec.Decode(&more)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err == nil && !isEmptyDocument(&more) {
+			err = errors.New("the file holds more than one YAML document; regrow reads one")
+		}
+		if err != nil {
+			return Config{}, fmt.Errorf("%s: %w", path, err)
+		}
 	}
 	if err := c.validate(); err != nil {
 		return Config{}, fmt.Errorf("%s: %w", path, err)
@@ -179,4 +226,51 @@ func ParseSize(s string) (int64, error) {
 		return 0, fmt.Errorf("size %q: unknown unit (use B, kB, MB, GB, TB, KiB, MiB, GiB, TiB)", s)
 	}
 	return int64(val * mult), nil
+}
+
+// isEmptyDocument is a document of nothing, as "a: 1\n---\n" ends.
+func isEmptyDocument(n *yaml.Node) bool {
+	return len(n.Content) == 0 || (len(n.Content) == 1 && n.Content[0].Tag == "!!null")
+}
+
+// danglingLink is the link on the way to path, path included, that
+// names nothing, or "" when there is none.
+func danglingLink(path string) string {
+	for p := path; ; p = filepath.Dir(p) {
+		if info, err := os.Lstat(p); err == nil {
+			if _, err := os.Stat(p); info.Mode()&fs.ModeSymlink != 0 && err != nil {
+				return p
+			}
+			return ""
+		}
+		if filepath.Dir(p) == p {
+			return ""
+		}
+	}
+}
+
+// missingTarget follows the links from link to the path that is not
+// there. A relative target is read against its link's real folder, as
+// the system reads it: lexically, a ".." after a linked folder would
+// name another place.
+func missingTarget(link string) string {
+	p := link
+	for range 40 {
+		target, err := os.Readlink(p)
+		if err != nil {
+			return p
+		}
+		if !filepath.IsAbs(target) {
+			dir := filepath.Dir(p)
+			if real, err := filepath.EvalSymlinks(dir); err == nil {
+				dir = real
+			}
+			target = filepath.Join(dir, target)
+		}
+		if info, err := os.Lstat(target); err != nil || info.Mode()&fs.ModeSymlink == 0 {
+			return target
+		}
+		p = target
+	}
+	return p
 }

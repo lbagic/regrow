@@ -20,18 +20,21 @@ public struct WindowSettings: Equatable {
     public var log: String
     /// Nil before the engine has said where its state directory is.
     public var staging: String?
+    /// The autotrim switch, as the menu's.
+    public var autotrim: Bool
 
-    public init(loginItem: LoginItemState?, notifications: Grant, finder: Grant, log: String, staging: String?) {
+    public init(loginItem: LoginItemState?, notifications: Grant, finder: Grant, log: String, staging: String?, autotrim: Bool = false) {
         self.loginItem = loginItem
         self.notifications = notifications
         self.finder = finder
         self.log = log
         self.staging = staging
+        self.autotrim = autotrim
     }
 
     /// The shell event that hands the page these settings.
     public var line: String {
-        var fields: [String: Any] = ["notifications": notifications.rawValue, "finder": finder.rawValue, "log": log]
+        var fields: [String: Any] = ["notifications": notifications.rawValue, "finder": finder.rawValue, "log": log, "autotrim": autotrim]
         if let loginItem {
             fields["login_item"] = loginItem.wire
         }

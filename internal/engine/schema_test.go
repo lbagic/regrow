@@ -130,6 +130,22 @@ func TestValidate(t *testing.T) {
 		t.Fatalf("a guarded Trash rule with its recheck must be valid: %v", err)
 	}
 
+	held := validRule()
+	held.Hold, held.PreAction = HoldAerialPicks, PreActionHoldRecheck
+	if err := held.Validate(); err != nil {
+		t.Fatalf("a held Trash rule with its recheck must be valid: %v", err)
+	}
+
+	// The hold recheck reads no item, so it may guard a whole-rule
+	// command, and a measured one.
+	measured := validRule()
+	measured.Risk, measured.Sudo, measured.Measure = RiskCaution, true, MeasureAerialVideos
+	measured.NativeCommand = Argv{"/bin/sh", "-c", "find \"$1\" -name '*.mov' -delete", "sh", "/Library/x"}
+	measured.Hold, measured.PreAction = HoldAerialPicks, PreActionHoldRecheck
+	if err := measured.Validate(); err != nil {
+		t.Fatalf("a held, measured whole-rule command must be valid: %v", err)
+	}
+
 	tests := []struct {
 		name    string
 		mutate  func(*Rule)
@@ -177,6 +193,26 @@ func TestValidate(t *testing.T) {
 			"per-item action",
 		},
 		{
+			"an unknown measure",
+			func(r *Rule) { r.Risk, r.NativeCommand, r.Measure = RiskCaution, Argv{"find", "{path}", "-delete"}, "videoz" },
+			`unknown measure "videoz"`,
+		},
+		{
+			"a measure with no command",
+			func(r *Rule) { r.Risk, r.Measure = RiskCaution, MeasureAerialVideos },
+			"measure requires a native_command",
+		},
+		{
+			"a safe measured rule",
+			func(r *Rule) { r.NativeCommand, r.Measure = Argv{"find", "{path}", "-delete"}, MeasureAerialVideos },
+			"a measured rule must not be safe",
+		},
+		{
+			"the hold recheck on a surface-only rule",
+			func(r *Rule) { r.Risk, r.Hold, r.PreAction = RiskSurfaceOnly, HoldAerialPicks, PreActionHoldRecheck },
+			"per-item action",
+		},
+		{
 			"unless_running without its recheck",
 			func(r *Rule) { r.UnlessRunning = &UnlessRunning{Commands: []string{"bun"}} },
 			"unless_running requires pre_action " + PreActionRunningRecheck,
@@ -193,6 +229,21 @@ func TestValidate(t *testing.T) {
 			"the recheck without unless_running",
 			func(r *Rule) { r.PreAction = PreActionRunningRecheck },
 			"pre_action " + PreActionRunningRecheck + " requires unless_running",
+		},
+		{
+			"an unknown hold",
+			func(r *Rule) { r.Hold = "aerial-pics"; r.PreAction = PreActionHoldRecheck },
+			`unknown hold "aerial-pics"`,
+		},
+		{
+			"a hold without its recheck",
+			func(r *Rule) { r.Hold = HoldAerialPicks },
+			"hold requires pre_action " + PreActionHoldRecheck,
+		},
+		{
+			"the hold recheck without a hold",
+			func(r *Rule) { r.PreAction = PreActionHoldRecheck },
+			"pre_action " + PreActionHoldRecheck + " requires hold",
 		},
 		{
 			"unless_running naming nothing",

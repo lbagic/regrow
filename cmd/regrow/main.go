@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/lbagic/regrow/internal/config"
 	"github.com/lbagic/regrow/internal/engine"
 	"github.com/lbagic/regrow/internal/scanner"
 	"github.com/lbagic/regrow/internal/tui"
@@ -33,6 +34,10 @@ Usage:
   regrow doctor [--json]          runaway bugs, causes to fix, phantom space; read-only
   regrow tick [--autotrim]        one headroom sample: free space, forecast, alerts
   regrow prune go-build [--yes]   delete old Go build cache entries; dry run without --yes
+  regrow aerials [status|off|on]  macOS's aerial video downloads: status reads the
+                                  picks they follow; off clears them and stops the
+                                  downloader, asking for your password; on puts
+                                  them back (macOS 15 and earlier)
   regrow undo [run-id]            restore the newest (or given) run's Trash moves
   regrow history [--json]         past runs from the oplog
   regrow rules [--json]           list the rule catalog
@@ -91,7 +96,7 @@ func parseArgs(args []string) (cmd string, opts options, ids []string, help bool
 	fs := newFlagSet(cmd, &opts)
 	err = fs.Parse(args)
 	ids = fs.Args()
-	if err == nil && cmd == "prune" {
+	if err == nil && (cmd == "prune" || cmd == "aerials") {
 		ids, err = interspersedArgs(fs, ids)
 	}
 	if err != nil {
@@ -127,18 +132,62 @@ func run(args []string) error {
 		return runUpdate(os.Stdout, ids)
 	}
 
-	catalog, err := loadCatalog(opts.rulesDir)
+	// Undo and history read only the journal, and aerials runs no rule: a
+	// config that does not load must not keep a move or a pick from being
+	// put back.
+	switch cmd {
+	case "undo":
+		return runUndo(ids)
+	case "history":
+		return runHistory(opts.asJSON)
+	case "aerials":
+		return runAerials(engine.DetectHost(), ids, opts.asJSON)
+	}
+
+	all, err := loadCatalog(opts.rulesDir)
 	if err != nil {
 		return err
 	}
-	if !opts.betaRules {
-		catalog = engine.WithoutBeta(catalog)
+	// A config that does not load stops every command that runs rules: a
+	// typo must never mean that a rule turned off runs. The engine starts
+	// regardless, so the app's alerts go on; it runs no rule until the
+	// file loads.
+	cfgPath, err := config.DefaultPath()
+	if err != nil {
+		return err
 	}
+	cfg, err := config.LoadFile(cfgPath)
 	host := engine.DetectHost()
+	if cmd == "engine" {
+		return runEngine(host, newRuleSwitch(all, opts.betaRules, cfgPath, cfg.Rules, err), opts)
+	}
+	if cmd == "rules" {
+		// It runs no rule: the list prints whatever the file holds, and
+		// then why the file does not load.
+		if err == nil {
+			warnUnknownOff(all, cfg.Rules, cfgPath)
+		}
+		if !opts.betaRules && !cfg.Rules.Beta {
+			all = engine.WithoutBeta(all)
+		}
+		if perr := printRules(all, cfg.Rules, opts.asJSON); perr != nil {
+			return perr
+		}
+		if err != nil {
+			return fmt.Errorf("%w; no command runs a rule until it loads, and none is marked off above", err)
+		}
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	warnUnknownOff(all, cfg.Rules, cfgPath)
+	catalog, err := commandCatalog(cmd, ids, opts.betaRules, all, cfg.Rules, cfgPath)
+	if err != nil {
+		return err
+	}
 
 	switch cmd {
-	case "rules":
-		return printRules(catalog, opts.asJSON)
 	case "scan":
 		if opts.asJSON {
 			return newEngineServer(host, catalog, nil).ScanOnce(context.Background(), os.Stdout)
@@ -170,12 +219,6 @@ func run(args []string) error {
 		return runTick(host, catalog, opts)
 	case "prune":
 		return runPrune(host, catalog, ids, opts)
-	case "engine":
-		return runEngine(host, catalog, opts)
-	case "undo":
-		return runUndo(ids)
-	case "history":
-		return runHistory(opts.asJSON)
 	default:
 		return fmt.Errorf("unknown command %q (`regrow help` lists commands)", cmd)
 	}
@@ -200,16 +243,6 @@ func selectionFor(ids []string, findings []engine.Finding) map[string]bool {
 		sel[id] = true
 	}
 	return sel
-}
-
-func printRules(catalog []engine.Rule, asJSON bool) error {
-	if asJSON {
-		return emitJSON(catalog)
-	}
-	for _, r := range catalog {
-		fmt.Printf("%-24s %-12s %-10s %s\n", r.ID, r.Category, r.Risk, r.Title)
-	}
-	return nil
 }
 
 // writeFindings prints the scan grouped by category, largest first
@@ -320,4 +353,10 @@ func writeJSON(w io.Writer, v any) error {
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
 	return enc.Encode(v)
+}
+
+func warnUnknownOff(all []engine.Rule, rules config.Rules, cfgPath string) {
+	if unknown := unknownOff(all, rules); len(unknown) > 0 {
+		fmt.Fprintf(os.Stderr, "regrow: %s: rules: off names %s, which no rule has\n", cfgPath, strings.Join(unknown, ", "))
+	}
 }

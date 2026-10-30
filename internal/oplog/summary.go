@@ -8,10 +8,10 @@ import (
 )
 
 // Summary is one run as `regrow history` counts it: an action once its
-// done line is in the journal, a prune at what it deleted, any other
-// action at its planned size; a failed or cut-short action, and a move
-// `regrow undo` put back, counts nothing. Its bytes are split by where
-// the space went, as the run's summary splits them.
+// done line is in the journal, a prune or a measured command at what it
+// deleted, any other action at its planned size; a failed or cut-short
+// action, and a move `regrow undo` put back, counts nothing. Its bytes
+// are split by where the space went, as the run's summary splits them.
 type Summary struct {
 	ID     string    `json:"id"`
 	Start  time.Time `json:"start"`

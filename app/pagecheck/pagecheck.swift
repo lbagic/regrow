@@ -119,11 +119,13 @@ struct Play {
     var historyEvent: [String: Any]?     // the history event in place of the transcript's
     var historyError: String?            // the history request fails with this message
     var holdHistory = false              // history requests wait in heldHistory until the scenario answers them
+    var rulesError: String?              // a set_rules request fails with this message
+    var rulesUnloaded: String?           // the rules file has not loaded since the engine started, for this reason
 
     /// The settings of the installed app on a Mac that has granted it all but Control of Finder.
     static let installed: [String: Any] = [
         "event": "shell", "state": "settings", "login_item": "on", "notifications": "allowed", "finder": "not_asked",
-        "log": "/Users/dev/Library/Logs/regrow/app.log", "staging": "/Users/dev/.local/state/regrow/staging",
+        "log": "/Users/dev/Library/Logs/regrow/app.log", "staging": "/Users/dev/.local/state/regrow/staging", "autotrim": false,
     ]
 }
 
@@ -165,6 +167,8 @@ final class Run: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHa
     private var scanID = ""
     private(set) var planID = ""
     private(set) var executeRequest = ""
+    /// The rules after the changes the page has made.
+    private var rulesNow: [String: Any]?
     private var planHeld: [[String]] = []
 
     init(name: String, dark: Bool, transcript: Transcript, out: URL, play: Play) {
@@ -443,6 +447,32 @@ final class Run: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHa
         case "plan": answer(plan: id, body)
         case "execute": answer(execute: id, body)
         case "cancel": answer(cancel: id, body)
+        case "rules":
+            guard let why = play.rulesUnloaded else { return send(answering("rules", id)) }
+            var event = parse(answering("rules", id)[0])
+            event["catalog"] = event.objs("catalog").map { rule -> [String: Any] in var rule = rule; rule["runs"] = false; return rule }
+            event["error"] = why
+            send(event)
+            send(["event": "done", "re": id])
+        case "set_rules":
+            if let message = play.rulesError {
+                return send(["event": "error", "re": id, "code": "rules_failed", "message": message])
+            }
+            // The rules as they stand with this change made, as the engine's switch would.
+            var event = rulesNow ?? parse(answering("rules", id)[0])
+            event["re"] = id
+            let beta = (body["beta"] as? Bool) ?? event["beta"] as? Bool ?? false
+            event["beta"] = beta
+            event["catalog"] = event.objs("catalog").map { rule -> [String: Any] in
+                var rule = rule
+                if rule.str("id") == body.str("rule") { rule["off"] = body["off"] as? Bool ?? false }
+                let off = rule["off"] as? Bool ?? false, isBeta = rule["beta"] as? Bool ?? false
+                rule["runs"] = !off && (!isBeta || beta)
+                return rule
+            }
+            rulesNow = event
+            send(event)
+            send(["event": "done", "re": id])
         case "history":
             if play.holdHistory {
                 heldHistory.append(id)
@@ -485,7 +515,7 @@ final class Run: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHa
             if !play.opened && !play.scanFirst { send(["event": "shell", "state": "scan"]) }
         case "automation":
             if let allowed = play.automation { send(["event": "shell", "state": "automation", "allowed": allowed]) }
-        case "open-full-disk-access", "relaunch", "login-item-on", "login-item-off", "login-item-settings", "notification-settings",
+        case "autotrim-on", "autotrim-off", "open-full-disk-access", "relaunch", "login-item-on", "login-item-off", "login-item-settings", "notification-settings",
             "automation-settings", "show-log", "show-staging", "app-update-check", "app-update-install":
             break
         default:
@@ -1253,6 +1283,102 @@ struct Scenario {
             r.same(await r.count(".note"), 0, "notices on the scan for a history that failed")
             await r.shoot()
         },
+        Scenario(name: "rules") { r in
+            await results(r)
+            let catalog = r.transcript.event("rules", "rules").objs("catalog")
+            let runs = catalog.filter { $0["runs"] as? Bool ?? false }.count
+            r.same(await r.text("#nav-rules .fig"), "\(runs) on", "Rules' figure in the sidebar")
+            await r.click("#nav-rules")
+            r.same(await r.text(".top h1"), "Rules", "the top bar's title")
+            r.same(await r.text("#pane .lead h2"), "\(runs) of \(catalog.count) rules run.", "the headline")
+            r.same(await r.count("#pane .set[data-rule]"), catalog.count, "a row for every rule")
+            r.same(await r.js("return document.querySelector('#sw-pip-cache').getAttribute('aria-checked')") as? String ?? "", "false", "the rule turned off")
+            r.has(await r.text("[data-rule=pip-cache] .ctl"), "off", "its state")
+            r.same(await r.js("return document.querySelector('#sw-fresh-cache').disabled") as? Bool ?? false, true, "a beta rule's switch while the beta rules are off")
+            r.has(await r.text("[data-rule=fresh-cache] .ctl"), "beta, not scanned", "its state")
+            r.has(await r.text("[data-rule=go-build-cache] .ctl"), "in the last scan", "what the scan shown found for a rule")
+            r.same(await r.text("[data-setting=autotrim] .state"), "off", "autotrim, from the shell's settings")
+            await r.shoot()
+
+            await r.click("#sw-npm-cache")
+            r.same(r.sent("set_rules").last?.str("rule") ?? "", "npm-cache", "the rule a switch turns off")
+            r.same(r.sent("set_rules").last?["off"] as? Bool, true, "off")
+            await r.settle()
+            r.same(await r.js("return document.querySelector('#sw-npm-cache').getAttribute('aria-checked')") as? String ?? "", "false", "the switch once the engine says it is off")
+            r.same(await r.text("#nav-rules .fig"), "\(runs - 1) on", "the sidebar's count once it is off")
+            await r.click("[data-setting=beta] .switch")
+            r.same(r.sent("set_rules").last?["beta"] as? Bool, true, "the beta switch")
+            await r.settle()
+            r.same(await r.js("return document.querySelector('#sw-fresh-cache').getAttribute('aria-checked')") as? String ?? "", "true", "the beta rule once the beta rules run")
+            await r.click("[data-setting=autotrim] .switch")
+            r.same(r.sentShell("autotrim-on"), 1, "autotrim-on messages")
+
+            // The filter hides rows in place.
+            await r.js("const f = document.getElementById('rfilter'); f.value = 'pip'; f.dispatchEvent(new Event('input', { bubbles: true })); return null")
+            r.same(await r.count("#pane .set[data-rule]:not([hidden])"), 1, "rows the filter leaves")
+            await r.js("const f = document.getElementById('rfilter'); f.value = ''; f.dispatchEvent(new Event('input', { bubbles: true })); return null")
+            await r.click("[data-do=ruleShow][data-show=off]")
+            r.same(await r.count("#pane .set[data-rule]:not([hidden])"), 2, "rows that are off: the one the transcript holds, and npm-cache")
+            await r.click("#nav-scan")
+            r.same(await r.screen(), "findings", "the scan, kept while Rules showed")
+        },
+        Scenario(name: "rules-off-since-the-scan") { r in
+            await results(r)
+            await r.click("#nav-rules")
+            await r.click("#sw-npm-cache")
+            await r.settle()
+            await r.click("#nav-scan")
+            r.play.planError = ("rules_changed", "npm-cache no longer runs, as config.yaml's rules now say: scan again")
+            await r.click("[data-do=review]")
+            r.same(await r.screen(), "findings", "the screen")
+            let tray = await r.text(".tray .say")
+            r.has(tray, "This scan is out of date", "the tray")
+            r.has(tray, "npm-cache no longer runs", "the engine's message")
+            r.same(await r.text(".tray .btn"), "Scan again", "the tray's action")
+            await r.shoot()
+        },
+        Scenario(name: "rules-unloaded", play: Play(settings: Play.installed.merging(["autotrim": true]) { $1 },
+                                                    rulesUnloaded: "/Users/dev/.config/regrow/config.yaml: yaml: unmarshal errors: line 2: field kep not found in type config.Docker")) { r in
+            await results(r)
+            await r.click("#nav-rules")
+            let catalog = r.transcript.event("rules", "rules").objs("catalog")
+            r.same(await r.text("#pane .lead h2"), "0 of \(catalog.count) rules run.", "the headline")
+            r.has(await r.text("#pane .lead"), "so no rule runs until it does", "the note on a file that has not loaded")
+            r.has(await r.text("#pane .lead"), "field kep not found", "the engine's reason")
+            r.same(await r.text("#pane .lead").contains("which no rule is called"), false, "a warning of ids from a load that no longer stands")
+            r.has(await r.text("[data-setting=autotrim]"), "Until the config file loads, it prunes nothing.", "autotrim while the file does not load")
+            r.same(await r.text("[data-setting=autotrim]").contains("off below"), false, "no word of a switch that is not off")
+            await r.shoot()
+        },
+        Scenario(name: "rules-refused", play: Play(rulesError: "/Users/dev/.config/regrow/config.yaml: yaml: line 2: field of not found in type config.Rules")) { r in
+            await results(r)
+            await r.click("#nav-rules")
+            await r.click("#sw-npm-cache")
+            await r.settle()
+            r.has(await r.text("#pane .lead .note"), "That change did not take", "the note")
+            r.has(await r.text("#pane .lead .note"), "field of not found", "the engine's reason")
+            r.same(await r.js("return document.querySelector('#sw-npm-cache').getAttribute('aria-checked')") as? String ?? "", "true", "the switch, unmoved")
+            await r.shoot()
+        },
+        Scenario(name: "set-rules-unloaded") { r in
+            // config.yaml broke while Rules showed: a switch is refused, and the count follows the file as it now stands.
+            await results(r)
+            await r.click("#nav-rules")
+            let catalog = r.transcript.event("rules", "rules").objs("catalog")
+            let broken = "/Users/dev/.config/regrow/config.yaml: yaml: unmarshal errors: line 3: field bta not found in type config.Rules"
+            r.play.rulesUnloaded = broken
+            r.play.rulesError = broken
+            let asked = r.sent("rules").count
+            await r.click("#sw-npm-cache")
+            await r.settle()
+            r.same(r.sent("rules").count > asked, true, "the rules asked again after a switch refused")
+            r.same(await r.text("#nav-rules .fig"), "0 on", "the sidebar's count")
+            r.same(await r.text("#pane .lead h2"), "0 of \(catalog.count) rules run.", "the headline")
+            r.has(await r.text("#pane .lead"), "so no rule runs until it does", "the note on a file that does not load")
+            r.has(await r.text("#pane .lead"), "That change did not take.", "the note on the switch")
+            r.same(await r.text("#pane .lead").components(separatedBy: "field bta not found").count - 1, 1, "times the engine's reason is shown")
+            await r.shoot()
+        },
         Scenario(name: "env-failed", play: Play(environment: "the login shell gave no answer within 5 s")) { r in
             r.has(await r.text(".note"), "could not read your login shell's environment", "the notice")
             r.has(await r.text(".note"), "the login shell gave no answer within 5 s", "the notice's reason")
@@ -1557,6 +1683,63 @@ struct Scenario {
             r.same(await r.text(".tray .btn:not(.quiet)"), "Run plan…", "the tray's action on the fresh plan")
             await r.shoot()
         },
+        Scenario(name: "execute-out-of-date") { r in
+            // A rule turned off since the scan: the execute is refused as out of date, which the tray says, once.
+            await toConfirm(r)
+            await r.click("#read")
+            r.play.executeError = ("rules_changed", "npm-cache no longer runs, as config.yaml's rules now say: scan again")
+            r.play.planError = ("rules_changed", "npm-cache no longer runs, as config.yaml's rules now say: scan again")
+            await r.click("#go")
+            r.same(r.sent("execute").count, 1, "executes sent")
+            r.same(await r.screen(), "findings", "the screen")
+            r.same(await r.texts(".note").filter { $0.contains("answered with an error") }.count, 0, "the engine's error beside the tray's word")
+            r.has(await r.text(".tray .say"), "This scan is out of date", "the tray")
+            r.same(await r.text(".tray .btn"), "Scan again", "the tray's action")
+            await r.shoot()
+        },
+        Scenario(name: "execute-rules-unloaded") { r in
+            // config.yaml broke between the plan and the confirm: nothing runs, the tray says why, once, and the sidebar
+            // counts the rules as they now stand.
+            let broken = "/Users/dev/.config/regrow/config.yaml: yaml: unmarshal errors: line 3: field bta not found in type config.Rules"
+            await toConfirm(r)
+            await r.click("#read")
+            let asked = r.sent("rules").count
+            r.play.rulesUnloaded = broken
+            r.play.executeError = ("rules_failed", broken)
+            r.play.planError = ("rules_failed", broken)
+            await r.click("#go")
+            r.same(await r.screen(), "findings", "the screen")
+            r.same(await r.texts(".note").filter { $0.contains("answered with an error") }.count, 0, "the engine's error beside the tray's word")
+            r.same(await r.text("#pane").contains("this is a fresh one"), false, "words of a fresh plan that is not there")
+            r.has(await r.text(".tray .say"), "The config file does not load.", "the tray's headline")
+            r.same(await r.text(".tray .say").contains("out of date"), false, "a scan called out of date for a file that does not load")
+            r.has(await r.text(".tray .say"), "field bta not found", "the engine's reason in the tray")
+            r.same(await r.text(".top .status").contains("out of date"), false, "the top bar for a file that does not load")
+            r.has(await r.text(".top .status"), "the config file does not load", "the top bar's reason")
+            r.same(r.sent("rules").count > asked, true, "the rules asked again after a refusal for a file that does not load")
+            r.same(await r.text("#nav-rules .fig"), "0 on", "the sidebar's count of rules on")
+            r.same(await r.text(".tray .btn"), "Scan again", "the tray's action")
+            await r.shoot()
+        },
+        Scenario(name: "rules-fixed-after-refusal") { r in
+            // A scan's start asks for the rules: once config.yaml loads again, the sidebar counts them from the scan screen.
+            let runs = r.transcript.event("rules", "rules").objs("catalog").filter { $0["runs"] as? Bool ?? false }.count
+            let broken = "/Users/dev/.config/regrow/config.yaml: yaml: unmarshal errors: line 3: field bta not found in type config.Rules"
+            await toConfirm(r)
+            await r.click("#read")
+            r.play.rulesUnloaded = broken
+            r.play.executeError = ("rules_failed", broken)
+            r.play.planError = ("rules_failed", broken)
+            await r.click("#go")
+            r.same(await r.text("#nav-rules .fig"), "0 on", "the sidebar while the file does not load")
+            r.play.rulesUnloaded = nil
+            r.play.executeError = nil
+            r.play.planError = nil
+            await r.click(".tray [data-do=scan]")
+            r.same(await r.phase(), "done", "the second scan")
+            r.same(await r.text("#nav-rules .fig"), "\(runs) on", "the sidebar once the file loads")
+            await r.shoot()
+        },
         Scenario(name: "stale-review") { r in
             // A fresh plan is asked for, the owner goes back and touches the ticks before it comes, and asks again:
             // the late answer to the first request is not the plan drawn, and the answer to the second is. The two
@@ -1805,7 +1988,7 @@ struct Scenario {
         },
     ]
     // Results, plan and confirm also in dark.
-    return lit + lit.filter { ["results", "plan", "confirm", "general", "stats"].contains($0.name) }.map { var dark = $0; dark.dark = true; return dark }
+    return lit + lit.filter { ["results", "plan", "confirm", "general", "stats", "rules"].contains($0.name) }.map { var dark = $0; dark.dark = true; return dark }
 }()
 
 // MARK: - Main

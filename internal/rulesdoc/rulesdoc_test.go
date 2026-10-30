@@ -64,6 +64,14 @@ func TestEveryPreActionHasText(t *testing.T) {
 	}
 }
 
+func TestEveryMeasureHasText(t *testing.T) {
+	for _, name := range engine.KnownMeasures() {
+		if _, ok := measures[name]; !ok {
+			t.Errorf("measure %s has no sentence in measures", name)
+		}
+	}
+}
+
 func TestEveryCategoryHasAGroup(t *testing.T) {
 	for _, r := range catalog(t) {
 		if _, ok := GroupName(r.Category); !ok {

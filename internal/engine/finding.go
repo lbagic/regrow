@@ -41,6 +41,9 @@ type Finding struct {
 	// out, unknown query, scan cancelled). A target that refuses or blocks is an item
 	// with Partial set, not an error.
 	Err string `json:"error,omitempty"`
+	// Held says why the rule's hold keeps its items now: the scan then
+	// gives the finding the surface-only risk and this as its note.
+	Held string `json:"held,omitempty"`
 }
 
 // TotalBytes sums the finding's items.

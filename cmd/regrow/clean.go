@@ -175,6 +175,18 @@ func newRunExecutor(host engine.Host, catalog []engine.Rule, runID string, strea
 			engine.PreActionAppLeftoverRecheck: func(ctx context.Context, a engine.Action) (*trash.Receipt, error) {
 				return nil, scanner.RecheckAppLeftover(ctx, a.Path)
 			},
+			engine.PreActionHoldRecheck: func(ctx context.Context, a engine.Action) (*trash.Receipt, error) {
+				i := slices.IndexFunc(catalog, func(r engine.Rule) bool { return r.ID == a.RuleID })
+				if i < 0 {
+					return nil, fmt.Errorf("%s is not in the catalog, so what holds its items cannot be checked", a.RuleID)
+				}
+				return nil, scanner.RecheckHold(ctx, host, catalog[i])
+			},
+		},
+		Measures: map[string]executor.Measure{
+			engine.MeasureAerialVideos: func(ctx context.Context, _ engine.Action) (engine.CacheUsage, error) {
+				return scanner.MeasureAerialVideos(ctx, host)
+			},
 		},
 		RunID: runID,
 	}
@@ -223,6 +235,9 @@ func runSummary(res executor.Result, stagingDir string) []string {
 	}
 	if res.StagedBytes > 0 {
 		lines = append(lines, fmt.Sprintf("  In regrow staging  %10s  Finder was unavailable; emptying the Trash does not free it; `regrow undo` restores", tui.HumanBytes(res.StagedBytes)))
+	}
+	if res.FailedPruned.Bytes > 0 {
+		lines = append(lines, fmt.Sprintf("  Partly deleted     %10s  %d files deleted directly by actions that then failed; that space is free too", tui.HumanBytes(res.FailedPruned.Bytes), res.FailedPruned.Files))
 	}
 	if res.ExportedBytes > 0 {
 		lines = append(lines,
@@ -381,6 +396,6 @@ func goneText(gone []oplog.Entry) string {
 }
 
 var historyNote = []string{
-	"Cleaned counts finished actions only: a prune at what it deleted, anything else at its planned size; a failed or cut-short action, and a move regrow undo put back, counts nothing.",
+	"Cleaned counts finished actions only: a prune or the aerial videos' delete at what it deleted, anything else at its planned size; a failed or cut-short action, and a move regrow undo put back, counts nothing.",
 	"A Trash move frees its space only once the Trash is emptied; a move to regrow staging (Finder unavailable) is not freed by that.",
 }
