@@ -3,7 +3,9 @@ import Foundation
 import RegrowKit
 import Testing
 
-@Suite("App update")
+/// Serialized: `verify` holds a task-pool thread while Security waits on work that needs another,
+/// so as many tests checking signatures at once as the Mac has cores leave none and hang the run.
+@Suite("App update", .serialized)
 struct AppUpdateTests {
     @Test("a version is three plain numbers, compared as numbers")
     func versions() throws {
