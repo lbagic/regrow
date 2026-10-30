@@ -1,6 +1,7 @@
 package aerials
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -647,14 +648,16 @@ func TestOffGivesUpOnALockStillHeld(t *testing.T) {
 
 // A stop while the step waits for the root lock ends the wait at once
 // and changes nothing, so off puts the record back rather than keep one
-// of picks it never cleared.
+// of picks it never cleared. The stop comes once the step says it waits,
+// so it lands in the wait.
 func TestAStopWhileWaitingForTheRootLockChangesNothing(t *testing.T) {
 	f := newFixture(t)
 	before := f.a.Status(context.Background()).Picks
 	holdRootLock(t, f.a.RootLock, 4*time.Second)
-	f.a.Run = func(ctx context.Context, argv []string) error { return RunRoot(ctx, argv, io.Discard, io.Discard) }
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+	stderr := &cancelOn{text: "waiting for the root step", cancel: cancel}
+	f.a.Run = func(ctx context.Context, argv []string) error { return RunRoot(ctx, argv, io.Discard, stderr) }
 	start := time.Now()
 	res, err := f.a.Off(ctx)
 	if err == nil || errors.Is(err, ErrStopped) || res.Ran {
@@ -663,11 +666,54 @@ func TestAStopWhileWaitingForTheRootLockChangesNothing(t *testing.T) {
 	if took := time.Since(start); took > 3*time.Second {
 		t.Errorf("off took %v, want the stop to end the wait", took)
 	}
+	if !strings.Contains(stderr.buf.String(), "stopped while waiting for the lock") {
+		t.Errorf("the step said %q, want it to say it was stopped while waiting", stderr.buf.String())
+	}
+	if e := f.log.entries; len(e) != 2 || e[0].Event != oplog.EventStart || e[1].Event != oplog.EventFail || !strings.Contains(e[1].Error, "exit status 1") {
+		t.Errorf("journal = %+v, want the step's start and its exit status 1", e)
+	}
 	if r := f.record(t); r != nil {
 		t.Errorf("record = %+v, want none", r)
 	}
 	if now := f.a.Status(context.Background()).Picks; len(now) != len(before) {
 		t.Errorf("picks = %d, want all %d still picked", len(now), len(before))
+	}
+}
+
+// cancelOn keeps what is written to it and cancels once it holds text.
+type cancelOn struct {
+	buf    bytes.Buffer
+	text   string
+	cancel func()
+}
+
+func (w *cancelOn) Write(p []byte) (int, error) {
+	w.buf.Write(p)
+	if strings.Contains(w.buf.String(), w.text) {
+		w.cancel()
+	}
+	return len(p), nil
+}
+
+// The step says it waits only while an earlier one holds the root lock.
+func TestTheWaitingLineOnlyWhileTheLockIsHeld(t *testing.T) {
+	f := newFixture(t)
+	var out bytes.Buffer
+	f.a.Run = func(ctx context.Context, argv []string) error { return RunRoot(ctx, argv, &out, &out) }
+	const waiting = "regrow: waiting for the root step of an earlier aerials off or on to end"
+	if _, err := f.a.Off(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), waiting) {
+		t.Errorf("off with the root lock free said %q", out.String())
+	}
+	out.Reset()
+	holdRootLock(t, f.a.RootLock, time.Second)
+	if _, err := f.a.On(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), waiting) {
+		t.Errorf("on while the root lock is held said %q, want the waiting line", out.String())
 	}
 }
 
