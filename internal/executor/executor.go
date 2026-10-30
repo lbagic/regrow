@@ -36,6 +36,11 @@ type Journal interface {
 // trash receipt; a Trash move's own receipt replaces it.
 type PreAction func(ctx context.Context, a engine.Action) (*trash.Receipt, error)
 
+// Measure counts what an action's command would delete now: the
+// executor runs it before and after a command that deletes directly
+// and journals the difference.
+type Measure func(ctx context.Context, a engine.Action) (engine.CacheUsage, error)
+
 // Executor runs plan actions one at a time, journaling each before and
 // after. One failed action never aborts the run: every action is
 // independent, and a half-finished run is exactly what the oplog and
@@ -47,6 +52,10 @@ type Executor struct {
 	// the schema) to their implementations, wired up by the caller. An
 	// action naming an unregistered hook fails instead of running bare.
 	PreActions map[string]PreAction
+	// Measures maps the measure names rules declare to their
+	// implementations. An action naming an unregistered one fails
+	// instead of deleting uncounted.
+	Measures map[string]Measure
 	// RunNative executes a native steward command. Nil means real
 	// exec with inherited stdio (sudo can prompt, docker can stream).
 	RunNative func(ctx context.Context, argv []string) error
@@ -83,9 +92,16 @@ type Result struct {
 	// Skipped lists actions never attempted, with why. They are not
 	// journaled: nothing ran.
 	Skipped []string `json:"skipped,omitempty"`
-	// Pruned is what prune actions deleted, as measured, failed ones
-	// included: a prune that fails midway has still deleted entries.
+	// Pruned is what prune and measured actions deleted, as measured,
+	// failed ones included: one that fails midway has still deleted files.
 	Pruned oplog.Pruned `json:"pruned"`
+	// FailedPruned is the part of Pruned that failed actions deleted
+	// before they failed: free space Bytes leaves out. Not serialized:
+	// the engine's execute runs no prune action, which only tick and
+	// `regrow prune` plan, and no measured one, since the app runs no
+	// sudo action and every measured rule is sudo; a measured rule
+	// without sudo needs it on the wire.
+	FailedPruned oplog.Pruned `json:"-"`
 	// Stopped: Stop ended the run before every action was attempted.
 	Stopped bool `json:"stopped,omitempty"`
 }
@@ -150,7 +166,11 @@ func (e *Executor) Execute(ctx context.Context, plan engine.Plan) (Result, error
 			}
 		case engine.ActionNative:
 			receipt, actErr = e.runPreAction(ctx, a)
-			if actErr == nil {
+			switch {
+			case actErr != nil:
+			case a.Measure != "":
+				pruned, actErr = e.measured(ctx, a, runNative)
+			default:
 				actErr = runNative(ctx, a.Command)
 			}
 		case engine.ActionPrune:
@@ -179,6 +199,10 @@ func (e *Executor) Execute(ctx context.Context, plan engine.Plan) (Result, error
 			res.Failures = append(res.Failures, fmt.Sprintf("%s: %v", a.RuleID, actErr))
 			if a.EmptiesTrash {
 				trashUnsafe = true
+			}
+			if pruned != nil {
+				res.FailedPruned.Files += pruned.Files
+				res.FailedPruned.Bytes += pruned.Bytes
 			}
 		} else {
 			res.Done++
@@ -221,22 +245,42 @@ func (e *Executor) runPreAction(ctx context.Context, a engine.Action) (*trash.Re
 }
 
 // prune runs a prune action and measures what it deleted as the cache
-// before minus after, since find reports nothing itself. This is the
-// one action that deletes without the Trash, so the target is checked
-// again right before it runs.
+// before minus after, since find reports nothing itself. A prune
+// deletes without the Trash, so the target is checked again right
+// before it runs.
 func (e *Executor) prune(ctx context.Context, a engine.Action, runNative func(context.Context, []string) error) (*oplog.Pruned, error) {
 	if err := engine.VerifyGoCache(a.Path); err != nil {
 		return nil, err
 	}
-	before, err := engine.MeasureCache(ctx, a.Path)
-	if err != nil {
-		return nil, fmt.Errorf("measure the cache before pruning: %w", err)
+	return measuredRun(ctx, a.Command, "the cache", "pruning", func(ctx context.Context) (engine.CacheUsage, error) {
+		return engine.MeasureCache(ctx, a.Path)
+	}, runNative)
+}
+
+// measured runs a native command that deletes directly and counts what
+// it deleted with the measure the action names.
+func (e *Executor) measured(ctx context.Context, a engine.Action, runNative func(context.Context, []string) error) (*oplog.Pruned, error) {
+	m := e.Measures[a.Measure]
+	if m == nil {
+		return nil, fmt.Errorf("measure %q is not registered, refusing to run %s uncounted", a.Measure, a.RuleID)
 	}
-	cmdErr := runNative(ctx, a.Command)
-	// A canceled prune has still deleted entries; the journal says how many.
-	after, err := engine.MeasureCache(context.WithoutCancel(ctx), a.Path)
+	return measuredRun(ctx, a.Command, "what it deletes", "deleting", func(ctx context.Context) (engine.CacheUsage, error) {
+		return m(ctx, a)
+	}, runNative)
+}
+
+// measuredRun measures, runs argv and measures again: what it deleted
+// is before minus after. A failed first measure runs nothing.
+func measuredRun(ctx context.Context, argv []string, what, verb string, measure func(context.Context) (engine.CacheUsage, error), runNative func(context.Context, []string) error) (*oplog.Pruned, error) {
+	before, err := measure(ctx)
 	if err != nil {
-		return nil, errors.Join(cmdErr, fmt.Errorf("measure the cache after pruning: %w", err))
+		return nil, fmt.Errorf("measure %s before %s: %w", what, verb, err)
+	}
+	cmdErr := runNative(ctx, argv)
+	// A canceled command has still deleted files; the journal says how many.
+	after, err := measure(context.WithoutCancel(ctx))
+	if err != nil {
+		return nil, errors.Join(cmdErr, fmt.Errorf("measure %s after %s: %w", what, verb, err))
 	}
 	return &oplog.Pruned{
 		Files: max(before.Files-after.Files, 0),

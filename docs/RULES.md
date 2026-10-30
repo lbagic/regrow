@@ -2,7 +2,7 @@
 
 # What regrow scans
 
-regrow's catalog holds 87 rules: 44 safe, 29 caution and 14 surface-only. 50 of them are beta, and a scan includes them only with `--beta-rules`. Every entry below is written from the rule's file in [`rules/`](../rules), the catalog `regrow rules --beta-rules` lists. Paths are the macOS ones; the rules also carry Linux paths, for a Linux build that has not shipped. [SCAN.md](SCAN.md) says what a scan reads, which programs it runs, and what regrow writes.
+regrow's catalog holds 87 rules: 44 safe, 30 caution and 13 surface-only. 50 of them are beta, and a scan includes them only with `--beta-rules`. Every entry below is written from the rule's file in [`rules/`](../rules), the catalog `regrow rules --beta-rules` lists. Paths are the macOS ones; the rules also carry Linux paths, for a Linux build that has not shipped. [SCAN.md](SCAN.md) says what a scan reads, which programs it runs, and what regrow writes.
 
 How to read an entry:
 
@@ -300,7 +300,7 @@ Package caches, build caches and build output of developer tools, and what codin
 - **Removed by:** `go clean -cache`, once for the whole rule: all of it or nothing. It deletes for good: `regrow undo` cannot bring it back.
 - **Comes back:** Repopulated automatically by the next go build. Cost: next builds slower once; no network.
 - **Prune:** `regrow prune go-build --yes` deletes entries unused for 24h directly, oldest first, an hour of entries at a time, until the cache is down to about 15 GiB. Autotrim, once you turn it on, does the same while free space is low, and stops when it is back at its target. No Trash and no undo. A running `go`, `compile` or `link` refuses a prune by hand, and puts autotrim off unless builds have kept it waiting for hours and free space is critically low.
-- **Fix the cause:** Go worktrees without -trimpath. `regrow doctor` says whether it is in effect here and prints the fix; regrow changes nothing.
+- **Fix the cause:** Go worktrees without -trimpath. `regrow doctor` says whether it is in effect here and prints the fix; doctor itself changes nothing.
 
 ### go-mod-cache
 
@@ -795,7 +795,7 @@ Docker objects, listed through the `docker` command; regrow never touches Docker
 - **Keeps:**
   - Build records used in the last 30 days: the command's own filter, `unused-for=720h`, leaves them.
 - **Comes back:** The next docker build repopulates exactly the layers it needs. Cost: next builds slower.
-- **Fix the cause:** Docker build-cache limit. `regrow doctor` says whether it is in effect here and prints the fix; regrow changes nothing.
+- **Fix the cause:** Docker build-cache limit. `regrow doctor` says whether it is in effect here and prints the fix; doctor itself changes nothing.
 
 ### docker-containers-stopped
 
@@ -880,7 +880,7 @@ System caches, logs, downloads and the Trash.
 
 | Rule | Risk | Removed by |
 |---|---|---|
-| [Aerial wallpaper videos](#aerial-wallpapers) | surface-only | never |
+| [Aerial wallpaper videos](#aerial-wallpapers) | caution | `sudo /bin/sh -c '[ -d "$1" ] \|\| { echo "$1 is not a folder" >&2; exit 1; }; for t in "$2"/*/T/com.apple.idleassetsd; do if [ -d "$t" ] && [ ! -L "$t" ] && [ ! -L "${t%/*}" ]; then /usr/bin/find "$t" -ignore_readdir_race -mindepth 1 -maxdepth 1 -type f -name "CFNetworkDownload_*.tmp" -delete \|\| [ ! -d "$t" ] \|\| exit; fi; done; /usr/bin/find "$1" -ignore_readdir_race -type f -name "*.mov" -delete' sh '/Library/Application Support/com.apple.idleassetsd/Customer' /private/var/folders/zz` |
 | [App leftovers (no app has their id)](#app-leftovers) | caution, beta | Trash |
 | [App leftovers (kept)](#app-leftovers-kept) | surface-only, beta | never |
 | [Docker Desktop's unfinished update download](#docker-update-download) | caution, beta | Trash |
@@ -898,13 +898,16 @@ System caches, logs, downloads and the Trash.
 
 ### aerial-wallpapers
 
-**Aerial wallpaper videos** · surface-only · [`rules/aerial-wallpapers.yaml`](../rules/aerial-wallpapers.yaml)
+**Aerial wallpaper videos** · caution · [`rules/aerial-wallpapers.yaml`](../rules/aerial-wallpapers.yaml)
 
-- **Looks at:** the files in `/Library/Application Support/com.apple.idleassetsd/Customer` (macOS 15 and earlier) or `~/Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches` (macOS 26 and later), with each file's link count; a file that has links outside the folder is counted apart, and a walk that misses part of the folder gives the folder alone, as a lower bound.
-- **Removed by:** never: surface-only.
-- **Comes back:** macOS downloads videos again for each aerial category picked for the wallpaper or the screen saver (on macOS 15, at least 4 per category and more every day or two), and a still wallpaper chosen later leaves them picked. To remove the videos yourself on macOS 15 and earlier: `sudo find "/Library/Application Support/com.apple.idleassetsd/Customer" -type f -name '*.mov' -delete`. On macOS 26 and later: `sudo find ~/Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches -type f -name '*.mov' -delete`. A video the downloader's temp folder also holds frees nothing until that copy goes too, and macOS 15 keeps those copies in a folder only root can read. To remove them (untested in this form): `sudo find /private/var/folders/zz -path '*/T/com.apple.idleassetsd/CFNetworkDownload_*.tmp' -delete`. Cost: n/a — regrow never deletes here; roughly 0.5 GB of download per video macOS fetches again.
-- **Fix the cause:** Aerial video downloads (macOS 15.x and earlier). `regrow doctor` says whether it is in effect here and prints the fix; regrow changes nothing.
-- **Note:** The videos come back while an aerial is picked for the wallpaper or the screen saver, even after a still wallpaper replaced it. To see how to stop the downloads: `regrow doctor`.
+- **Looks at:** the files in `/Library/Application Support/com.apple.idleassetsd/Customer` (macOS 15 and earlier) or `~/Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches` (macOS 26 and later), with each file's link count; a file that has links outside the folder is counted apart, and a walk that misses part of the folder gives the folder alone, as a lower bound; and the aerial picks in idleassetsd's `Aerial.sqlite`, read with `sqlite3 -readonly`.
+- **Removed by:** `sudo /bin/sh -c '[ -d "$1" ] || { echo "$1 is not a folder" >&2; exit 1; }; for t in "$2"/*/T/com.apple.idleassetsd; do if [ -d "$t" ] && [ ! -L "$t" ] && [ ! -L "${t%/*}" ]; then /usr/bin/find "$t" -ignore_readdir_race -mindepth 1 -maxdepth 1 -type f -name "CFNetworkDownload_*.tmp" -delete || [ ! -d "$t" ] || exit; fi; done; /usr/bin/find "$1" -ignore_readdir_race -type f -name "*.mov" -delete' sh '/Library/Application Support/com.apple.idleassetsd/Customer' /private/var/folders/zz`, once for the whole rule: all of it or nothing. It runs as root through `sudo`, which asks for your password in a terminal; the app leaves it for you to run there. It deletes for good: `regrow undo` cannot bring it back. regrow counts the videos in the folder before and after it runs, and the run's journal keeps what it deleted. Right before each removal, regrow runs the rule's hold check again, as the scan did, and leaves everything in place while it holds or cannot be read.
+- **Keeps:**
+  - Everything while macOS has an aerial picked to download for, or the picks cannot be read: the row is shown only, saying so. To clear the picks: `regrow aerials off`.
+  - Everything on macOS 26 and later, where the picks were not measured: the row is shown only.
+- **Comes back:** macOS downloads videos again for each aerial category picked for the wallpaper or the screen saver (on macOS 15, at least 4 per category and more every day or two), and a still wallpaper chosen later leaves them picked. The command deletes the videos in `Customer` and the downloader's temp files in root's temp folder (`/private/var/folders/zz/*/T/com.apple.idleassetsd/CFNetworkDownload_*.tmp`), some of which are the same videos under a second name: a video frees its space only once both are gone. regrow counts the videos before and after; the temp files, which only root can read, go uncounted. On macOS 26 and later regrow only shows the videos. To remove them yourself there: `sudo find ~/Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches -type f -name '*.mov' -delete`. Cost: roughly 0.5 GB of download per video, only once an aerial is picked again.
+- **Fix the cause:** Aerial video downloads (macOS 15.x and earlier). `regrow doctor` says whether it is in effect here and prints the fix; doctor itself changes nothing.
+- **Note:** Deleted for good, as root: no Trash, no undo, and `sudo` asks for your password. Offered only while macOS has no aerial picked to download; picking one in System Settings downloads its videos again.
 
 ### app-leftovers
 
@@ -1084,7 +1087,7 @@ Space your files do not add up to: snapshots, sparse disk images and purgeable s
 - **Looks at:** the size of Docker Desktop's disk image, `~/Library/Containers/com.docker.docker/Data/vms/0/data/Docker.raw` (or `Docker.qcow2`); no program runs, so it works with Docker stopped.
 - **Removed by:** never: surface-only.
 - **Comes back:** Shrinks itself after pruning (Docker.raw, 4.28+); last resort is Docker Desktop ▸ Troubleshoot ▸ Purge Data. Cost: n/a — regrow never touches this file.
-- **Fix the cause:** Docker VM memory cap. `regrow doctor` says whether it is in effect here and prints the fix; regrow changes nothing.
+- **Fix the cause:** Docker VM memory cap. `regrow doctor` says whether it is in effect here and prints the fix; doctor itself changes nothing.
 - **Note:** Why Finder still shows full — the file is sparse; only the "real" number is on disk. Pruning inside Docker (see the docker rules) lets it shrink itself.
 
 ### tm-snapshots
