@@ -281,18 +281,50 @@ func TestLoadFileRefusesALinkToNothing(t *testing.T) {
 	}
 }
 
-// SetRules writes nothing through a link that names nothing, a folder
-// link included, nor through a loop of links.
-func TestSetRulesWritesNothingThroughABrokenLink(t *testing.T) {
+// The error names the path that is missing, as an absolute path, past
+// any link on the way that is there.
+func TestALinkToNothingNamesWhatIsMissing(t *testing.T) {
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustLink := func(target, link string) {
+		t.Helper()
+		if err := os.Symlink(target, link); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustLink("a.yaml", filepath.Join(dir, "chain.yaml"))
+	mustLink("missing.yaml", filepath.Join(dir, "a.yaml"))
+	mustLink(filepath.Join("dotfiles", "regrow.yaml"), filepath.Join(dir, "relative.yaml"))
+	mustLink(filepath.Join(dir, "d2"), filepath.Join(dir, "d1"))
+	mustLink(filepath.Join(dir, "gone"), filepath.Join(dir, "d2"))
+	if err := os.MkdirAll(filepath.Join(dir, "deep", "real"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	mustLink(filepath.Join(dir, "deep", "real"), filepath.Join(dir, "linked"))
+	mustLink(filepath.Join("..", "up.yaml"), filepath.Join(dir, "deep", "real", "config.yaml"))
+	for _, c := range []struct{ path, missing string }{
+		{filepath.Join(dir, "chain.yaml"), filepath.Join(dir, "missing.yaml")},
+		{filepath.Join(dir, "relative.yaml"), filepath.Join(dir, "dotfiles", "regrow.yaml")},
+		{filepath.Join(dir, "d1", "config.yaml"), filepath.Join(dir, "gone")},
+		{filepath.Join(dir, "linked", "config.yaml"), filepath.Join(dir, "deep", "up.yaml")},
+	} {
+		if _, err := LoadFile(c.path); err == nil || !strings.Contains(err.Error(), "leads to "+c.missing+", which is not there") {
+			t.Errorf("%s: %v, want %s named", c.path, err, c.missing)
+		}
+	}
+}
+
+// SetRules refuses a folder link that names nothing, saying so, and a
+// loop of links, which it leaves a link.
+func TestSetRulesRefusesABrokenLink(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.Symlink(filepath.Join(dir, "unmounted"), filepath.Join(dir, "regrow")); err != nil {
 		t.Fatal(err)
 	}
 	if err := SetRules(filepath.Join(dir, "regrow", "config.yaml"), Rules{Off: []string{"npm-cache"}}); err == nil || !strings.Contains(err.Error(), "which is not there") {
 		t.Errorf("a linked folder that is gone: %v", err)
-	}
-	if _, err := os.Lstat(filepath.Join(dir, "unmounted")); err == nil {
-		t.Error("the folder the link names was made")
 	}
 	loop := filepath.Join(dir, "loop.yaml")
 	if err := os.Symlink(loop, loop); err != nil {

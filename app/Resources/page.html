@@ -432,7 +432,8 @@ const on = {
     askHistory();
     askRules();
   },
-  rules(e, role) { if (role === 'rules') Object.assign(S, { rules: e, rulesNote: '' }); },
+  // A change that took ends the note on one that did not; the answer to a plain rules request keeps it.
+  rules(e, role) { if (role === 'rules') Object.assign(S, { rules: e, rulesNote: e.re === S.rulesAsk ? S.rulesNote : '' }); },
   history(e, role) { if (role === 'history') S.history = e; },
   // An autotrim prune is a run of its own.
   tick(e) { S.tick = e; if (e.pruned && e.pruned.run) askHistory(); },
@@ -451,7 +452,8 @@ const on = {
     S.down = e.message || 'no reason given';
   },
   headroom(e, role) { if (role === 'scan') S.scan.headroom = e; },
-  start(e, role) { if (role === 'scan') { S.scan.id = e.scan_id; S.scan.rules = e.rules; } },
+  // The engine read config.yaml as the scan started, so the sidebar's count follows it.
+  start(e, role) { if (role === 'scan') { S.scan.id = e.scan_id; S.scan.rules = e.rules; askRules(); } },
   finding(e, role) { if (role === 'scan') S.scan.rows.push(newRow(e)); },
   summary(e, role) { if (role === 'scan') { S.scan.totals = e.totals; S.scan.exclusive = e.exclusive || {}; } },
   plan(e, role) {
@@ -487,8 +489,9 @@ const on = {
     }
   },
   error(e, role) {
-    // The rules as they stand now, for the sidebar's count; not for a rules request's own error, which would ask forever.
-    if (e.code === 'rules_failed' && role !== 'rules') askRules();
+    // The rules as they stand now, for the sidebar's count. A rules request's own error asks nothing more, since
+    // askRules waits while one is on its way: this must run before the rules branch below clears S.rulesAsk.
+    if (e.code === 'rules_failed') askRules();
     if (OUT_OF_DATE[e.code] && (role === 'first' || role === 'count' || role === 'review')) {
       S.scan.phase = 'stale';
       Object.assign(S.scan, { why: e.message || '', whyCode: e.code });
@@ -611,7 +614,7 @@ const act = {
     S.pane = el.dataset.pane;
     $('pane').scrollTop = 0;
     if (S.pane === 'stats') askHistory();
-    if (S.pane === 'rules') askRules();
+    if (S.pane === 'rules') { S.rulesNote = ''; askRules(); }
   },
   rule(el) {
     const r = S.rules && S.rules.catalog && S.rules.catalog.find((x) => x.id === el.dataset.rule);
@@ -1265,7 +1268,7 @@ function drawRules() {
         A rule turned off is off for regrow in Terminal too: both read <span class="mono">${unbroken(tilde(rs.config))}</span>${copy(rs.config, 'path')}. A change applies from the next scan.</p>
       ${rs.error ? h`<div class="note">${ICON.caution}<span>The config file does not load, so no rule runs until it does: <span class="err mono">${rs.error}</span></span></div>` : ''}
       ${rs.unknown_off && rs.unknown_off.length ? h`<div class="note">${ICON.caution}<span>The config file turns off <span class="mono">${rs.unknown_off.join(', ')}</span>, which no rule is called: a rule meant there still runs.</span></div>` : ''}
-      ${S.rulesNote ? h`<div class="note">${ICON.caution}<span>That change did not take: <span class="err mono">${S.rulesNote}</span></span></div>` : ''}</section>
+      ${!S.rulesNote ? '' : S.rulesNote === rs.error ? h`<div class="note">${ICON.caution}<span>That change did not take.</span></div>` : h`<div class="note">${ICON.caution}<span>That change did not take: <span class="err mono">${S.rulesNote}</span></span></div>`}</section>
     ${section('Preferences', '', '', [
       setting('autotrim', 'Trim the Go build cache when space is low', h`Runs <span class="mono">regrow prune go-build</span> by itself while free space is low, once one <span class="mono">regrow prune go-build --yes</span> has completed. The same switch as the menu's.${trims}`,
         at == null ? state('…') : h`${state(at ? 'on' : 'off')}${switchOf(at, 'autotrim', 'Trim the Go build cache when space is low')}`),

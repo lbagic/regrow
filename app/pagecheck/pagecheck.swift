@@ -1322,6 +1322,25 @@ struct Scenario {
             r.same(await r.js("return document.querySelector('#sw-npm-cache').getAttribute('aria-checked')") as? String ?? "", "true", "the switch, unmoved")
             await r.shoot()
         },
+        Scenario(name: "set-rules-unloaded") { r in
+            // config.yaml broke while Rules showed: a switch is refused, and the count follows the file as it now stands.
+            await results(r)
+            await r.click("#nav-rules")
+            let catalog = r.transcript.event("rules", "rules").objs("catalog")
+            let broken = "/Users/dev/.config/regrow/config.yaml: yaml: unmarshal errors: line 3: field bta not found in type config.Rules"
+            r.play.rulesUnloaded = broken
+            r.play.rulesError = broken
+            let asked = r.sent("rules").count
+            await r.click("#sw-npm-cache")
+            await r.settle()
+            r.same(r.sent("rules").count > asked, true, "the rules asked again after a switch refused")
+            r.same(await r.text("#nav-rules .fig"), "0 on", "the sidebar's count")
+            r.same(await r.text("#pane .lead h2"), "0 of \(catalog.count) rules run.", "the headline")
+            r.has(await r.text("#pane .lead"), "so no rule runs until it does", "the note on a file that does not load")
+            r.has(await r.text("#pane .lead"), "That change did not take.", "the note on the switch")
+            r.same(await r.text("#pane .lead").components(separatedBy: "field bta not found").count - 1, 1, "times the engine's reason is shown")
+            await r.shoot()
+        },
         Scenario(name: "env-failed", play: Play(environment: "the login shell gave no answer within 5 s")) { r in
             r.has(await r.text(".note"), "could not read your login shell's environment", "the notice")
             r.has(await r.text(".note"), "the login shell gave no answer within 5 s", "the notice's reason")
@@ -1658,9 +1677,29 @@ struct Scenario {
             r.same(await r.text(".tray .say").contains("out of date"), false, "a scan called out of date for a file that does not load")
             r.has(await r.text(".tray .say"), "field bta not found", "the engine's reason in the tray")
             r.same(await r.text(".top .status").contains("out of date"), false, "the top bar for a file that does not load")
+            r.has(await r.text(".top .status"), "the config file does not load", "the top bar's reason")
             r.same(r.sent("rules").count > asked, true, "the rules asked again after a refusal for a file that does not load")
             r.same(await r.text("#nav-rules .fig"), "0 on", "the sidebar's count of rules on")
             r.same(await r.text(".tray .btn"), "Scan again", "the tray's action")
+            await r.shoot()
+        },
+        Scenario(name: "rules-fixed-after-refusal") { r in
+            // A scan's start asks for the rules: once config.yaml loads again, the sidebar counts them from the scan screen.
+            let runs = r.transcript.event("rules", "rules").objs("catalog").filter { $0["runs"] as? Bool ?? false }.count
+            let broken = "/Users/dev/.config/regrow/config.yaml: yaml: unmarshal errors: line 3: field bta not found in type config.Rules"
+            await toConfirm(r)
+            await r.click("#read")
+            r.play.rulesUnloaded = broken
+            r.play.executeError = ("rules_failed", broken)
+            r.play.planError = ("rules_failed", broken)
+            await r.click("#go")
+            r.same(await r.text("#nav-rules .fig"), "0 on", "the sidebar while the file does not load")
+            r.play.rulesUnloaded = nil
+            r.play.executeError = nil
+            r.play.planError = nil
+            await r.click(".tray [data-do=scan]")
+            r.same(await r.phase(), "done", "the second scan")
+            r.same(await r.text("#nav-rules .fig"), "\(runs) on", "the sidebar once the file loads")
             await r.shoot()
         },
         Scenario(name: "stale-review") { r in

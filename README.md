@@ -161,7 +161,7 @@ rules:
   beta: true                  # run the rules still in staged rollout, as --beta-rules does
 ```
 
-A command that names a rule turned off, such as `regrow clean npm-cache`, refuses and says where it is off. `regrow rules` lists the catalog, the beta rules only with `--beta-rules` or `beta: true`, an off one marked "(off)"; an id under `off` that no rule has is named on stderr. A file that does not load, holds more than one YAML document, or is reached through a link to nothing (the file's or its folder's), stops every command that runs rules; `regrow rules` still lists them and then says why, `regrow undo` and `regrow history` run regardless, and the app keeps watching free space but runs no rule until it loads.
+A command that names a rule turned off, such as `regrow clean npm-cache`, refuses and says where it is off. `regrow rules` lists the catalog, the beta rules only with `--beta-rules` or `beta: true`, an off one marked "(off)"; an id under `off` that no rule has is named on stderr. A file that does not load, holds more than one YAML document, or is reached through a link to nothing (the file's or that of any folder above it), stops every command that runs rules; `regrow rules` still lists them and then says why, `regrow undo` and `regrow history` run regardless, and the app keeps watching free space but runs no rule until it loads.
 
 ## Working on regrow
 

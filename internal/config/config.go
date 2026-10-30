@@ -161,11 +161,11 @@ func LoadFile(path string) (Config, error) {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		if link := danglingLink(path); link != "" {
-			target, _ := os.Readlink(link)
+			target := missingTarget(link)
 			if link == path {
-				return Config{}, fmt.Errorf("%s links to %s, which is not there, so the config cannot be read", path, target)
+				return Config{}, fmt.Errorf("%s leads to %s, which is not there, so the config cannot be read", path, target)
 			}
-			return Config{}, fmt.Errorf("%s: %s links to %s, which is not there, so the config cannot be read", path, link, target)
+			return Config{}, fmt.Errorf("%s: %s leads to %s, which is not there, so the config cannot be read", path, link, target)
 		}
 		return Config{}, nil
 	}
@@ -247,4 +247,30 @@ func danglingLink(path string) string {
 			return ""
 		}
 	}
+}
+
+// missingTarget follows the links from link to the path that is not
+// there. A relative target is read against its link's real folder, as
+// the system reads it: lexically, a ".." after a linked folder would
+// name another place.
+func missingTarget(link string) string {
+	p := link
+	for range 40 {
+		target, err := os.Readlink(p)
+		if err != nil {
+			return p
+		}
+		if !filepath.IsAbs(target) {
+			dir := filepath.Dir(p)
+			if real, err := filepath.EvalSymlinks(dir); err == nil {
+				dir = real
+			}
+			target = filepath.Join(dir, target)
+		}
+		if info, err := os.Lstat(target); err != nil || info.Mode()&fs.ModeSymlink == 0 {
+			return target
+		}
+		p = target
+	}
+	return p
 }
