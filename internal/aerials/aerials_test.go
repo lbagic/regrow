@@ -882,7 +882,16 @@ func TestRunRootStopsWithSIGTERM(t *testing.T) {
 	if err := RunRoot(ctx, []string{"/bin/sh", "-c", "trap '' TERM; sleep 0.5; exit 0"}, io.Discard, io.Discard); err != nil {
 		t.Errorf("a step that exited 0 after a stop: %v, want no error", err)
 	}
+	// Only a stop wins over an exit 0: output that could not be copied
+	// still fails the step.
+	if err := RunRoot(context.Background(), []string{"/bin/sh", "-c", "printf payload"}, failingWriter{}, io.Discard); err == nil {
+		t.Error("a step whose output could not be written returned no error")
+	}
 }
+
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("no space left on device") }
 
 // fakeDaemon starts a system program under a name of its own,
 // so the root step's pgrep finds it and nothing else. With ignoreTerm it

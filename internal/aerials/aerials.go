@@ -279,7 +279,7 @@ func RunRoot(ctx context.Context, argv []string, stdout, stderr io.Writer) error
 		return fmt.Errorf("%w: %v", ErrNotRun, err)
 	}
 	err := cmd.Wait()
-	if err != nil && cmd.ProcessState != nil && cmd.ProcessState.Success() {
+	if ctx.Err() != nil && errors.Is(err, ctx.Err()) && cmd.ProcessState != nil && cmd.ProcessState.Success() {
 		// Once Cancel ran, Wait reports the stop even for an exit 0.
 		return nil
 	}
