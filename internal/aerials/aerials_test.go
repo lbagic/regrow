@@ -1053,7 +1053,7 @@ func TestOffStopsTheDownloader(t *testing.T) {
 // The administrator prompt hands the script to /bin/sh unchanged: the
 // AppleScript literal must carry quotes, backslashes and newlines.
 func TestAdminPromptQuotesTheScript(t *testing.T) {
-	script := offScript(`/tmp/a "b"\c.sqlite`, Daemon, []Pick{{Table: "Z_2ACTIVEFORUSERS", Item: 1, User: 1}})
+	script := offScript(`/tmp/a "b"\c.sqlite`, Daemon, RootLock, []Pick{{Table: "Z_2ACTIVEFORUSERS", Item: 1, User: 1}})
 	argv := AdminPrompt(`regrow "aerials"`)(script)
 	if len(argv) != 3 || argv[0] != "/usr/bin/osascript" || argv[1] != "-e" {
 		t.Fatalf("argv = %q", argv)

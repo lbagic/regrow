@@ -53,7 +53,7 @@ func runCaptured(ctx context.Context, argv []string, stdout io.Writer) error {
 	if err == nil || errors.Is(err, exec.ErrWaitDelay) {
 		return nil
 	}
-	if ctx.Err() != nil && cmd.ProcessState != nil && cmd.ProcessState.Success() {
+	if ctx.Err() != nil && errors.Is(err, ctx.Err()) && cmd.ProcessState != nil && cmd.ProcessState.Success() {
 		// Once the context is done, Wait reports it even for an exit 0.
 		return nil
 	}

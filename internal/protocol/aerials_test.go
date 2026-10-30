@@ -2,9 +2,12 @@ package protocol
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -47,12 +50,14 @@ func aerialsServer(t *testing.T, version string, root []string) (*Server, *aeria
 	t.Helper()
 	db := aerialsDB(t)
 	record := filepath.Join(t.TempDir(), "aerials.json")
+	lock := filepath.Join(t.TempDir(), "regrow-aerials.lock")
 	journal := &aerialsJournal{}
 	srv := newMachine(t).server()
 	srv.Aerials = func() *aerials.Aerials {
 		return &aerials.Aerials{
 			DB: db, Version: version, RecordPath: record, Log: journal,
-			Daemon: "regrow-test-none",
+			Daemon:   "regrow-test-none",
+			RootLock: lock,
 			Root: func(script string) []string {
 				if root != nil {
 					return root
@@ -143,4 +148,69 @@ func TestAerialsBesideATick(t *testing.T) {
 	p.expectError("a2", CodeBusy)
 	close(release)
 	p.expect("tick/t1", "done/t1")
+}
+
+// A switch stopped while its root step runs ends saying the step may
+// still finish, and keeps the record. The test holds the root lock, so
+// the step waits in its first lines until the stop has ended its shell.
+func TestAerialsSwitchStoppedMidStep(t *testing.T) {
+	srv, journal := aerialsServer(t, "15.7.7", nil)
+	dir := t.TempDir()
+	lock, started := filepath.Join(dir, "root.lock"), filepath.Join(dir, "started")
+	f, err := os.OpenFile(lock, os.O_WRONLY|os.O_CREATE, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Closing it frees the lock, and the step's perl, left waiting, exits.
+	t.Cleanup(func() { _ = f.Close() })
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		t.Fatal(err)
+	}
+	aerialsOf := srv.Aerials
+	srv.Aerials = func() *aerials.Aerials {
+		a := aerialsOf()
+		a.RootLock = lock
+		root := a.Root
+		a.Root = func(script string) []string {
+			return append([]string{"/bin/sh", "-c", `echo $$ >"$1.new" && mv "$1.new" "$1"; shift; exec "$@"`, "sh", started}, root(script)...)
+		}
+		return a
+	}
+	p := start(t, srv)
+	p.expect("hello")
+	p.send(`{"type":"aerials_switch","id":"a1","to":"off"}`)
+	pid := 0
+	for begun := time.Now(); pid == 0; time.Sleep(10 * time.Millisecond) {
+		if data, err := os.ReadFile(started); err == nil {
+			pid, _ = strconv.Atoi(strings.TrimSpace(string(data)))
+		}
+		if time.Since(begun) > waitLimit {
+			t.Fatal("the root step never started")
+		}
+	}
+	p.send(`{"type":"cancel","id":"c","target":"a1"}`)
+	for begun := time.Now(); syscall.Kill(pid, 0) == nil; time.Sleep(10 * time.Millisecond) {
+		if time.Since(begun) > waitLimit {
+			t.Fatal("the stop never ended the root step's shell")
+		}
+	}
+	_ = f.Close()
+	p.expect("aerials/a1")
+	if e := p.expectError("a1", CodeAerialsFailed); !strings.Contains(e.raw, "stopped before the root step ended; it may still finish") {
+		t.Errorf("error = %s, want the stop's words", e.raw)
+	}
+	p.expect("done/c")
+	p.send(`{"type":"aerials","id":"a2"}`)
+	got := p.expect("aerials/a2", "done/a2")[0]
+	for _, want := range []string{`"status":{"state":"on"`, `"recorded":{"cleared":`} {
+		if !strings.Contains(got.raw, want) {
+			t.Errorf("status after the stop = %s, missing %s", got.raw, want)
+		}
+	}
+	if strings.Contains(got.raw, `"restored"`) {
+		t.Errorf("status after the stop = %s, want the record kept, not restored", got.raw)
+	}
+	if len(journal.entries) != 2 || journal.entries[1].Event != oplog.EventFail {
+		t.Errorf("journal = %+v, want the off's start and fail", journal.entries)
+	}
 }
