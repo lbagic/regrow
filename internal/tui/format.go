@@ -57,6 +57,8 @@ func ActionCommand(a engine.Action) string {
 		s += "  (what runs checked again first)"
 	case engine.PreActionAppLeftoverRecheck:
 		s += "  (folder and installed apps checked again first)"
+	case engine.PreActionHoldRecheck:
+		s += "  (what holds it checked again first)"
 	default:
 		s += "  (pre: " + a.PreAction + ")"
 	}

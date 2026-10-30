@@ -121,8 +121,8 @@ func TestOwnerConflicts(t *testing.T) {
 
 // The aerial row's fix is the owner's instructions for a download that
 // eats tens of GB: the lines that stop it must not drop out of the
-// catalog unnoticed. regrow never deletes the videos, so the row and
-// the fix give the command the owner runs instead.
+// catalog unnoticed. regrow clears the picks and then deletes the
+// videos, as root and only while nothing is picked.
 func TestAerialCauseFixText(t *testing.T) {
 	catalog, err := LoadEmbedded()
 	if err != nil {
@@ -144,18 +144,15 @@ func TestAerialCauseFixText(t *testing.T) {
 	if rule == nil || fix == nil {
 		t.Fatal("aerial-wallpapers declares no aerial-downloads cause")
 	}
-	const removeOld = `sudo find "/Library/Application Support/com.apple.idleassetsd/Customer" -type f -name '*.mov' -delete`
-	const removeNew = `sudo find ~/Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches -type f -name '*.mov' -delete`
-	const removeTemp = `sudo find /private/var/folders/zz -path '*/T/com.apple.idleassetsd/CFNetworkDownload_*.tmp' -delete`
-	if rule.Risk != RiskSurfaceOnly || len(rule.NativeCommand) != 0 || rule.Sudo {
-		t.Errorf("risk %q, command %q, sudo %v; want surface-only with nothing to run", rule.Risk, rule.NativeCommand, rule.Sudo)
+	if rule.Risk != RiskCaution || !rule.Sudo || rule.Hold != HoldAerialPicks || rule.PreAction != PreActionHoldRecheck || rule.Measure != MeasureAerialVideos || rule.NativeCommand.PerItem() {
+		t.Errorf("risk %q, sudo %v, hold %q, pre_action %q, measure %q, command %q; want a caution whole-rule command as root, held while picked, rechecked and measured",
+			rule.Risk, rule.Sudo, rule.Hold, rule.PreAction, rule.Measure, rule.NativeCommand)
 	}
-	// Quoted after a colon, so a face sets each on a line of its own with
-	// a way to copy it.
-	for _, want := range []string{"on macOS 15 and earlier: `" + removeOld + "`", "On macOS 26 and later: `" + removeNew + "`", "frees nothing until that copy goes too", "(untested in this form): `" + removeTemp + "`"} {
-		if !strings.Contains(rule.Regen.Story, want) {
-			t.Errorf("the row's story does not name %q:\n%s", want, rule.Regen.Story)
-		}
+	// On macOS 26 regrow only shows the videos, so the story gives the
+	// command, quoted after a colon so a face sets it on a line of its own.
+	const removeNew = `sudo find ~/Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches -type f -name '*.mov' -delete`
+	if !strings.Contains(rule.Regen.Story, "To remove them yourself there: `"+removeNew+"`") {
+		t.Errorf("the row's story does not give %q:\n%s", removeNew, rule.Regen.Story)
 	}
 	line := func(parts ...string) bool {
 		return slices.ContainsFunc(fix, func(l string) bool {
@@ -169,23 +166,21 @@ func TestAerialCauseFixText(t *testing.T) {
 	}
 	// idleassetsd downloads for the aerials picked in its database, and
 	// a still wallpaper leaves them picked: clearing the picks, then
-	// restarting it, is what stopped the downloads on macOS 15.7.
-	const clearPicks = `sudo sqlite3 -cmd '.timeout 5000' "/Library/Application Support/com.apple.idleassetsd/Aerial.sqlite" 'BEGIN IMMEDIATE; DELETE FROM Z_2ACTIVEFORUSERS; DELETE FROM Z_3ACTIVEFORUSERS; DELETE FROM Z_1PINNEDFORUSERS; COMMIT;'`
+	// deleting the videos, is what keeps them gone on macOS 15.7.
 	for i, want := range [][]string{
-		{"still wallpaper", ": " + clearPicks},
-		{"Then stop the downloader", ": sudo killall idleassetsd"},
-		{"Then remove the videos: " + removeOld},
-		{"frees nothing until that copy goes too (untested in this form): " + removeTemp},
+		{"still wallpaper", ": regrow aerials off"},
+		{"Then delete the videos", ": regrow clean aerial-wallpapers"},
+		{"pick the same aerials again", ": regrow aerials on"},
 		{"Picking an aerial", "System Settings ▸ Wallpaper", "again"},
 	} {
 		if !line(want...) {
 			t.Errorf("no fix line with %q in:\n%s", want, strings.Join(fix, "\n"))
-		} else if i < 3 && !strings.Contains(fix[i], want[0]) {
-			t.Errorf("fix line %d is not the one with %q: clear, stop, remove, in that order:\n%s", i+1, want[0], strings.Join(fix, "\n"))
+		} else if i < 2 && !strings.Contains(fix[i], want[0]) {
+			t.Errorf("fix line %d is not the one with %q: clear, then delete, in that order:\n%s", i+1, want[0], strings.Join(fix, "\n"))
 		}
 	}
 	// A command ends its line, so what follows the colon pastes.
-	for _, cmd := range []string{clearPicks, "sudo killall idleassetsd", removeOld, removeTemp} {
+	for _, cmd := range []string{"regrow aerials off", "regrow clean aerial-wallpapers", "regrow aerials on"} {
 		if i := slices.IndexFunc(fix, func(l string) bool { return strings.Contains(l, ": "+cmd) }); i < 0 || !strings.HasSuffix(fix[i], ": "+cmd) {
 			t.Errorf("the fix line of %q does not end with it, so a pasted line runs more:\n%s", cmd, strings.Join(fix, "\n"))
 		}
@@ -195,9 +190,6 @@ func TestAerialCauseFixText(t *testing.T) {
 		if strings.Contains(l, "launchctl disable") && !strings.Contains(l, "does not stop") {
 			t.Errorf("a fix line offers launchctl disable, which does not stop the downloads: %s", l)
 		}
-	}
-	if line("regrow clean") {
-		t.Errorf("a fix line sends the owner to regrow clean, which never deletes the videos:\n%s", strings.Join(fix, "\n"))
 	}
 }
 

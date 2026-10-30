@@ -33,6 +33,10 @@ Usage:
   regrow doctor [--json]          runaway bugs, causes to fix, phantom space; read-only
   regrow tick [--autotrim]        one headroom sample: free space, forecast, alerts
   regrow prune go-build [--yes]   delete old Go build cache entries; dry run without --yes
+  regrow aerials [status|off|on]  macOS's aerial video downloads: status reads the
+                                  picks they follow; off clears them and stops the
+                                  downloader, asking for your password; on puts
+                                  them back (macOS 15 and earlier)
   regrow undo [run-id]            restore the newest (or given) run's Trash moves
   regrow history [--json]         past runs from the oplog
   regrow rules [--json]           list the rule catalog
@@ -91,7 +95,7 @@ func parseArgs(args []string) (cmd string, opts options, ids []string, help bool
 	fs := newFlagSet(cmd, &opts)
 	err = fs.Parse(args)
 	ids = fs.Args()
-	if err == nil && cmd == "prune" {
+	if err == nil && (cmd == "prune" || cmd == "aerials") {
 		ids, err = interspersedArgs(fs, ids)
 	}
 	if err != nil {
@@ -170,6 +174,8 @@ func run(args []string) error {
 		return runTick(host, catalog, opts)
 	case "prune":
 		return runPrune(host, catalog, ids, opts)
+	case "aerials":
+		return runAerials(host, ids, opts.asJSON)
 	case "engine":
 		return runEngine(host, catalog, opts)
 	case "undo":

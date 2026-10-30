@@ -317,7 +317,8 @@ func VerifyGoCache(dir string) error {
 	return nil
 }
 
-// CacheUsage counts cache entries and their physical bytes.
+// CacheUsage counts files, such as cache entries, and their physical
+// bytes: what a prune or a measured command can delete.
 type CacheUsage struct {
 	Files int
 	Bytes int64

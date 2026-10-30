@@ -1,23 +1,43 @@
 # 4K aerial screensaver/wallpaper videos — full set ~64GB. Path moved
 # between Sequoia and Tahoe (docs/research/02 §10, §14): idleassetsd
 # system dir through macOS 15, wallpaper.agent container from 26.
-# A raw `find … -delete` as root has no Trash and no undo, which
-# invariants 2 and 4 keep regrow from running: surface-only, and the
-# row gives the command to run yourself. The aerial-videos query
-# (internal/scanner/tool_aerial.go) sizes the folder in two parts,
-# since a video the downloader's temp folder also links frees nothing
-# when only the folder's copy goes.
+# The command deletes as root with no Trash and no undo, an exception
+# to invariants 2 and 4 (decisions log, 2026-10-29), so measure counts
+# the videos before and after. It names the macOS 15 folders only: on
+# macOS 26 the aerial-picks hold keeps the row shown only. The loop
+# lists only each account's T/com.apple.idleassetsd, since root cannot
+# list some other folders under /private/var/folders/zz (data vaults)
+# and a find that meets one fails; it skips a T or com.apple.idleassetsd
+# that is a link, which another account could make, so neither leads
+# it out of zz, and one gone by the time find reads it. The
+# aerial-videos query (internal/scanner/tool_aerial.go) sizes the
+# folder in two parts, since a video the downloader's temp folder also
+# links frees nothing when only the folder's copy goes; the command
+# deletes both.
 id: aerial-wallpapers
 title: Aerial wallpaper videos
 category: macos
-risk: surface-only
+risk: caution
 tool_query: aerial-videos
-note: "The videos come back while an aerial is picked for the wallpaper or the screen saver, even after a still wallpaper replaced it. To see how to stop the downloads: `regrow doctor`."
-scans: "the files in `/Library/Application Support/com.apple.idleassetsd/Customer` (macOS 15 and earlier) or `~/Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches` (macOS 26 and later), with each file's link count; a file that has links outside the folder is counted apart, and a walk that misses part of the folder gives the folder alone, as a lower bound"
+hold: aerial-picks
+pre_action: hold-recheck
+measure: aerial-videos
+native_command:
+  - /bin/sh
+  - -c
+  - '[ -d "$1" ] || { echo "$1 is not a folder" >&2; exit 1; }; for t in "$2"/*/T/com.apple.idleassetsd; do if [ -d "$t" ] && [ ! -L "$t" ] && [ ! -L "${t%/*}" ]; then /usr/bin/find "$t" -ignore_readdir_race -mindepth 1 -maxdepth 1 -type f -name "CFNetworkDownload_*.tmp" -delete || [ ! -d "$t" ] || exit; fi; done; /usr/bin/find "$1" -ignore_readdir_race -type f -name "*.mov" -delete'
+  - sh
+  - /Library/Application Support/com.apple.idleassetsd/Customer
+  - /private/var/folders/zz
+sudo: true
+note: "Deleted for good, as root: no Trash, no undo, and `sudo` asks for your password. Offered only while macOS has no aerial picked to download; picking one in System Settings downloads its videos again."
+scans: "the files in `/Library/Application Support/com.apple.idleassetsd/Customer` (macOS 15 and earlier) or `~/Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches` (macOS 26 and later), with each file's link count; a file that has links outside the folder is counted apart, and a walk that misses part of the folder gives the folder alone, as a lower bound; and the aerial picks in idleassetsd's `Aerial.sqlite`, read with `sqlite3 -readonly`"
+keeps:
+  - "everything while macOS has an aerial picked to download for, or the picks cannot be read: the row is shown only, saying so. To clear the picks: `regrow aerials off`"
+  - "everything on macOS 26 and later, where the picks were not measured: the row is shown only"
 regen:
-  story: 'macOS downloads videos again for each aerial category picked for the wallpaper or the screen saver (on macOS 15, at least 4 per category and more every day or two), and a still wallpaper chosen later leaves them picked. To remove the videos yourself on macOS 15 and earlier: `sudo find "/Library/Application Support/com.apple.idleassetsd/Customer" -type f -name ''*.mov'' -delete`. On macOS 26 and later: `sudo find ~/Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches -type f -name ''*.mov'' -delete`. A video the downloader''s temp folder also holds frees nothing until that copy goes too, and macOS 15 keeps those copies in a folder only root can read. To remove them (untested in this form): `sudo find /private/var/folders/zz -path ''*/T/com.apple.idleassetsd/CFNetworkDownload_*.tmp'' -delete`.'
-  cost: n/a — regrow never deletes here; roughly 0.5 GB of download per video macOS fetches again
-sudo: false
+  story: 'macOS downloads videos again for each aerial category picked for the wallpaper or the screen saver (on macOS 15, at least 4 per category and more every day or two), and a still wallpaper chosen later leaves them picked. The command deletes the videos in `Customer` and the downloader''s temp files in root''s temp folder (`/private/var/folders/zz/*/T/com.apple.idleassetsd/CFNetworkDownload_*.tmp`), some of which are the same videos under a second name: a video frees its space only once both are gone. regrow counts the videos before and after; the temp files, which only root can read, go uncounted. On macOS 26 and later regrow only shows the videos. To remove them yourself there: `sudo find ~/Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches -type f -name ''*.mov'' -delete`.'
+  cost: roughly 0.5 GB of download per video, only once an aerial is picked again
 # Seen on macOS 15.7, where idleassetsd is the downloader; the row
 # stays off the Tahoe path until the same is seen there.
 causes:
@@ -26,14 +46,13 @@ causes:
     title: Aerial video downloads
     story: idleassetsd downloads aerial videos for the categories, subcategories and videos picked for the wallpaper or the screen saver, which its database Aerial.sqlite keeps; at least 4 videos per picked category, and about 2 more every day or two, at roughly 0.5 GB each. Choosing a still wallpaper later leaves the picks in place, so deleting the videos only starts a refill. launchd starts it at each login and whenever a wallpaper or screen saver setting changes, whether or not it is disabled. Seen on macOS 15.7 — 32 videos, 20 GB, for 4 categories picked.
     fix:
-      - "Clear the picks it downloads for, which a still wallpaper leaves in place (the table names are macOS 15.7's; where they differ, sqlite3 changes nothing): sudo sqlite3 -cmd '.timeout 5000' \"/Library/Application Support/com.apple.idleassetsd/Aerial.sqlite\" 'BEGIN IMMEDIATE; DELETE FROM Z_2ACTIVEFORUSERS; DELETE FROM Z_3ACTIVEFORUSERS; DELETE FROM Z_1PINNEDFORUSERS; COMMIT;'"
-      - "Then stop the downloader, which keeps the picks it read when it started; launchd starts a new one when it is next asked: sudo killall idleassetsd"
-      - "Then remove the videos: sudo find \"/Library/Application Support/com.apple.idleassetsd/Customer\" -type f -name '*.mov' -delete"
-      - "A video the downloader's temp folder also holds frees nothing until that copy goes too (untested in this form): sudo find /private/var/folders/zz -path '*/T/com.apple.idleassetsd/CFNetworkDownload_*.tmp' -delete"
+      - "Clear the picks it downloads for, which a still wallpaper leaves in place, and stop it; regrow records them first and asks for your password once: regrow aerials off"
+      - "Then delete the videos and the downloader's temp copies of them, asking for your password: regrow clean aerial-wallpapers"
+      - "To pick the same aerials again later: regrow aerials on"
       - "Picking an aerial in System Settings ▸ Wallpaper picks it again, and the downloads start again for it. sudo launchctl disable system/com.apple.idleassetsd does not stop them: launchd starts the downloader on demand while it is disabled."
 fixture:
   items:
     - path: /Library/Application Support/com.apple.idleassetsd/Customer
       bytes: 23000000000
-    - label: "16 files a link outside the folder also holds, such as the downloader's temp copies: deleting them here frees nothing"
+    - label: "16 files a link outside the folder also holds, such as the downloader's temp copies: each frees its space only once that link goes too"
       bytes: 11000000000
