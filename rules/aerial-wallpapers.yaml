@@ -11,9 +11,9 @@
 # that is a link, which another account could make, so neither leads
 # it out of zz, and one gone by the time find reads it. The
 # aerial-videos query (internal/scanner/tool_aerial.go) sizes the
-# folder in two parts, since a video the downloader's temp folder also
-# links frees nothing when only the folder's copy goes; the command
-# deletes both.
+# folder's videos, the .mov files find deletes, in two parts, since a
+# video the downloader's temp folder also links frees nothing when only
+# the folder's copy goes; the command deletes both.
 id: aerial-wallpapers
 title: Aerial wallpaper videos
 category: macos
@@ -31,7 +31,7 @@ native_command:
   - /private/var/folders/zz
 sudo: true
 note: "Deleted for good, as root: no Trash, no undo, and `sudo` asks for your password. Offered only while macOS has no aerial picked to download; picking one in System Settings downloads its videos again."
-scans: "the files in `/Library/Application Support/com.apple.idleassetsd/Customer` (macOS 15 and earlier) or `~/Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches` (macOS 26 and later), with each file's link count; a file that has links outside the folder is counted apart, and a walk that misses part of the folder gives the folder alone, as a lower bound; and the aerial picks in idleassetsd's `Aerial.sqlite`, read with `sqlite3 -readonly`"
+scans: "the videos, the `.mov` files the command deletes, in `/Library/Application Support/com.apple.idleassetsd/Customer` (macOS 15 and earlier) or `~/Library/Containers/com.apple.wallpaper.agent/Data/Library/Caches` (macOS 26 and later), with each one's link count; the folder's other files, macOS's catalogue of the videos, stay and are not counted, so a folder with no video is no row; a video that has links outside the folder is counted apart, and a walk that misses part of the folder gives the folder alone, as a lower bound; and, while it holds a video, the aerial picks in idleassetsd's `Aerial.sqlite`, read with `sqlite3 -readonly`"
 keeps:
   - "everything while macOS has an aerial picked to download for, or the picks cannot be read: the row is shown only, saying so. To clear the picks: `regrow aerials off`"
   - "everything on macOS 26 and later, where the picks were not measured: the row is shown only"

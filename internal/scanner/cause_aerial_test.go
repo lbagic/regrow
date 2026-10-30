@@ -178,8 +178,9 @@ func TestAerialWallpapersHeldWhilePicked(t *testing.T) {
 }
 
 // Deleting a video frees its bytes only when no link outside the folder
-// holds the file too. The row sizes the folder by what deleting frees,
-// and the files held elsewhere apart, so the two add up to the folder.
+// holds the file too. The row sizes the folder's videos by what deleting
+// them frees, and the videos held elsewhere apart; the catalogue beside
+// them, which the command leaves, counts in neither.
 func TestAerialVideosSplitByLinks(t *testing.T) {
 	host := engine.Host{OS: "darwin", Version: "15.7.7", Root: t.TempDir()}
 	host.Home = filepath.Join(host.Root, "Users/dev")
@@ -190,6 +191,9 @@ func TestAerialVideosSplitByLinks(t *testing.T) {
 	writeFile(t, single, 1<<20)
 	writeFile(t, heldOutside, 3<<20)
 	writeFile(t, twiceInside, 2<<20)
+	writeFile(t, filepath.Join(customer, "entries.json"), 130_000)
+	writeFile(t, filepath.Join(customer, "resources.tar"), 2_700_000)
+	writeFile(t, filepath.Join(customer, "4KSDR", "c.MOV"), 1<<20)
 	temp := filepath.Join(host.Root, "private/var/folders/zz/x/T/com.apple.idleassetsd")
 	if err := os.MkdirAll(temp, 0o755); err != nil {
 		t.Fatal(err)
@@ -207,12 +211,6 @@ func TestAerialVideosSplitByLinks(t *testing.T) {
 		}
 		return physicalSize(fi)
 	}
-	// DirSize counts every link: c twice, b once.
-	whole, err := DirSize(context.Background(), customer)
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	items, err := (&aerialVideos{w: testWalker(), host: host}).Items(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -221,8 +219,8 @@ func TestAerialVideosSplitByLinks(t *testing.T) {
 		t.Fatalf("items %+v, want the folder and the files held outside it", items)
 	}
 	folder, held := items[0], items[1]
-	if folder.Path != customer || folder.Bytes != whole.Bytes-size(heldOutside)-size(twiceInside) {
-		t.Errorf("folder item %+v, want %s with %d bytes", folder, customer, whole.Bytes-size(heldOutside)-size(twiceInside))
+	if want := size(single) + size(twiceInside); folder.Path != customer || folder.Bytes != want {
+		t.Errorf("folder item %+v, want %s with %d bytes, a's and c's once", folder, customer, want)
 	}
 	if held.Path != "" || held.Bytes != size(heldOutside) || !strings.HasPrefix(held.Label, "1 file a link outside the folder also holds") {
 		t.Errorf("held item %+v, want b.mov's %d bytes with no path", held, size(heldOutside))
@@ -236,8 +234,18 @@ func TestAerialVideosSplitByLinks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(items) != 1 || items[0].Bytes != whole.Bytes-size(twiceInside) {
-		t.Errorf("items %+v, want the folder alone with %d bytes", items, whole.Bytes-size(twiceInside))
+	if want := size(single) + size(heldOutside) + size(twiceInside); len(items) != 1 || items[0].Bytes != want {
+		t.Errorf("items %+v, want the folder alone with %d bytes", items, want)
+	}
+
+	// With the videos deleted, the catalogue left is no row.
+	for _, video := range []string{single, heldOutside, twiceInside, filepath.Join(customer, "4KSDR", "c-copy.mov")} {
+		if err := os.Remove(video); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if items, err := (&aerialVideos{w: testWalker(), host: host}).Items(context.Background()); err != nil || len(items) != 0 {
+		t.Errorf("with only the catalogue left: items %+v, err %v; want nothing", items, err)
 	}
 
 	// macOS 26 keeps them in the wallpaper agent's container.
@@ -331,12 +339,8 @@ func TestAerialVideosPartialWalk(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	whole, err := DirSize(context.Background(), customer)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := whole.Bytes - physicalSize(fi); items[0].Bytes != want {
-		t.Errorf("folder bytes %d, want %d: the file whose other link went unread counts nowhere", items[0].Bytes, want)
+	if items[0].Bytes != 0 {
+		t.Errorf("folder bytes %d, want 0: the video whose other link went unread (%d bytes) counts nowhere", items[0].Bytes, physicalSize(fi))
 	}
 }
 

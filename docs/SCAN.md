@@ -30,7 +30,7 @@ A scan starts these programs, each read-only. A program that is not installed me
 | `tmutil listlocalsnapshots /` | local Time Machine snapshots |
 | `osascript -l JavaScript` | asks macOS for free space with and without purgeable space; it reads two volume values and sends no Apple Event |
 | `docker system df -v`, `docker container inspect`, `docker volume inspect`, `docker image inspect` | Docker's containers, images, volumes and build cache, from the daemon your current docker context names; the container query asks for id, name, state, times, mounts, labels, and image name and id, never the environment |
-| `/usr/bin/sqlite3 -readonly … "/Library/Application Support/com.apple.idleassetsd/Aerial.sqlite"` | on macOS 15 and earlier, once the aerial wallpaper folder holds files: the aerials picked for downloading, which keep the videos shown only while any is picked |
+| `/usr/bin/sqlite3 -readonly … "/Library/Application Support/com.apple.idleassetsd/Aerial.sqlite"` | on macOS 15 and earlier, once the aerial wallpaper folder holds a video: the aerials picked for downloading, which keep the videos shown only while any is picked |
 
 With `--beta-rules`, also:
 

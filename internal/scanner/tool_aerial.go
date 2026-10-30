@@ -16,10 +16,11 @@ import (
 // The aerial videos macOS downloads for the wallpaper and the screen
 // saver. Deleting a video frees its bytes only when no other link holds
 // the file, and on macOS 15 the downloader's finished downloads in its
-// root-only temp folder can be such links. The query sizes the folder
-// in two items, what deleting its files frees and the files a link
-// outside it also holds. Link counts are read for this rule alone:
-// elsewhere sizes stay path-unique.
+// root-only temp folder can be such links. The query sizes the folder's
+// videos, the files the row's command deletes there, in two items: what
+// deleting them frees, and the videos a link outside it also holds. The
+// folder's other files, its catalogue, stay and count nowhere. Link
+// counts are read for this rule alone: elsewhere sizes stay path-unique.
 
 // aerialPathEntries are the folders by macOS release: idleassetsd's
 // through macOS 15, the wallpaper agent's container from 26.
@@ -66,19 +67,21 @@ type linkedFile struct {
 	nlink, seen uint64
 }
 
-// aerialFolder measures one folder: an item for the folder holding what
-// deleting its files frees, and one for the files a link outside the
-// folder also holds, when there are any and the walk read the whole
-// folder. A folder that refuses is an item with Partial set; an absent
-// one is nothing.
+// aerialFolder measures one folder by its videos: an item for what
+// deleting them frees, and one for the videos a link outside the folder
+// also holds, when there are any and the walk read the whole folder. A
+// folder that refuses is an item with Partial set; an absent one, or
+// one the walk read in full and found no video in, is nothing.
 func aerialFolder(ctx context.Context, w *walker, dir string) ([]engine.Item, error) {
 	var (
 		mu     sync.Mutex
 		closed bool
+		videos int
+		single int64
 		linked = map[uint64]*linkedFile{}
 	)
 	u, found, err := w.usageSeeing(ctx, dir, func(_ string, e fs.DirEntry) {
-		if !e.Type().IsRegular() {
+		if !isAerialVideo(e) {
 			return
 		}
 		fi, err := e.Info()
@@ -86,12 +89,14 @@ func aerialFolder(ctx context.Context, w *walker, dir string) ([]engine.Item, er
 			return
 		}
 		st, ok := fi.Sys().(*syscall.Stat_t)
-		if !ok || st.Nlink < 2 {
-			return
-		}
 		mu.Lock()
 		defer mu.Unlock()
 		if closed {
+			return
+		}
+		videos++
+		if !ok || st.Nlink < 2 {
+			single += physicalSize(fi)
 			return
 		}
 		lf := linked[st.Ino]
@@ -107,18 +112,16 @@ func aerialFolder(ctx context.Context, w *walker, dir string) ([]engine.Item, er
 	switch {
 	case err != nil:
 		return nil, err
-	case !found:
+	case !found, videos == 0 && !u.Partial:
 		return nil, nil
 	}
-	// The walk counted a file once for each link it met; deleting the
-	// folder frees one whose links all lie inside it, once, and none of
-	// the others. A walk that missed part of the folder cannot tell an
-	// unseen link inside from one outside: such files count nowhere,
-	// and the folder's figure stays a lower bound.
-	frees, held := u.Bytes, int64(0)
+	// Deleting the videos frees one whose links all lie among them, once,
+	// and none of the others. A walk that missed part of the folder
+	// cannot tell an unseen link inside from one outside: such files
+	// count nowhere, and the folder's figure stays a lower bound.
+	frees, held := single, int64(0)
 	files := 0
 	for _, lf := range linked {
-		frees -= lf.bytes * int64(lf.seen)
 		switch {
 		case lf.seen >= lf.nlink:
 			frees += lf.bytes
@@ -136,6 +139,12 @@ func aerialFolder(ctx context.Context, w *walker, dir string) ([]engine.Item, er
 		items = append(items, engine.Item{Label: label, Bytes: held})
 	}
 	return items, nil
+}
+
+// isAerialVideo is a file the row's command deletes in an aerial folder:
+// its find matches -name "*.mov", case and all.
+func isAerialVideo(e fs.DirEntry) bool {
+	return e.Type().IsRegular() && strings.HasSuffix(e.Name(), ".mov")
 }
 
 // MeasureAerialVideos counts the videos in host's aerial folders, the
@@ -156,7 +165,7 @@ func MeasureAerialVideos(ctx context.Context, host engine.Host) (engine.CacheUsa
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			if !e.Type().IsRegular() || !strings.HasSuffix(e.Name(), ".mov") {
+			if !isAerialVideo(e) {
 				return nil
 			}
 			fi, err := e.Info()
