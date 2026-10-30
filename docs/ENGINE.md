@@ -22,7 +22,7 @@ Protocol version: **1**.
 
 1. The engine starts and writes `hello` before it reads anything.
 2. The peer sends requests. Each request gets exactly one terminal event: `done` or `error`, with `re` set to the request's `id`.
-3. Only one **scan, execute or tick** is in flight at a time. Another one sent meanwhile is refused with `error{code:"busy"}` and changes nothing. `plan`, `cancel` and `history` are answered at any time.
+3. Only one **scan, execute or tick** is in flight at a time. Another one sent meanwhile is refused with `error{code:"busy"}` and changes nothing. `plan`, `cancel`, `history`, `rules` and `set_rules` are answered at any time.
 4. When stdin ends, or the process gets SIGINT or SIGTERM, the engine shuts down: a scan in flight is canceled, an execute finishes the action it is running, journals it and stops there, and a tick runs to its end. It waits for the execute or the tick however long it takes, and for a canceled scan up to 5 s from the start of the shutdown; for a `history` being read it waits as long, or until the execute or tick ends if that is later. Each that ends in that time writes its terminal event; a scan still going, a `cancel` waiting on it, or a `history` still going gets none. A peer that stopped reading is given 5 s more to read what is queued, and what is left then is dropped. Then the engine exits 0. A peer that cannot wait out a hung steward command sends SIGTERM twice: the first signal asks for the clean stop, the second kills the engine at once.
 
 Request ids are the peer's own; the engine echoes them and does not check that they are unique.
@@ -37,6 +37,8 @@ Request ids are the peer's own; the engine echoes them and does not check that t
 | `cancel` | `id`, `target` | `done`, once `target` has ended |
 | `tick` | `id`, `autotrim` (optional, default `false`) | `tick`, then `done`; or `error` |
 | `history` | `id` | `history`, then `done`; or `error` |
+| `rules` | `id` | `rules`, then `done`; or `error` |
+| `set_rules` | `id`, and `rule` with `off`, or `beta` | `rules`, then `done`; or `error` |
 
 ### scan
 
@@ -186,6 +188,23 @@ What regrow has done on this Mac, read from the oplog and the headroom history, 
 
 A run counts as `regrow history` counts it: an action once its done line is in the journal, a prune or a measured command (the aerial videos' delete) at what it deleted, any other action at its planned size; a failed or cut-short action, and a move `regrow undo` put back, counts nothing. Its fields: `id`; `start`; `done`, `failed` and `undone`, counts of actions; `restorable`, the moves `regrow undo` can still put back; `prune`, true when every action was a prune (autotrim's or `regrow prune`'s); its bytes split by where the space went, as the run's summary splits them: `frees_now` (commands and prunes), `after_trash` (moved to the Trash), `staged` (moved to regrow staging, Finder being unavailable) and `exported` (a docker volume removed after its export); and `rules`, rule id → bytes. A journal that cannot be read fails the request with `history_failed`, since the journal is never read past a bad line.
 
+### rules and set_rules
+
+```json
+{"type":"rules","id":"r1"}
+{"type":"set_rules","id":"r2","rule":"npm-cache","off":true}
+{"type":"set_rules","id":"r3","beta":true}
+```
+
+The engine runs the whole catalog as `~/.config/regrow/config.yaml`'s `rules:` says, read again as each scan or tick starts: `off`, the rules it does not look at, and `beta`, whether the rules still in staged rollout run. `--beta-rules` runs them whatever the file says. `set_rules` turns one rule off or on, or the beta rules, by rewriting that key alone and keeping the rest of the file; a change applies from the next scan, and the scan held keeps its findings, but a `plan` or `execute` against it is refused with `rules_changed` while it holds findings of a rule that no longer runs. While the file does not load, from the start or since an edit, no rule runs: a scan, and a `plan` or `execute` against the scan held, fail with `rules_failed`, and a tick with `autotrim` samples and then fails with `tick_failed`, having pruned nothing.
+
+| Event | Fields |
+|---|---|
+| `rules` | `catalog`: every rule of the catalog, beta ones included, each as `regrow rules --json` prints it plus `off` (the file turns it off) and `runs` (not off, and not beta while the beta rules are off); `beta`, the file's switch; `beta_flag`, true when the engine was started with `--beta-rules`; `config`, the file's path; `error`, present when the file does not load, no rule then running, `off` and `beta` as it last loaded, neither set if it has not loaded since the engine started, and `unknown_off` absent; `unknown_off`, the ids `off` names that no rule has, absent when none |
+| `done` | — |
+
+`set_rules` carries `rule` with `off`, or `beta`, never both: anything else is `bad_request`. A rule the catalog lacks, or a file that does not load, fails it with `rules_failed`, and the file is left as it was.
+
 ## hello
 
 ```json
@@ -212,6 +231,8 @@ A run counts as `regrow history` counts it: an action once its done line is in t
 | `unknown_plan`, `plan_expired`, `execute_failed` | see execute |
 | `autotrim_locked`, `tick_failed` | see tick |
 | `history_failed` | see history |
+| `rules_failed` | see rules and set_rules; also a scan, plan or execute while the rules file does not load |
+| `rules_changed` | a plan or execute against a scan holding findings of a rule that no longer runs; see rules and set_rules |
 
 `message` is for people; peers branch on `code`. An `unmatched` error also lists the selectors in `unmatched`, and an `execute_failed` that ran something carries its `result`.
 

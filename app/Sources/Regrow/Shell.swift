@@ -24,6 +24,7 @@ final class Shell: ObservableObject {
             UserDefaults.standard.set(autotrim, forKey: Self.autotrimKey)
             log("autotrim turned \(autotrim ? "on" : "off")")
             watch?.tickNow()
+            readSettings()
         }
     }
 
@@ -223,7 +224,7 @@ final class Shell: ObservableObject {
         }
         let read = WindowSettings(
             loginItem: loginItemState, notifications: notifications, finder: finder, log: config.log.path,
-            staging: stateDirectory?.appendingPathComponent("staging").path)
+            staging: stateDirectory?.appendingPathComponent("staging").path, autotrim: autotrim)
         guard read != settings else { return }
         settings = read
         if pageReady {
@@ -582,6 +583,8 @@ final class Shell: ObservableObject {
             chooseLoginItem(.openSettings)
         case "notification-settings":
             openNotificationSettings()
+        case "autotrim-on", "autotrim-off":
+            autotrim = name == "autotrim-on"
         case "automation-settings":
             log("opening Automation settings")
             if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation") {
