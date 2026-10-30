@@ -1,6 +1,6 @@
 # Design
 
-The look of regrow's window (`app/Resources/page.html`): a sidebar of its sections; the scan, with the findings, the plan, the confirm step, the run and its result; Stats, what regrow has done on this Mac; and General, the app's start, grants and whereabouts. The scan is a reading list: the consequence as a headline, the safe findings folded into one line, and each decision that is the owner's as a short text with its size drawn beside it.
+The look of regrow's window (`app/Resources/page.html`): a sidebar of its sections; the scan, with the findings, the plan, the confirm step, the run and its result; Stats, what regrow has done on this Mac; General, the app's start, grants and whereabouts; and Rules, every rule and which of them run. The scan is a reading list: the consequence as a headline, the safe findings folded into one line, and each decision that is the owner's as a short text with its size drawn beside it.
 
 ## Tokens
 
@@ -64,7 +64,7 @@ A size is the figure and its unit set apart: the unit at regular weight in `--in
 
 ## The sidebar
 
-The name, serif 600 17 in the top bar's 42px; one 30px line per section: a 14px icon, the name in sans 13, and on the right, sans 12 `--ink-2`, what needs you there: "scanning" or "running" beside Scan while it is busy, "stopped" while the engine is down, what runs have freed beside Stats, the caution icon and how many grants are off beside General. "Settings", sans 600 11 in capitals and `--ink-3`, heads the sections that set the app up. The current section is filled `--accent-soft`, its name `--ink` 650, its icon `--accent`. At the foot: free space (sans 650 15) of the total, the disk meter, and the forecast in words. Another section and back leaves the scan as it was, scrolled where it was.
+The name, serif 600 17 in the top bar's 42px; one 30px line per section: a 14px icon, the name in sans 13, and on the right, sans 12 `--ink-2`, what needs you there: "scanning" or "running" beside Scan while it is busy, "stopped" while the engine is down, what runs have freed beside Stats, how many rules run beside Rules, the caution icon and how many grants are off beside General. "Settings", sans 600 11 in capitals and `--ink-3`, heads the sections that set the app up. The current section is filled `--accent-soft`, its name `--ink` 650, its icon `--accent`. At the foot: free space (sans 650 15) of the total, the disk meter, and the forecast in words. Another section and back leaves the scan as it was, scrolled where it was.
 
 ## The page, top to bottom
 
@@ -119,6 +119,14 @@ Startup, Permissions, About. A setting is a row: on the left its name (sans 650 
 
 A grant macOS did not report, Full Disk Access or Control of Finder "unknown", is said so and not counted as off.
 
+## Rules
+
+From the engine's `rules`. The headline counts the rules that run of all; under it, what the beta rules are, the config file both the app and `regrow` in Terminal read (its path with Copy), and that a change applies from the next scan. A file that no longer loads is a notice, and so is a change that did not take.
+
+- **Preferences**: autotrim, the menu's switch; Scan beta rules, a switch, or "on, by --beta-rules" with none.
+- **The filter**: a search field and All, On, Off, Beta with their counts; it hides rows in place.
+- **A section per category**, the catalog's order: each rule a compact setting row, its title (sans 650 13) and tags for its risk ("safe to clear", "your call", "only shown") and "beta"; under it, where it looks and the first sentence of its story, in 12. On the right, what the last scan found for it, "off", or "beta, not scanned", and its switch, greyed while the beta rules are off for a beta rule. A switch moves when the engine says the change held.
+
 ## Wording
 
 - Sizes as `engine.HumanBytes` prints them.
@@ -136,4 +144,4 @@ The menu bar item is the drive symbol and the free space. Its menu is native, dr
 
 ## Checking a change
 
-`just page-check` draws every state through WebKit, the engine the app's web view uses, at 1096×640, from the recorded engine transcript, and writes a PNG of each: results, plan, confirm, Stats and General in light and dark, every other state in light. Hold each against this file.
+`just page-check` draws every state through WebKit, the engine the app's web view uses, at 1096×640, from the recorded engine transcript, and writes a PNG of each: results, plan, confirm, Stats, General and Rules in light and dark, every other state in light. Hold each against this file.

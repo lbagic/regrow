@@ -22,7 +22,7 @@ Protocol version: **1**.
 
 1. The engine starts and writes `hello` before it reads anything.
 2. The peer sends requests. Each request gets exactly one terminal event: `done` or `error`, with `re` set to the request's `id`.
-3. Only one **scan, execute, tick or aerials switch** is in flight at a time. Another one sent meanwhile is refused with `error{code:"busy"}` and changes nothing. `plan`, `cancel`, `history` and `aerials` are answered at any time.
+3. Only one **scan, execute, tick or aerials switch** is in flight at a time. Another one sent meanwhile is refused with `error{code:"busy"}` and changes nothing. `plan`, `cancel`, `history`, `aerials`, `rules` and `set_rules` are answered at any time.
 4. When stdin ends, or the process gets SIGINT or SIGTERM, the engine shuts down: a scan in flight is canceled, an execute finishes the action it is running, journals it and stops there, a tick runs to its end, and an aerials switch stops as a cancel stops it (below): a root step the password has already started may still run to its end. It waits for the execute, the tick or the aerials switch however long it takes, and for a canceled scan up to 5 s from the start of the shutdown; for a `history` being read it waits as long, or until the execute, the tick or the aerials switch ends if that is later. Each that ends in that time writes its terminal event; a scan still going, a `cancel` waiting on it, or a `history` still going gets none. A peer that stopped reading is given 5 s more to read what is queued, and what is left then is dropped. Then the engine exits 0. A peer that cannot wait out a hung steward command sends SIGTERM twice: the first signal asks for the clean stop, the second kills the engine at once.
 
 Request ids are the peer's own; the engine echoes them and does not check that they are unique.
@@ -39,6 +39,8 @@ Request ids are the peer's own; the engine echoes them and does not check that t
 | `history` | `id` | `history`, then `done`; or `error` |
 | `aerials` | `id` | `aerials`, then `done`; or `error` |
 | `aerials_switch` | `id`, `to` (`off` or `on`) | `aerials`, then `done`; or `aerials`, then `error`; or `error` alone when it is refused: a `to` that is neither, busy, or an engine that cannot change the picks |
+| `rules` | `id` | `rules`, then `done`; or `error` |
+| `set_rules` | `id`, and `rule` with `off`, or `beta` | `rules`, then `done`; or `error` |
 
 ### scan
 
@@ -206,6 +208,23 @@ macOS's aerial video downloads, as `regrow aerials` reads and switches them. `ae
 
 Errors: `aerials_failed`, with `message` saying why: the state is not `on` or `off`, the password prompt was canceled (nothing changed), the switch was stopped before its root step started (nothing changed) or before it ended, the root step changed nothing or failed (its exit status, which `osascript` gives only in its error text, decides the record as in a terminal), the record of the picks could not be read or written, the record names no pick regrow can put back, the picks could not be read after `on` put them back, another `regrow aerials off` or `on` is running (nothing changed), the root step could not take the root lock within 30 s, which an earlier one may still hold (the root step changed nothing), the journal could not be written, or this engine cannot read or change the picks.
 
+### rules and set_rules
+
+```json
+{"type":"rules","id":"r1"}
+{"type":"set_rules","id":"r2","rule":"npm-cache","off":true}
+{"type":"set_rules","id":"r3","beta":true}
+```
+
+The engine runs the whole catalog as `~/.config/regrow/config.yaml`'s `rules:` says, read again as each scan or tick starts: `off`, the rules it does not look at, and `beta`, whether the rules still in staged rollout run. `--beta-rules` runs them whatever the file says. `set_rules` turns one rule off or on, or the beta rules, by rewriting that key alone and keeping the rest of the file; a change applies from the next scan, and the scan held keeps its findings, but a `plan` or `execute` against it is refused with `rules_changed` while it holds findings of a rule that no longer runs. While the file does not load, from the start or since an edit, no rule runs: a scan, and a `plan` or `execute` against the scan held, fail with `rules_failed`, and a tick with `autotrim` samples and then fails with `tick_failed`, having pruned nothing.
+
+| Event | Fields |
+|---|---|
+| `rules` | `catalog`: every rule of the catalog, beta ones included, each as `regrow rules --json` prints it plus `off` (the file turns it off) and `runs` (not off, and not beta while the beta rules are off); `beta`, the file's switch; `beta_flag`, true when the engine was started with `--beta-rules`; `config`, the file's path; `error`, present when the file does not load, no rule then running, `off` and `beta` as it last loaded, neither set if it has not loaded since the engine started, and `unknown_off` absent; `unknown_off`, the ids `off` names that no rule has, absent when none |
+| `done` | — |
+
+`set_rules` carries `rule` with `off`, or `beta`, never both: anything else is `bad_request`. A rule the catalog lacks, or a file that does not load, fails it with `rules_failed`, and the file is left as it was.
+
 ## hello
 
 ```json
@@ -233,6 +252,8 @@ Errors: `aerials_failed`, with `message` saying why: the state is not `on` or `o
 | `autotrim_locked`, `tick_failed` | see tick |
 | `history_failed` | see history |
 | `aerials_failed` | see aerials |
+| `rules_failed` | see rules and set_rules; also a scan, plan or execute while the rules file does not load |
+| `rules_changed` | a plan or execute against a scan holding findings of a rule that no longer runs; see rules and set_rules |
 
 `message` is for people; peers branch on `code`. An `unmatched` error also lists the selectors in `unmatched`, and an `execute_failed` that ran something carries its `result`.
 

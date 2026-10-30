@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -22,7 +23,7 @@ import (
 
 // runEngine serves the engine protocol on the process's stdin and
 // stdout until stdin ends or a termination signal arrives.
-func runEngine(host engine.Host, catalog []engine.Rule, opts options) error {
+func runEngine(host engine.Host, rules *ruleSwitch, opts options) error {
 	keepRunningOnEPIPE()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -35,7 +36,9 @@ func runEngine(host engine.Host, catalog []engine.Rule, opts options) error {
 	if err != nil {
 		return err
 	}
-	srv := newEngineServer(host, catalog, flags)
+	srv := newEngineServer(host, rules.all, flags)
+	srv.Switch = rules
+	srv.Tick = tickFor(host, rules.Catalog)
 	srv.Self = engineSelf(os.Executable, exec.LookPath)
 	srv.LookPath = exec.LookPath
 	return srv.Serve(ctx, os.Stdin, os.Stdout)
@@ -86,7 +89,7 @@ func newEngineServer(host engine.Host, catalog []engine.Rule, flags []string) *p
 		Scan:       scanStream(host),
 		Account:    engine.Account,
 		Headroom:   headroom.Take,
-		Tick:       tickFor(host, catalog),
+		Tick:       tickFor(host, func() ([]engine.Rule, error) { return catalog, nil }),
 		Staged:     stagedBytes,
 		History:    engineHistory,
 		NewExecutor: func(runID string) (*executor.Executor, func(), error) {
@@ -135,13 +138,21 @@ func (oplogAppender) Append(e oplog.Entry) error {
 	return err
 }
 
-func tickFor(host engine.Host, catalog []engine.Rule) func(context.Context, bool) (headroom.Tick, error) {
+// tickFor is the tick over the catalog as it stands when the tick starts.
+func tickFor(host engine.Host, catalog func() ([]engine.Rule, error)) func(context.Context, bool) (headroom.Tick, error) {
 	return func(ctx context.Context, autotrim bool) (headroom.Tick, error) {
-		ap, err := engineAutopilot(host, catalog)
+		// With no rules to go by, a tick still samples and alerts, and
+		// prunes nothing.
+		rules, rulesErr := catalog()
+		ap, err := engineAutopilot(host, rules)
 		if err != nil {
 			return headroom.Tick{}, err
 		}
-		return ap.Tick(ctx, autotrim)
+		tick, err := ap.Tick(ctx, autotrim && rulesErr == nil)
+		if err == nil && autotrim && rulesErr != nil {
+			err = fmt.Errorf("autotrim did not run: %w", rulesErr)
+		}
+		return tick, err
 	}
 }
 

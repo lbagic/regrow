@@ -61,6 +61,10 @@ type Server struct {
 	// autopilot.Autopilot.Tick, autotrim gate included. Nil refuses
 	// tick requests.
 	Tick func(ctx context.Context, autotrim bool) (headroom.Tick, error)
+	// Switch, when set, owns the catalog: a scan takes Switch.Catalog()
+	// as it starts in place of Catalog, and rules and set_rules
+	// requests read and change it. Nil refuses those requests.
+	Switch RuleSwitch
 	// History reads the oplog and the headroom history for a history
 	// request. Nil refuses history requests.
 	History func() (History, error)
@@ -225,12 +229,16 @@ loop:
 // stopped them: a stream cut short has no done line, and its reader
 // must hear so.
 func (srv *Server) ScanOnce(ctx context.Context, out io.Writer) error {
+	rules, err := srv.catalog()
+	if err != nil {
+		return err
+	}
 	s := srv.newSession(out)
 	ctx, cancel := context.WithCancel(ctx)
 	s.mu.Lock()
 	op, sc := s.beginScan(request{Type: reqScan}, cancel)
 	s.mu.Unlock()
-	s.runScan(ctx, cancel, op, sc)
+	s.runScan(ctx, cancel, op, sc, rules)
 	s.out.close(0)
 	return s.out.writeErr()
 }
@@ -296,6 +304,8 @@ func (s *session) handle(l requestLine) {
 		s.aerialsStatus(req)
 	case reqAerialsSwitch:
 		s.startAerialsSwitch(req)
+	case reqRules, reqSetRule:
+		s.rules(req)
 	default:
 		s.emit(failure(req.ID, CodeUnknownRequest, fmt.Sprintf("unknown request type %q", req.Type)))
 	}
@@ -349,11 +359,17 @@ func (s *session) startScan(req request) {
 		s.mu.Unlock()
 		return
 	}
+	rules, err := s.srv.catalog()
+	if err != nil {
+		s.mu.Unlock()
+		s.emit(failure(req.ID, CodeRulesFailed, err.Error()))
+		return
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	op, sc := s.beginScan(req, cancel)
 	s.mu.Unlock()
 
-	go s.runScan(ctx, cancel, op, sc)
+	go s.runScan(ctx, cancel, op, sc, rules)
 }
 
 // beginScan makes a new scan the current one. The caller holds s.mu
@@ -370,7 +386,7 @@ func (s *session) beginScan(req request, cancel context.CancelFunc) (*operation,
 	return op, sc
 }
 
-func (s *session) runScan(ctx context.Context, cancel context.CancelFunc, op *operation, sc *scanState) {
+func (s *session) runScan(ctx context.Context, cancel context.CancelFunc, op *operation, sc *scanState, rules []engine.Rule) {
 	defer cancel()
 	began := time.Now()
 	if s.srv.Headroom != nil {
@@ -378,7 +394,6 @@ func (s *session) runScan(ctx context.Context, cancel context.CancelFunc, op *op
 			s.emit(inlineEvent{head{"headroom", op.re}, sample})
 		}
 	}
-	rules := s.srv.Catalog
 	s.emit(startEvent{head{"start", op.re}, sc.id, len(rules)})
 
 	findings := make([]engine.Finding, len(rules))
@@ -443,6 +458,9 @@ func (s *session) plan(req request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sc, code, message := s.scanFor(req.ScanID)
+	if code == "" {
+		code, message = s.srv.turnedOff(sc.findings)
+	}
 	if code != "" {
 		s.emit(failure(req.ID, code, message))
 		return
@@ -523,6 +541,61 @@ func (s *session) history(req request) {
 	s.emit(done(req.ID))
 }
 
+// catalog is what a scan starting now runs.
+func (srv *Server) catalog() ([]engine.Rule, error) {
+	if srv.Switch != nil {
+		return srv.Switch.Catalog()
+	}
+	return srv.Catalog, nil
+}
+
+// turnedOff refuses findings of a rule that no longer runs, config.yaml
+// having turned it off, or the beta rules, since the scan: off means
+// regrow does not look there, and a scan already shown is no way round
+// that.
+func (srv *Server) turnedOff(findings []engine.Finding) (code, message string) {
+	if srv.Switch == nil {
+		return "", ""
+	}
+	catalog, err := srv.Switch.Catalog()
+	if err != nil {
+		return CodeRulesFailed, err.Error()
+	}
+	runs := make(map[string]bool, len(catalog))
+	for _, r := range catalog {
+		runs[r.ID] = true
+	}
+	for _, f := range findings {
+		if !runs[f.Rule.ID] {
+			return CodeRulesChanged, fmt.Sprintf("%s no longer runs, as config.yaml's rules now say: scan again", f.Rule.ID)
+		}
+	}
+	return "", ""
+}
+
+// rules answers at once: a change applies from the next scan or tick,
+// and the scan shown keeps the findings it has.
+func (s *session) rules(req request) {
+	if s.srv.Switch == nil {
+		s.emit(failure(req.ID, CodeRulesFailed, "this engine cannot change its rules"))
+		return
+	}
+	state := s.srv.Switch.State()
+	if req.Type == reqSetRule {
+		if (req.Rule == "") == (req.Beta == nil) || (req.Rule != "") != (req.Off != nil) {
+			s.emit(failure(req.ID, CodeBadRequest, "set_rules needs a rule and off, or beta"))
+			return
+		}
+		var err error
+		if state, err = s.srv.Switch.Set(req.Rule, req.Off, req.Beta); err != nil {
+			s.emit(failure(req.ID, CodeRulesFailed, err.Error()))
+			return
+		}
+	}
+	s.emit(rulesEvent{head{"rules", req.ID}, state})
+	s.emit(done(req.ID))
+}
+
 func (s *session) planTTL() time.Duration {
 	if s.srv.PlanTTL != 0 {
 		return s.srv.PlanTTL
@@ -554,6 +627,10 @@ func (s *session) startExecute(req request) {
 	delete(s.plans, req.PlanID)
 	if s.expired(held, s.now()) {
 		s.emit(failure(req.ID, CodePlanExpired, fmt.Sprintf("plan %s expired: plan again", req.PlanID)))
+		return
+	}
+	if code, message := s.srv.turnedOff(held.scan.findings); code != "" {
+		s.emit(failure(req.ID, code, message))
 		return
 	}
 	stopped := new(atomic.Bool)

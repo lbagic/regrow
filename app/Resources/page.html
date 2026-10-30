@@ -298,6 +298,14 @@ input[type="checkbox"] { accent-color: var(--accent); margin: 0; width: 15px; he
 .run p .mono { color: var(--ink); }
 .tag { padding: 0 5px; border: 1px solid var(--line-strong); border-radius: 3px; color: var(--ink-2); font: 500 11px/16px var(--sans); }
 .tag.bad { color: var(--danger); border-color: var(--danger); }
+.set h4 .tag { font-weight: 500; }
+.switch:disabled { opacity: .45; }
+.filter { display: flex; align-items: center; gap: 14px; margin-top: 18px; }
+.filter input { width: 260px; height: 28px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--paper); color: var(--ink); font: 13px var(--sans); }
+.filter .link[aria-pressed="true"] { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
+.cat .set { padding: 7px 0 8px; }
+.cat .set h4 { font-size: 13px; }
+.cat .set p { font-size: 12px; }
 </style>
 </head>
 <body>
@@ -321,6 +329,11 @@ const S = {
   history: null,      // the engine's history event, or {failed: why} when it could not be read
   historyAsk: '',     // the id of the history request on its way
   historyAgain: false, // something changed the history while that request was on its way: ask again on its end
+  rules: null,        // the engine's rules event, or {failed: why} when they could not be read
+  rulesAsk: '',       // the id of the rules request on its way
+  rulesNote: '',      // why the last change of the rules did not take
+  ruleFilter: '',     // what the Rules section's filter holds
+  ruleShow: 'all',    // all | on | off | beta: which rules the Rules section lists
   screen: 'findings', // findings | plan | confirm | running | result; an engine that is down is drawn over it
   hello: null,        // the engine's hello
   tick: null,         // the shell's latest tick: the forecast in the headline
@@ -396,15 +409,15 @@ function ask(type, role, fields) {
   return id;
 }
 
-const OUT_OF_DATE = { scan_spent: 1, scan_superseded: 1, scan_canceled: 1, unknown_scan: 1 };
+const OUT_OF_DATE = { scan_spent: 1, scan_superseded: 1, scan_canceled: 1, unknown_scan: 1, rules_changed: 1, rules_failed: 1 };
 
 window.regrow = { receive(line) {
   try {
     const e = JSON.parse(line), from = asked.get(e.re);
     if (e.event === 'done' || e.event === 'error') asked.delete(e.re);
     // An answer about a scan that is no longer shown changes nothing; an error it has no word for is still shown.
-    // The history is about no scan.
-    const current = !!from && (from.scan === S.scan || from.role === 'history');
+    // The history and the rules are about no scan.
+    const current = !!from && (from.scan === S.scan || from.role === 'history' || from.role === 'rules');
     if (from && !current && (e.event !== 'error' || OUT_OF_DATE[e.code])) return;
     if (on[e.event]) on[e.event](e, current ? from.role : '');
   } catch (err) {
@@ -420,10 +433,13 @@ const on = {
   hello(e) {
     if (S.hello && !S.down) return;
     const again = !!S.down;
-    asked.clear(); S.down = ''; S.hello = e; S.historyAsk = '';
+    asked.clear(); S.down = ''; S.hello = e; S.historyAsk = ''; S.rulesAsk = '';
     if (S.wantScan || (again && S.scan)) { S.wantScan = false; scan(); }
     askHistory();
+    askRules();
   },
+  // A change that took ends the note on one that did not; the answer to a plain rules request keeps it.
+  rules(e, role) { if (role === 'rules') Object.assign(S, { rules: e, rulesNote: e.re === S.rulesAsk ? S.rulesNote : '' }); },
   history(e, role) { if (role === 'history') S.history = e; },
   // An autotrim prune is a run of its own.
   tick(e) { S.tick = e; if (e.pruned && e.pruned.run) askHistory(); },
@@ -438,12 +454,13 @@ const on = {
     if (e.state !== 'engine_down') return;
     if (S.run && !S.run.result) S.cut = { id: S.plan.id, done: S.plan.actions.filter((a) => stateOf(a).state === 'done').length, of: S.plan.actions.length, moves: S.plan.actions.length > S.plan.commands };
     asked.clear();
-    S.historyAsk = '';
+    S.historyAsk = S.rulesAsk = '';
     counting = clearTimeout(counting);
     S.down = e.message || 'no reason given';
   },
   headroom(e, role) { if (role === 'scan') S.scan.headroom = e; },
-  start(e, role) { if (role === 'scan') { S.scan.id = e.scan_id; S.scan.rules = e.rules; } },
+  // The engine read config.yaml as the scan started, so the sidebar's count follows it.
+  start(e, role) { if (role === 'scan') { S.scan.id = e.scan_id; S.scan.rules = e.rules; askRules(); } },
   finding(e, role) { if (role === 'scan') S.scan.rows.push(newRow(e)); },
   summary(e, role) { if (role === 'scan') { S.scan.totals = e.totals; S.scan.exclusive = e.exclusive || {}; } },
   plan(e, role) {
@@ -475,22 +492,30 @@ const on = {
     } else if (role === 'history') {
       S.historyAsk = '';
       if (S.historyAgain) askHistory();
+    } else if (role === 'rules' && e.re === S.rulesAsk) {
+      S.rulesAsk = '';
     }
   },
   error(e, role) {
+    // The rules as they stand now, for the sidebar's count. A rules request's own error asks nothing more, since
+    // askRules waits while one is on its way: this must run before the rules branch below clears S.rulesAsk.
+    if (e.code === 'rules_failed') askRules();
     if (OUT_OF_DATE[e.code] && (role === 'first' || role === 'count' || role === 'review')) {
       S.scan.phase = 'stale';
-      S.scan.why = e.message || '';
+      Object.assign(S.scan, { why: e.message || '', whyCode: e.code });
       // A run and its result keep their plan: the scan was spent by that run.
-      if (S.screen !== 'running' && S.screen !== 'result') Object.assign(S, { screen: 'findings', planning: '', plan: null });
+      if (S.screen !== 'running' && S.screen !== 'result') Object.assign(S, { screen: 'findings', planning: '', plan: null, note: '' });
     } else if (role === 'history') {
       Object.assign(S, { history: { failed: e.message || e.code }, historyAsk: '' });
       if (S.historyAgain) askHistory();
+    } else if (role === 'rules') {
+      if (e.re === S.rulesAsk) Object.assign(S, { rulesAsk: '', rules: S.rules || { failed: e.message || e.code } });
+      else S.rulesNote = e.message || e.code;
     } else if (role === 'run' && e.result) {
       ended(e.result, false, e.message || e.code);
     } else if (role === 'run') {
       // Nothing ran: back to the plan, with a fresh one. A plan that was too old needs no more words than that.
-      Object.assign(S, { screen: 'plan', run: null, error: e.code === 'plan_expired' || e.code === 'unknown_plan' ? null : e });
+      Object.assign(S, { screen: 'plan', run: null, error: e.code === 'plan_expired' || e.code === 'unknown_plan' || OUT_OF_DATE[e.code] ? null : e });
       review('The plan you confirmed did not run, so this is a fresh one. Nothing has run.');
     } else if (role !== 'review' || e.re === S.planning) {
       // An error for a review the page has dropped is dropped with it.
@@ -597,7 +622,15 @@ const act = {
     S.pane = el.dataset.pane;
     $('pane').scrollTop = 0;
     if (S.pane === 'stats') askHistory();
+    if (S.pane === 'rules') { S.rulesNote = ''; askRules(); }
   },
+  rule(el) {
+    const r = S.rules && S.rules.catalog && S.rules.catalog.find((x) => x.id === el.dataset.rule);
+    if (r && !el.disabled) setRules({ rule: r.id, off: !r.off });
+  },
+  beta() { if (S.rules && S.rules.catalog && !S.rules.beta_flag) setRules({ beta: !S.rules.beta }); },
+  autotrim() { if (S.settings && typeof S.settings.autotrim === 'boolean') post({ shell: S.settings.autotrim ? 'autotrim-off' : 'autotrim-on' }); },
+  ruleShow(el) { S.ruleShow = el.dataset.show; },
   login() {
     const item = S.settings && S.settings.login_item;
     if (item === 'on' || item === 'off') post({ shell: item === 'on' ? 'login-item-off' : 'login-item-on' });
@@ -1043,7 +1076,7 @@ function drawTop() {
   } else if (S.screen === 'findings') {
     const failed = sc ? sc.rows.filter((r) => r.error).length : 0;
     status = !sc ? '' : sc.phase === 'canceled' ? `stopped after ${sc.rows.length} of ${num(sc.rules, 'rule')}`
-      : `${num(sc.rules, 'rule')} scanned` + (failed ? `, ${failed} ended with an error` : '') + (sc.phase === 'stale' ? ', now out of date' : '');
+      : `${num(sc.rules, 'rule')} scanned` + (failed ? `, ${failed} ended with an error` : '') + (sc.phase === 'stale' ? (sc.whyCode === 'rules_failed' ? ', the config file does not load' : ', now out of date') : '');
     right = S.hello && sc ? h`<button class="link" data-do="scan">Scan again</button>` : '';
   }
   if (S.pane !== 'scan') return h`<h1>${PANES[S.pane]}</h1>`;
@@ -1075,7 +1108,7 @@ function drawTray() {
     say = sc && sc.phase === 'done' ? 'Working out what starts ticked.' : 'Findings arrive as each rule reports. The plan opens when the scan ends.';
     buttons = h`<button class="btn" disabled>Review plan</button>`;
   } else if (sc.phase !== 'done') {
-    say = sc.phase === 'stale' ? h`<b>This scan is out of date.</b>${sc.why}` : 'The scan was stopped before its end, so there is no plan.';
+    say = sc.phase === 'stale' ? h`<b>${sc.whyCode === 'rules_failed' ? 'The config file does not load.' : 'This scan is out of date.'}</b>${sc.why}` : 'The scan was stopped before its end, so there is no plan.';
     buttons = again;
   } else {
     const t = S.tray;
@@ -1091,7 +1124,7 @@ function drawTray() {
 
 // A switch stands for a setting the shell holds: a click asks the shell to change it, and the switch moves
 // once the shell says it did.
-const switchOf = (on, act, label) => h`<button class="switch" role="switch" aria-checked="${String(on)}" aria-label="${label}" data-do="${act}"></button>`;
+const switchOf = (on, act, label, disabled, rule) => h`<button class="switch" role="switch" aria-checked="${String(on)}" aria-label="${label}" data-do="${act}" ${rule ? h`id="sw-${rule}" data-rule="${rule}"` : ''} ${disabled ? 'disabled' : ''}></button>`;
 const setting = (key, title, text, control, more) => h`<div class="set" data-setting="${key}"><div class="text"><h4>${title}</h4>${text ? h`<p>${text}</p>` : ''}${more || ''}</div><div class="ctl">${control}</div></div>`;
 const state = (word, ok) => h`<span class="state ${ok ? 'ok' : ''}">${ok ? ICON.done : ''}${word}</span>`;
 
@@ -1244,10 +1277,86 @@ document.addEventListener('mousemove', (e) => {
   tip.style.left = Math.min(f * box.width + 8, box.width - tip.offsetWidth) + 'px';
 });
 
+// ---------- Rules: every rule, and which of them run ----------
+
+const askRules = () => { if (S.hello && !S.down && !S.rulesAsk) S.rulesAsk = ask('rules', 'rules'); };
+const setRules = (fields) => { if (S.hello && !S.down) ask('set_rules', 'rules', fields); };
+const CATEGORY = { 'dev-caches': 'Developer caches', 'app-caches': 'App caches', macos: 'macOS', ai: 'AI models', xcode: 'Xcode', toolchains: 'Toolchains', docker: 'Docker', 'phantom-space': 'Phantom space' };
+const RISK = { safe: 'safe to clear', caution: 'your call', 'surface-only': 'only shown' };
+const quoted = (s) => new Markup(String(s).split('`').map((part, i) => (i % 2 ? '<span class="mono">' + esc(part) + '</span>' : esc(part))).join(''));
+const firstSentence = (s) => { const m = String(s || '').match(/^.*?[.!?](?=\s|$)/); return m ? m[0] : String(s || ''); };
+
+// Where a rule looks, in a few words: its first path, its discover roots, or the start of what its query reads.
+function where(r) {
+  const paths = (r.paths && r.paths.darwin) || [];
+  if (paths.length) return h`<span class="mono">${unbroken(paths[0].path)}</span>${paths.length > 1 ? ` and ${paths.length - 1} more` : ''}`;
+  if (r.discover) return h`every <span class="mono">${r.discover.name || (r.discover.markers || []).join(', ')}</span> under ${num((r.discover.roots || []).length, 'project folder')}`;
+  if (r.scans) { let s = r.scans.split(/[;,(]/)[0].trim(); if ((s.match(/`/g) || []).length % 2) s += '`'; return quoted(s); }
+  return r.tool_query ? h`what the <span class="mono">${r.tool_query}</span> query finds` : '';
+}
+
+// What the scan shown found for a rule, when it scanned that rule.
+function found(id) {
+  const row = S.scan && S.scan.rows.find((r) => r.rule.id === id);
+  return row ? row.items.reduce((n, it) => n + (it.bytes || 0), 0) : null;
+}
+
+function ruleRow(r) {
+  const betaOff = r.beta && !S.rules.beta && !S.rules.beta_flag, bytes = found(r.id);
+  const q = (r.title + ' ' + r.id + ' ' + JSON.stringify(r.paths || '') + ' ' + (r.scans || '')).toLowerCase();
+  return h`<div class="set" data-rule="${r.id}" data-q="${q}" data-runs="${String(r.runs)}" data-off="${String(r.off)}" data-beta="${String(!!r.beta)}">
+    <div class="text"><h4>${r.title}<span class="tag">${RISK[r.risk] || r.risk}</span>${r.beta ? h`<span class="tag">beta</span>` : ''}</h4>
+      <p>${where(r)}. ${quoted(firstSentence(r.regen && r.regen.story))}</p></div>
+    <div class="ctl">${bytes != null && bytes > 0 ? h`<span class="state">${human(bytes)} in the last scan</span>` : ''}${betaOff ? state('beta, not scanned') : r.off ? state('off') : ''}
+      ${switchOf(r.runs, 'rule', 'Scan ' + r.title, betaOff, r.id)}</div></div>`;
+}
+
+function drawRules() {
+  const rs = S.rules;
+  if (!rs) return h`<section class="lead"><h2>Reading the rules.</h2></section>`;
+  if (rs.failed) return h`<section class="lead"><h2>The rules could not be read.</h2><p class="err mono">${rs.failed}</p></section>`;
+  const all = rs.catalog, running = all.filter((r) => r.runs).length, beta = all.filter((r) => r.beta).length;
+  const betaOn = rs.beta || rs.beta_flag, at = S.settings && typeof S.settings.autotrim === 'boolean' ? S.settings.autotrim : null;
+  const goBuild = all.find((r) => r.id === 'go-build-cache');
+  const trims = !at || !goBuild || goBuild.runs ? '' : goBuild.off ? ' The Go build cache rule is off below, so it prunes nothing.' : rs.error ? ' Until the config file loads, it prunes nothing.' : '';
+  const cats = [...new Set(all.map((r) => r.category))];
+  const counts = { all: all.length, on: running, off: all.filter((r) => r.off).length, beta };
+  return h`<section class="lead"><h2>${running} of ${num(all.length, 'rule')} run.</h2>
+      <p class="say">${betaOn ? (rs.beta_flag ? 'This engine runs with --beta-rules, so the beta rules run too.' : 'The beta rules, still in staged rollout, run too.') : beta === 1 ? 'The other is beta, still in staged rollout, and runs only with --beta-rules or the switch below.' : `The other ${beta} are beta, still in staged rollout, and run only with --beta-rules or the switch below.`}
+        A rule turned off is off for regrow in Terminal too: both read <span class="mono">${unbroken(tilde(rs.config))}</span>${copy(rs.config, 'path')}. A change applies from the next scan.</p>
+      ${rs.error ? h`<div class="note">${ICON.caution}<span>The config file does not load, so no rule runs until it does: <span class="err mono">${rs.error}</span></span></div>` : ''}
+      ${rs.unknown_off && rs.unknown_off.length ? h`<div class="note">${ICON.caution}<span>The config file turns off <span class="mono">${rs.unknown_off.join(', ')}</span>, which no rule is called: a rule meant there still runs.</span></div>` : ''}
+      ${!S.rulesNote ? '' : S.rulesNote === rs.error ? h`<div class="note">${ICON.caution}<span>That change did not take.</span></div>` : h`<div class="note">${ICON.caution}<span>That change did not take: <span class="err mono">${S.rulesNote}</span></span></div>`}</section>
+    ${section('Preferences', '', '', [
+      setting('autotrim', 'Trim the Go build cache when space is low', h`Runs <span class="mono">regrow prune go-build</span> by itself while free space is low, once one <span class="mono">regrow prune go-build --yes</span> has completed. The same switch as the menu's.${trims}`,
+        at == null ? state('…') : h`${state(at ? 'on' : 'off')}${switchOf(at, 'autotrim', 'Trim the Go build cache when space is low')}`),
+      setting('beta', 'Scan beta rules', `${num(beta, 'rule')} still in staged rollout. Each still goes through the plan and your confirm.`,
+        rs.beta_flag ? state('on, by --beta-rules') : h`${state(rs.beta ? 'on' : 'off')}${switchOf(rs.beta, 'beta', 'Scan beta rules')}`),
+    ])}
+    <div class="filter"><input id="rfilter" type="search" placeholder="Filter by name or path" aria-label="Filter the rules">
+      ${['all', 'on', 'off', 'beta'].map((k) => h`<button class="link" data-do="ruleShow" data-show="${k}" aria-pressed="${String(S.ruleShow === k)}">${{ all: 'All', on: 'On', off: 'Off', beta: 'Beta' }[k]} ${counts[k]}</button>`)}</div>
+    ${cats.map((c) => { const rows = all.filter((r) => r.category === c); return h`<div class="cat" data-cat="${c}">${section(CATEGORY[c] || c, num(rows.length, 'rule'), '', rows.map(ruleRow))}</div>`; })}`;
+}
+
+// The filter hides rows in place: what it holds is the viewer's, not the page's state.
+function filterRules() {
+  const pane = $('pane'), input = $('rfilter');
+  if (!input) return;
+  if (input.value !== S.ruleFilter) input.value = S.ruleFilter;
+  const q = S.ruleFilter.trim().toLowerCase();
+  for (const el of pane.querySelectorAll('.set[data-rule]')) {
+    const shown = { all: true, on: el.dataset.runs === 'true', off: el.dataset.off === 'true', beta: el.dataset.beta === 'true' }[S.ruleShow];
+    el.hidden = !shown || (!!q && !el.dataset.q.includes(q));
+  }
+  for (const cat of pane.querySelectorAll('.cat')) cat.hidden = ![...cat.querySelectorAll('.set[data-rule]')].some((el) => !el.hidden);
+}
+document.addEventListener('input', (e) => { if (e.target.id === 'rfilter') { S.ruleFilter = e.target.value; filterRules(); } });
+
 // ---------- the sidebar ----------
 
-const PANES = { scan: 'Scan', stats: 'Stats', general: 'General' };
+const PANES = { scan: 'Scan', stats: 'Stats', general: 'General', rules: 'Rules' };
 const PANE_ICON = {
+  rules: svg('<path d="M6 4.5h7.5M6 8h7.5M6 11.5h7.5"/><path d="M2.8 4.5h.1M2.8 8h.1M2.8 11.5h.1"/>'),
   stats: svg('<path d="M2.5 13.5h11"/><path d="M4.5 11V8M8 11V4.5M11.5 11V6.5"/>'),
   scan: svg('<rect x="2" y="4.5" width="12" height="7" rx="1.6"/><path d="M4.6 9h.1M7.2 9h4.2"/>'),
   general: svg('<circle cx="8" cy="8" r="2.2"/><path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6l1.4 1.4M11 11l1.4 1.4M3.6 12.4L5 11M11 5l1.4-1.4"/>'),
@@ -1256,6 +1365,7 @@ const PANE_ICON = {
 // What a section's line in the sidebar says beside its name: the scan while it is busy, the grants that are off.
 function figure(pane) {
   if (pane === 'scan') return S.down ? 'stopped' : S.screen === 'running' ? 'running' : S.scan && S.scan.phase === 'scanning' ? 'scanning' : '';
+  if (pane === 'rules') return S.rules && S.rules.catalog ? S.rules.catalog.filter((r) => r.runs).length + ' on' : '';
   if (pane === 'stats') return S.history && S.history.runs && S.history.runs.length ? human(sumOf(S.history.runs, 'frees_now')) : '';
   const off = grantsOff();
   return off ? h`${ICON.caution}${off}` : '';
@@ -1266,12 +1376,12 @@ const paneButton = (pane) => h`<button id="nav-${pane}" data-do="section" data-p
 function drawNav() {
   const t = S.tick;
   const disk = t ? h`<div class="disk"><b>${human(t.free)}</b> free<br>of ${human(t.total)}${meter(t, 0, 0)}${t.days_to_full != null ? `Full in ${t.days_to_full < 1 ? 'under a day' : 'about ' + num(Math.round(t.days_to_full), 'day')} at the recent pace` : ''}</div>` : '';
-  return h`<div class="name">regrow</div>${paneButton('scan')}${paneButton('stats')}<div class="group">Settings</div>${paneButton('general')}${disk}`;
+  return h`<div class="name">regrow</div>${paneButton('scan')}${paneButton('stats')}<div class="group">Settings</div>${paneButton('general')}${paneButton('rules')}${disk}`;
 }
 
 // ---------- drawing and wiring ----------
 
-const SECTIONS = { stats: drawStats, general: drawGeneral };
+const SECTIONS = { stats: drawStats, general: drawGeneral, rules: drawRules };
 const SCREENS = { findings: drawFindings, plan: drawPlan, confirm: drawConfirm, running: drawRunning, result: drawResult, down: drawDown };
 const root = document.documentElement, $ = (id) => document.getElementById(id);
 let clockDrawn = '', renders = 0;
@@ -1305,6 +1415,7 @@ function render(all) {
     page.scrollTop = kept ? at : 0;
   } else {
     paint('pane', SECTIONS[S.pane](), all);
+    if (S.pane === 'rules') filterRules();
     pad($('pane'));
   }
   if (focus && document.querySelector(focus)) document.querySelector(focus).focus();

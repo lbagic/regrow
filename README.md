@@ -147,7 +147,7 @@ Flags go before ids: `regrow clean --yes go-build-cache`. `--rules-dir DIR` load
 | `~/.local/state/regrow/aerials.json` | the aerial picks `regrow aerials off` cleared, which `regrow aerials on` puts back |
 | `~/.local/state/regrow/aerials.json.lock` | the lock that keeps a second `regrow aerials off` or `on` out while one runs |
 | `/var/run/regrow-aerials.lock` | an empty file, the lock the root step of `regrow aerials off` or `on` holds for as long as it runs |
-| `~/.config/regrow/config.yaml` | optional settings (below); regrow never writes it |
+| `~/.config/regrow/config.yaml` | optional settings (below); only the app's Rules section writes it, its `rules:` key alone |
 
 `XDG_STATE_HOME` moves `~/.local/state/regrow`, and `XDG_CONFIG_HOME` moves `~/.config/regrow`. regrow never empties its staging folder: what lands there stays until you remove it. [docs/SCAN.md](docs/SCAN.md) lists every file regrow writes; the app's own files are in [docs/APP.md](docs/APP.md).
 
@@ -161,7 +161,12 @@ docker:
     - "postgres-*"            # a name glob: volumes, stopped containers, image repositories
     - project: billing        # every volume and container of a compose project
   volume_export_cap: 20GiB    # volumes bigger than this are never offered (default 10GiB)
+rules:
+  off: [npm-cache]            # rules regrow does not look at: no scan, plan, clean, tick or doctor runs them
+  beta: true                  # run the rules still in staged rollout, as --beta-rules does
 ```
+
+A command that names a rule turned off, such as `regrow clean npm-cache`, refuses and says where it is off. `regrow rules` lists the catalog, the beta rules only with `--beta-rules` or `beta: true`, an off one marked "(off)"; an id under `off` that no rule has is named on stderr. A file that does not load, holds more than one YAML document, or is reached through a link to nothing (the file's or that of any folder above it), stops every command that runs rules; `regrow rules` still lists them and then says why, `regrow undo` and `regrow history` run regardless, and the app keeps watching free space but runs no rule until it loads.
 
 ## Working on regrow
 
