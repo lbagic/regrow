@@ -1651,6 +1651,8 @@ struct Scenario {
             r.same(await r.screen(), "findings", "the screen")
             r.same(await r.texts(".note").filter { $0.contains("answered with an error") }.count, 0, "the engine's error beside the tray's word")
             r.same(await r.text("#pane").contains("this is a fresh one"), false, "words of a fresh plan that is not there")
+            r.has(await r.text(".tray .say"), "The config file does not load.", "the tray's headline")
+            r.same(await r.text(".tray .say").contains("out of date"), false, "a scan called out of date for a file that does not load")
             r.has(await r.text(".tray .say"), "field bta not found", "the engine's reason in the tray")
             r.same(await r.text(".tray .btn"), "Scan again", "the tray's action")
             await r.shoot()

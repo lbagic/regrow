@@ -16,14 +16,12 @@ import (
 // SetRules writes r as the file's `rules:` and keeps the rest of the
 // file, its comments included; the `rules:` key itself is written whole.
 // Empty rules drop the key, the comments around it kept. The file must
-// load as it is, and the new one before it replaces it, which it does in
-// one rename; a link is written through to the file it names, and a
-// link to no file is refused.
+// load as it is, which a link to nothing does not, and the new one
+// before it replaces it, which it does in one rename; a link is written
+// through to the file it names.
 func SetRules(path string, r Rules) error {
 	if real, err := filepath.EvalSymlinks(path); err == nil {
 		path = real
-	} else if info, lerr := os.Lstat(path); lerr == nil && info.Mode()&fs.ModeSymlink != 0 {
-		return fmt.Errorf("%s is a link to a file that is not there; regrow writes no file through it", path)
 	}
 	if _, err := LoadFile(path); err != nil {
 		return err

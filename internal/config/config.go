@@ -155,10 +155,14 @@ func Load() (Config, error) {
 }
 
 // LoadFile reads one config file. Unknown keys are an error; an empty
-// file is the defaults.
+// file is the defaults, and so is no file, unless a link on its path
+// names nothing: what that file turned off would run.
 func LoadFile(path string) (Config, error) {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
+		if link := danglingLink(path); link != "" {
+			return Config{}, fmt.Errorf("%s: %s is a link to nothing, so the config cannot be read", path, link)
+		}
 		return Config{}, nil
 	}
 	if err != nil {
@@ -223,4 +227,20 @@ func ParseSize(s string) (int64, error) {
 // isEmptyDocument is a document of nothing, as "a: 1\n---\n" ends.
 func isEmptyDocument(n *yaml.Node) bool {
 	return len(n.Content) == 0 || (len(n.Content) == 1 && n.Content[0].Tag == "!!null")
+}
+
+// danglingLink is the link on the way to path, path included, that
+// names nothing, or "" when there is none.
+func danglingLink(path string) string {
+	for p := path; ; p = filepath.Dir(p) {
+		if info, err := os.Lstat(p); err == nil {
+			if _, err := os.Stat(p); info.Mode()&fs.ModeSymlink != 0 && err != nil {
+				return p
+			}
+			return ""
+		}
+		if filepath.Dir(p) == p {
+			return ""
+		}
+	}
 }

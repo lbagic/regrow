@@ -489,7 +489,7 @@ const on = {
   error(e, role) {
     if (OUT_OF_DATE[e.code] && (role === 'first' || role === 'count' || role === 'review')) {
       S.scan.phase = 'stale';
-      S.scan.why = e.message || '';
+      Object.assign(S.scan, { why: e.message || '', whyCode: e.code });
       // A run and its result keep their plan: the scan was spent by that run.
       if (S.screen !== 'running' && S.screen !== 'result') Object.assign(S, { screen: 'findings', planning: '', plan: null, note: '' });
     } else if (role === 'history') {
@@ -1045,7 +1045,7 @@ function drawTray() {
     say = sc && sc.phase === 'done' ? 'Working out what starts ticked.' : 'Findings arrive as each rule reports. The plan opens when the scan ends.';
     buttons = h`<button class="btn" disabled>Review plan</button>`;
   } else if (sc.phase !== 'done') {
-    say = sc.phase === 'stale' ? h`<b>This scan is out of date.</b>${sc.why}` : 'The scan was stopped before its end, so there is no plan.';
+    say = sc.phase === 'stale' ? h`<b>${sc.whyCode === 'rules_failed' ? 'The config file does not load.' : 'This scan is out of date.'}</b>${sc.why}` : 'The scan was stopped before its end, so there is no plan.';
     buttons = again;
   } else {
     const t = S.tray;

@@ -200,7 +200,7 @@ func TestSetRulesRefusesALinkToNoFile(t *testing.T) {
 	if err := os.Symlink(filepath.Join("dotfiles", "regrow.yaml"), link); err != nil {
 		t.Fatal(err)
 	}
-	if err := SetRules(link, Rules{Off: []string{"npm-cache"}}); err == nil || !strings.Contains(err.Error(), "not there") {
+	if err := SetRules(link, Rules{Off: []string{"npm-cache"}}); err == nil || !strings.Contains(err.Error(), "a link to nothing") {
 		t.Errorf("SetRules = %v, want the link refused", err)
 	}
 	if info, err := os.Lstat(link); err != nil || info.Mode()&os.ModeSymlink == 0 {
@@ -248,5 +248,32 @@ func TestSetRulesOnAFileOfMarkers(t *testing.T) {
 		if c, err := LoadFile(p); err != nil || !c.Rules.IsOff("npm-cache") {
 			t.Errorf("%q: %+v, %v\n%s", file, c.Rules, err, data)
 		}
+	}
+}
+
+// A link on the way to config.yaml that names nothing is no config to
+// read, not an empty one: the rules it turned off would run.
+func TestLoadFileRefusesALinkToNothing(t *testing.T) {
+	dir := t.TempDir()
+	mustLink := func(target, link string) {
+		t.Helper()
+		if err := os.Symlink(target, link); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mustLink(filepath.Join(dir, "moved.yaml"), filepath.Join(dir, "config.yaml"))
+	if _, err := LoadFile(filepath.Join(dir, "config.yaml")); err == nil || !strings.Contains(err.Error(), "a link to nothing") {
+		t.Errorf("a link to no file: %v", err)
+	}
+	mustLink(filepath.Join(dir, "unmounted"), filepath.Join(dir, "regrow"))
+	if _, err := LoadFile(filepath.Join(dir, "regrow", "config.yaml")); err == nil || !strings.Contains(err.Error(), "a link to nothing") {
+		t.Errorf("a linked folder that is gone: %v", err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "dotfiles"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	mustLink(filepath.Join(dir, "dotfiles"), filepath.Join(dir, "linked"))
+	if c, err := LoadFile(filepath.Join(dir, "linked", "config.yaml")); err != nil || len(c.Rules.Off) != 0 {
+		t.Errorf("a linked folder with no file yet is the defaults: %+v, %v", c.Rules, err)
 	}
 }
