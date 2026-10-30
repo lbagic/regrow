@@ -464,7 +464,7 @@ var ErrBusy = errors.New("another `regrow aerials off` or `on` is running; nothi
 // The root scripts' exit statuses, which decide the record.
 const (
 	exitDone    = 0  // the step did all it was asked
-	exitNothing = 1  // nothing changed: the one transaction rolled back, the step ended before sqlite3 ran (no root lock in time, or a stop as it took it), or sudo refused the step
+	exitNothing = 1  // nothing changed: the one transaction rolled back, the step ended before sqlite3 ran (no root lock in time, its file not opened, or a stop as it took it), or sudo refused the step
 	exitLived   = 2  // off cleared the picks, but a downloader outlived SIGKILL
 	exitUnknown = -1 // no status: a signal, or a runner that cannot say
 )
@@ -749,17 +749,19 @@ func gone(recorded, now []Pick) []Pick {
 }
 
 // lockLines start a root script: they hold an exclusive flock on lock
-// through descriptor 9, which sqlite3 and every other process the
-// script starts inherit, so a step that outlives its shell (sudo passes
-// a stop to the shell alone), regrow or the app holds it for as long as
-// it runs, and the next step waits for it. macOS has no flock command;
+// through descriptor 9, which sqlite3 and every other process the script
+// starts inherit, so a step that outlives its shell (sudo passes a stop
+// to the shell alone), regrow or the app holds it for as long as it
+// runs, and the next step waits for it. macOS has no flock command;
 // perl's flock on the inherited descriptor locks the shell's open file.
-// perl waits in the background, since a trapped signal ends wait at
-// once, so a stop while the lock is held elsewhere kills perl and exits
+// perl waits in the background, since a trapped signal ends a blocked
+// wait, so a stop while the lock is held elsewhere kills perl and exits
 // exitNothing, saying so, as a lock still held past rootLockWait does;
-// pid is emptied once wait has reaped perl, and $! covers a stop between
-// perl's start and pid. A stop before the trap is set still ends the
-// shell with no status. `command exec` is not used: macOS's /bin/sh then
+// pid is emptied once wait has returned, and $! covers a stop between
+// perl's start and pid. A stop in the moments before sqlite3 starts
+// (before the trap is set, before wait blocks, or after the trap is
+// reset) can still end the step with no status, or, before wait blocks,
+// only once perl ends. `command exec` is not used: macOS's /bin/sh then
 // hangs at exit.
 func lockLines(lock string) []string {
 	nothing := strconv.Itoa(exitNothing)
