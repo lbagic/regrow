@@ -38,6 +38,19 @@ struct AppUpdateTests {
         } catch let failure as AppUpdate.Failure {
             #expect(failure.description.hasSuffix("it has no assets"), "\(failure)")
         }
+        let badURL = #"{"tag_name": "v0.3.0", "assets": [{"name": "x", "browser_download_url": ""}]}"#
+        for (body, words) in [
+            ("[]", "it is not the JSON GitHub sends"), ("null", "it is not the JSON GitHub sends"),
+            ("<html>", "it is not the JSON GitHub sends"),
+            (badURL, "its assets.#0.browser_download_url is not what GitHub sends"),
+        ] {
+            do {
+                _ = try AppUpdate.Release.decode(Data(body.utf8))
+                Issue.record("\(body) decodes")
+            } catch let failure as AppUpdate.Failure {
+                #expect(failure.description.hasSuffix(words), "\(body): \(failure)")
+            }
+        }
     }
 
     @Test("the latest release is newer, the same or older; a development build updates from none")

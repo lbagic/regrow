@@ -265,11 +265,14 @@ public enum AppUpdate {
         switch error as? DecodingError {
         case .keyNotFound(let key, let context)?:
             return "it has no \(path(context.codingPath + [key]))"
-        case .typeMismatch(_, let context)?, .valueNotFound(_, let context)?:
-            return "its \(path(context.codingPath)) is not what GitHub sends"
+        case .typeMismatch(_, let context)?, .valueNotFound(_, let context)?, .dataCorrupted(let context)?:
+            if !context.codingPath.isEmpty {
+                return "its \(path(context.codingPath)) is not what GitHub sends"
+            }
         default:
-            return "it is not the JSON GitHub sends"
+            break
         }
+        return "it is not the JSON GitHub sends"
     }
 
     /// `ditto -x -k`, leaving out the archive's quarantine: macOS refuses
