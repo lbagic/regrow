@@ -65,7 +65,7 @@ Each phase = one or a few Claude sessions with a ready prompt. Milestones (M1–
 - [x] aerials in the app (2026-10-29): the engine's `aerials` and `aerials_switch` requests (the root step through macOS's administrator prompt); the menu's switch under autotrim, the window's notice and the aerial row's state, each with the switch; a warning with "Open Wallpaper settings" or "Open Screen Saver settings" for an aerial still set; owner checkpoint: the switch after `just app`
 - [ ] PR 6.9 coverage: regrow-trash expiry ([attack plan](plans/2026-10-04-attack-plan.md) item 9): deferred (2026-10-12): planned as later, an owner checkpoint
 
-**Now:** aerials (2026-10-29): `regrow aerials off | on | status` and the videos' row as root (owner runs `regrow aerials status`, `regrow aerials off` and `regrow clean aerial-wallpapers`); the app has the switch, and links to the Wallpaper and Screen Saver settings for an aerial still set. The window's sections (2026-10-29): a sidebar with Scan, Stats, General and Rules; Updates next. Releases carry a signed Regrow.app, the install line installs it, and the app updates itself from General › Updates (2026-10-29).
+**Now:** aerials (2026-10-29): `regrow aerials off | on | status` and the videos' row as root (owner runs `regrow aerials status`, `regrow aerials off` and `regrow clean aerial-wallpapers`); the app has the switch, and links to the Wallpaper and Screen Saver settings for an aerial still set. The window's sections (2026-10-29): a sidebar with Scan, Stats, General and Rules. Releases carry a signed Regrow.app, the install line installs it, and the app updates itself from General › Updates (2026-10-29).
 
 ```mermaid
 flowchart TD
