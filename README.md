@@ -15,7 +15,7 @@ It is not:
 
 - an app uninstaller, a duplicate finder, or a tool for your documents. Rules for what may be the only copy of something (iOS backups, model libraries) or what regrow cannot judge item by item (`~/Library/Caches`, `/Library/Updates`) are surface-only: shown with their size, never deleted.
 - a background cleaner. The one removal that runs by itself is autotrim of Go build cache entries unused for 24 hours, while free space is low and only until it is back at its target; a running build defers it, where `regrow prune go-build --yes` refuses. It is off until you turn it on (the app's switch, or `--autotrim` on a single `regrow tick`), and it refuses to run until a `regrow prune go-build --yes` of your own has run to completion.
-- a network service. regrow's own code opens no network connection: no telemetry, no update check, no account. A few programs it starts can reach the network on their own, and [docs/SCAN.md](docs/SCAN.md) names them.
+- a network service. regrow's own code opens a network connection only to ask GitHub for its latest release: the command line tool once a day as it runs, the app when you choose Check for update. No telemetry, no account. A few programs it starts can reach the network on their own, and [docs/SCAN.md](docs/SCAN.md) names them.
 
 regrow is built and tested for macOS only. The rules carry Linux paths for a later Linux build.
 

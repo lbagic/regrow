@@ -115,6 +115,7 @@ struct Play {
     var holdHello = false                // the engine has not said hello when the page is ready
     var settings: [String: Any]? = Play.installed  // the shell's settings event; nil: it has read none yet
     var tickAfterRun: String?            // the section whose tick the shell relays once a run ends, as the app does
+    var update: [String: Any]? = ["event": "shell", "state": "app-update", "phase": "unchecked", "running": "0.5.0"]
     var historyEvent: [String: Any]?     // the history event in place of the transcript's
     var historyError: String?            // the history request fails with this message
     var holdHistory = false              // history requests wait in heldHistory until the scenario answers them
@@ -515,13 +516,14 @@ final class Run: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHa
             if let tick = play.tick { send([answering(tick, "shell-1")[0]]) }
             if let reason = play.environment { send(["event": "shell", "state": "environment", "captured": false, "reason": reason]) }
             if let settings = play.settings { send(settings) }
+            if let update = play.update { send(update) }
             if let aerials = play.aerials { send(aerials.merging(["event": "shell", "state": "aerials"]) { $1 }) }
             if !play.opened && !play.scanFirst { send(["event": "shell", "state": "scan"]) }
         case "automation":
             if let allowed = play.automation { send(["event": "shell", "state": "automation", "allowed": allowed]) }
         case "autotrim-on", "autotrim-off", "open-full-disk-access", "relaunch", "login-item-on", "login-item-off", "login-item-settings", "notification-settings",
             "automation-settings", "show-log", "show-staging", "aerials-off", "aerials-on", "aerials-read", "open-wallpaper-settings",
-            "open-screen-saver-settings":
+            "open-screen-saver-settings", "app-update-check", "app-update-install":
             break
         default:
             fail("the page sent a shell message the bridge does not have: \(shell)")
@@ -983,7 +985,7 @@ struct Scenario {
             r.same(await r.js("return document.getElementById('nav-general').getAttribute('aria-current')") as? String ?? "", "page", "the sidebar's current section")
             r.same(await r.text(".top h1"), "General", "the top bar's title")
             r.same(await r.count(".top button"), 0, "actions in General's top bar")
-            r.same(await r.texts("#pane .sec h3"), ["Startup", "Permissions", "About"], "General's sections")
+            r.same(await r.texts("#pane .sec h3"), ["Startup", "Permissions", "Updates", "About"], "General's sections")
             r.same(await r.js("return document.querySelector('[data-setting=login] .switch').getAttribute('aria-checked')") as? String ?? "", "true", "Start with Mac's switch")
             r.same(await r.text("[data-setting=fda] .ctl"), "on", "Full Disk Access granted")
             r.same(await r.text("[data-setting=finder] .ctl"), "not asked yet", "Control of Finder before macOS asked")
@@ -1023,6 +1025,42 @@ struct Scenario {
             r.same(await r.text(".top h1"), "Scan", "the top bar's title on the scan")
             r.same(await r.js("return document.getElementById('page').scrollTop") as? Double ?? 0, top, "where the scan was scrolled to, kept while General showed")
             r.same(await r.screen(), "findings", "the scan's screen, kept while General showed")
+        },
+        Scenario(name: "general-update") { r in
+            await r.click("#nav-general")
+            let row = "[data-setting=app-update]"
+            func phase(_ fields: [String: Any]) async {
+                await r.send(["event": "shell", "state": "app-update", "running": "0.5.0"].merging(fields) { $1 })
+                await r.settle()
+            }
+            r.same(await r.text("\(row) h4"), "Regrow.app", "the row's title")
+            r.same(await r.text("\(row) p"), "Version 0.5.0.", "the row before a check")
+            r.same(await r.text("\(row) button"), "Check for update", "the row's action before a check")
+            await r.click("\(row) button")
+            r.same(r.sentShell("app-update-check"), 1, "app-update-check messages")
+            await phase(["phase": "checking"])
+            r.same(await r.text("\(row) .ctl"), "checking…", "the row while it checks")
+            r.same(await r.count("\(row) button"), 0, "actions while it checks")
+            await phase(["phase": "latest"])
+            r.same(await r.text("\(row) p"), "Version 0.5.0 is the latest release.", "the row on the latest release")
+            r.same(await r.text("\(row) button"), "Check again", "the row's action on the latest release")
+            await phase(["phase": "newer", "release": "0.6.0"])
+            r.has(await r.text("\(row) p"), "Version 0.6.0 is out; this is 0.5.0.", "the row with a newer release")
+            r.same(await r.text("\(row) button"), "Update and relaunch", "the row's action with a newer release")
+            await r.shoot()
+            await r.click("\(row) button")
+            r.same(r.sentShell("app-update-install"), 1, "app-update-install messages")
+            await phase(["phase": "installing", "release": "0.6.0"])
+            r.same(await r.text("\(row) .ctl"), "updating…", "the row while it updates")
+            await phase(["phase": "failed", "reason": "could not reach api.github.com: The Internet connection appears to be offline."])
+            r.same(await r.text("\(row) p"), "The update did not run: could not reach api.github.com: The Internet connection appears to be offline.", "the row after a failure, with one full stop")
+            r.same(await r.text("\(row) button"), "Try again", "the row's action after a failure")
+            await phase(["phase": "older", "release": "0.4.0"])
+            r.same(await r.text("\(row) p"), "Version 0.5.0 is newer than the latest release, 0.4.0.", "the row ahead of the latest release")
+            r.same(await r.count("\(row) button"), 0, "actions ahead of the latest release")
+            await phase(["phase": "unavailable", "reason": "this copy is a development build, signed ad hoc"])
+            r.same(await r.text("\(row) p"), "Version 0.5.0. This copy does not update itself: this copy is a development build, signed ad hoc.", "the row in a copy that does not update")
+            r.same(await r.count("\(row) button"), 0, "actions in a copy that does not update")
         },
         Scenario(name: "general-off", play: Play(fdaDenied: true, settings: [
             "event": "shell", "state": "settings", "login_item": "needs_approval", "notifications": "denied", "finder": "denied",

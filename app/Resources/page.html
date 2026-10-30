@@ -450,6 +450,7 @@ const on = {
     // The menu's Scan, or a relaunch to apply Full Disk Access.
     if (e.state === 'scan') { S.pane = 'scan'; if (S.hello && !S.down) act.scan(); else S.wantScan = true; }
     if (e.state === 'reloaded') S.reloaded = { running: e.running === true };
+    if (e.state === 'app-update') S.update = e;
     if (e.state === 'aerials') S.aerials = { status: e.status || {}, pending: e.pending === true, queued: e.queued === true, error: e.error || '', note: e.note || '' };
     if (e.state !== 'engine_down') return;
     if (S.run && !S.run.result) S.cut = { id: S.plan.id, done: S.plan.actions.filter((a) => stateOf(a).state === 'done').length, of: S.plan.actions.length, moves: S.plan.actions.length > S.plan.commands };
@@ -640,6 +641,8 @@ const act = {
   noticeSettings() { post({ shell: 'notification-settings' }); },
   showLog() { post({ shell: 'show-log' }); },
   showStaging() { post({ shell: 'show-staging' }); },
+  updateCheck() { post({ shell: 'app-update-check' }); },
+  updateInstall() { if (S.update && S.update.phase === 'newer' && S.screen !== 'running') post({ shell: 'app-update-install' }); },
   aerialsOff() { if (aerialsSwitch() === 'off') { S.aerials.pending = true; post({ shell: 'aerials-off' }); } },
   aerialsOn() { if (aerialsSwitch() === 'on') { S.aerials.pending = true; post({ shell: 'aerials-on' }); } },
   pane(el) { post({ shell: el.dataset.surface === 'screen saver' ? 'open-screen-saver-settings' : 'open-wallpaper-settings' }); },
@@ -1170,6 +1173,25 @@ function permissions() {
   return section('Permissions', off ? `${off} of 3 off` : '', '', rows);
 }
 
+function updates() {
+  const u = S.update;
+  if (!u) return '';
+  const check = (label) => h`<button class="link" data-do="updateCheck">${label}</button>`;
+  const ROW = {
+    unchecked: [`Version ${u.running}.`, h`<button class="btn small" data-do="updateCheck">Check for update</button>`],
+    checking: [`Version ${u.running}.`, state('checking…')],
+    latest: [`Version ${u.running} is the latest release.`, check('Check again')],
+    newer: [`Version ${u.release} is out; this is ${u.running}. Regrow quits, puts the new version in its place and opens it again, and its permissions stay.`,
+      S.screen === 'running' ? state('once the run ends') : h`<button class="btn small" data-do="updateInstall">Update and relaunch</button>`],
+    older: [`Version ${u.running} is newer than the latest release, ${u.release}.`, ''],
+    installing: [`Downloading version ${u.release} and checking its signature.`, state('updating…')],
+    failed: [`The update did not run: ${String(u.reason).replace(/\.$/, '')}.`, check('Try again')],
+    unavailable: [`Version ${u.running}. This copy does not update itself: ${u.reason}.`, ''],
+  };
+  const [text, control] = ROW[u.phase] || ROW.unchecked;
+  return section('Updates', '', '', setting('app-update', 'Regrow.app', text, control));
+}
+
 function about() {
   const st = S.settings || {}, staged = S.tick && S.tick.staged_bytes;
   return section('About', '', '', [
@@ -1181,7 +1203,7 @@ function about() {
   ]);
 }
 
-const drawGeneral = () => h`${section('Startup', '', '', startup())}${permissions()}${about()}`;
+const drawGeneral = () => h`${section('Startup', '', '', startup())}${permissions()}${updates()}${about()}`;
 
 // ---------- Stats: what regrow has done on this Mac ----------
 
