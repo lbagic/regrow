@@ -1,7 +1,7 @@
 #!/bin/bash
 # Throwaway CI probe: which update test, or which step under it, hangs on the runner.
 # Each step runs in its own process group and is killed after $LIMIT seconds.
-LIMIT=120
+LIMIT=300
 set -m
 step() {
 	local name=$1; shift
@@ -37,6 +37,6 @@ SWIFT
 step ird swift "$work/ird.swift" "$work"
 cd app || exit 1
 swift build --build-tests 2>&1 | tail -1
-for t in versions record standing phaseLine checksums installedOnly linkedDestination movedAway reasons stages checksumMismatch otherSignature versionMismatch missingAssets linkedBundle everySlice; do
-	step "test-$t" swift test --skip-build --filter "AppUpdateTests/$t"
+for n in 1 2 3; do
+	step "full-suite-$n" swift test --skip-build
 done
