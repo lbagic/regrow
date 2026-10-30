@@ -624,6 +624,53 @@ func TestARootStepGivesUpOnALockStillHeld(t *testing.T) {
 	}
 }
 
+// off gives up on a root lock still held as on does: nothing cleared,
+// and no record of picks that are still picked.
+func TestOffGivesUpOnALockStillHeld(t *testing.T) {
+	f := newFixture(t)
+	before := f.a.Status(context.Background()).Picks
+	wait := rootLockWait
+	rootLockWait = 1
+	defer func() { rootLockWait = wait }()
+	holdRootLock(t, f.a.RootLock, 3*time.Second)
+	res, err := f.a.Off(context.Background())
+	if err == nil || res.Ran || !strings.Contains(err.Error(), "could not take the lock") {
+		t.Errorf("off while the root lock stays held: %+v, %v; want nothing changed", res, err)
+	}
+	if r := f.record(t); r != nil {
+		t.Errorf("record = %+v, want none", r)
+	}
+	if now := f.a.Status(context.Background()).Picks; len(now) != len(before) {
+		t.Errorf("picks = %d, want all %d still picked", len(now), len(before))
+	}
+}
+
+// A stop while the step waits for the root lock ends the wait at once
+// and changes nothing, so off puts the record back rather than keep one
+// of picks it never cleared.
+func TestAStopWhileWaitingForTheRootLockChangesNothing(t *testing.T) {
+	f := newFixture(t)
+	before := f.a.Status(context.Background()).Picks
+	holdRootLock(t, f.a.RootLock, 4*time.Second)
+	f.a.Run = func(ctx context.Context, argv []string) error { return RunRoot(ctx, argv, io.Discard, io.Discard) }
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	start := time.Now()
+	res, err := f.a.Off(ctx)
+	if err == nil || errors.Is(err, ErrStopped) || res.Ran {
+		t.Errorf("off stopped while it waits for the root lock: %+v, %v; want nothing changed", res, err)
+	}
+	if took := time.Since(start); took > 3*time.Second {
+		t.Errorf("off took %v, want the stop to end the wait", took)
+	}
+	if r := f.record(t); r != nil {
+		t.Errorf("record = %+v, want none", r)
+	}
+	if now := f.a.Status(context.Background()).Picks; len(now) != len(before) {
+		t.Errorf("picks = %d, want all %d still picked", len(now), len(before))
+	}
+}
+
 // A stop that comes after off wrote its record and journaled, but
 // before the root step ran, changes nothing: the record goes back.
 func TestOffStoppedBeforeTheStep(t *testing.T) {

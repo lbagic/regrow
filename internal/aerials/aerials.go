@@ -464,13 +464,13 @@ var ErrBusy = errors.New("another `regrow aerials off` or `on` is running; nothi
 // The root scripts' exit statuses, which decide the record.
 const (
 	exitDone    = 0  // the step did all it was asked
-	exitNothing = 1  // nothing changed: the one transaction rolled back, or sudo refused the step
+	exitNothing = 1  // nothing changed: the one transaction rolled back, the root lock was not taken, or sudo refused the step
 	exitLived   = 2  // off cleared the picks, but a downloader outlived SIGKILL
 	exitUnknown = -1 // no status: a signal, or a runner that cannot say
 )
 
 // RootLock is the file each root step locks first and holds for as long
-// as any of its processes runs; only root can write in /var/run.
+// as any of its processes runs.
 const RootLock = "/var/run/regrow-aerials.lock"
 
 // rootLockWait is how long a root step waits, in seconds, for an earlier
@@ -754,15 +754,20 @@ func gone(recorded, now []Pick) []Pick {
 // a stop to the shell alone), regrow or the app holds it for as long as
 // it runs, and the next step waits for it. macOS has no flock command;
 // perl's flock on the inherited descriptor locks the shell's open file.
-// Past rootLockWait, or when the lock cannot be taken, the script exits
-// exitNothing: a failed exec redirection ends macOS's /bin/sh with 1,
-// and `command exec` is not used, since that sh then hangs at exit.
+// perl waits in the background, since a trapped signal ends wait at
+// once, so a stop while the lock is held elsewhere ends perl and exits
+// exitNothing, as a lock still held past rootLockWait does. `command
+// exec` is not used: macOS's /bin/sh then hangs at exit.
 func lockLines(lock string) []string {
-	fail := " || { echo 'regrow: could not take the lock of the aerials root step, which an earlier one may still hold; nothing changed' >&2; exit " + strconv.Itoa(exitNothing) + "; }"
+	nothing := strconv.Itoa(exitNothing)
+	fail := " || { echo 'regrow: could not take the lock of the aerials root step, which an earlier one may still hold; nothing changed' >&2; exit " + nothing + "; }"
 	return []string{
 		"set -u",
 		"exec 9>>" + engine.ShellQuote(lock) + fail,
-		"/usr/bin/perl -MFcntl=:flock -e " + engine.ShellQuote(`open(my $f, ">&=", 9) or exit 1; $SIG{ALRM} = sub { exit 1 }; alarm(`+strconv.Itoa(rootLockWait)+`); flock($f, LOCK_EX) or exit 1`) + fail,
+		"trap 'kill ${pid-} 2>/dev/null; exit " + nothing + "' TERM INT HUP",
+		"/usr/bin/perl -MFcntl=:flock -e " + engine.ShellQuote(`open(my $f, ">&=", 9) or exit 1; flock($f, LOCK_EX|LOCK_NB) and exit 0; print STDERR "regrow: waiting for the root step of an earlier aerials off or on to end\n"; $SIG{ALRM} = sub { exit 1 }; alarm(`+strconv.Itoa(rootLockWait)+`); flock($f, LOCK_EX) or exit 1`) + " & pid=$!",
+		`wait "$pid"` + fail,
+		"trap - TERM INT HUP",
 	}
 }
 
