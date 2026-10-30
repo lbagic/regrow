@@ -596,7 +596,7 @@ func TestAStoppedStepHoldsTheNextRunBack(t *testing.T) {
 		return nil
 	}
 	f.asked = 0
-	if res, err := f.a.On(context.Background()); !errors.Is(err, ErrBusy) || !strings.Contains(err.Error(), "stopped earlier may still be running") || !strings.Contains(err.Error(), "try again after") || res.Ran || f.asked != 0 {
+	if res, err := f.a.On(context.Background()); !errors.Is(err, ErrBusy) || !strings.Contains(err.Error(), "ended with no exit status, may still be running") || !strings.Contains(err.Error(), "try again after") || res.Ran || f.asked != 0 {
 		t.Errorf("on right after a stopped off: %+v, %v, asked %d; want ErrBusy until the step has ended, no password asked", res, err, f.asked)
 	}
 	f.a.Run = run
@@ -614,7 +614,7 @@ func TestAStoppedStepHoldsTheNextRunBack(t *testing.T) {
 func TestAHoldCountsFromTheStepsReturn(t *testing.T) {
 	f := newFixture(t)
 	f.a.Authorize = nil
-	now := f.a.now()
+	now, run := f.a.now(), f.a.Run
 	f.a.Now = func() time.Time { return now }
 	ctx, cancel := context.WithCancel(context.Background())
 	f.a.Run = func(ctx context.Context, argv []string) error {
@@ -633,14 +633,52 @@ func TestAHoldCountsFromTheStepsReturn(t *testing.T) {
 	if res, err := f.a.On(context.Background()); !errors.Is(err, ErrBusy) || res.Ran {
 		t.Errorf("on %v after the stopped step returned: %+v, %v; want ErrBusy", stepLife-time.Second, res, err)
 	}
+	f.a.Run = run
+	now = now.Add(time.Second)
+	if res, err := f.a.On(context.Background()); err != nil || !res.Ran {
+		t.Errorf("on %v after the stopped step returned: %+v, %v; want it run", stepLife, res, err)
+	}
 }
 
-// A hold further ahead than a step can run, left by a clock set back,
-// holds nothing back.
+// A hold written again over the one before keeps a time when the write
+// fails: a file-size limit of 4 bytes stands in for a full disk.
+func TestAHoldSurvivesAFailedWrite(t *testing.T) {
+	f := newFixture(t)
+	if err := os.MkdirAll(filepath.Dir(f.a.RecordPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.a.hold(f.a.now().Add(stepLife)); err != nil {
+		t.Fatal(err)
+	}
+	var limit syscall.Rlimit
+	if err := syscall.Getrlimit(syscall.RLIMIT_FSIZE, &limit); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Setrlimit(syscall.RLIMIT_FSIZE, &syscall.Rlimit{Cur: 4, Max: limit.Max}); err != nil {
+		t.Fatal(err)
+	}
+	err := f.a.hold(f.a.now().Add(stepLife + time.Second))
+	if rerr := syscall.Setrlimit(syscall.RLIMIT_FSIZE, &limit); rerr != nil {
+		t.Fatal(rerr)
+	}
+	if until := f.a.heldUntil(); until.Before(f.a.now().Add(stepLife)) {
+		t.Errorf("hold after a write under a 4-byte limit (%v) = %v, want the time before or the new one", err, until)
+	}
+}
+
+// A hold more than a minute ahead, left by a clock set back, holds
+// nothing back; one a little further ahead than a step runs, as a clock
+// stepped back a moment leaves it, still holds.
 func TestAHoldFromAClockSetBackIsStale(t *testing.T) {
 	f := newFixture(t)
 	if _, err := f.a.Off(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+	if err := f.a.hold(f.a.now().Add(stepLife + 2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if res, err := f.a.On(context.Background()); !errors.Is(err, ErrBusy) || res.Ran {
+		t.Errorf("on under a hold %v ahead: %+v, %v; want ErrBusy", stepLife+2*time.Second, res, err)
 	}
 	if err := f.a.hold(f.a.now().Add(365 * 24 * time.Hour)); err != nil {
 		t.Fatal(err)

@@ -449,14 +449,16 @@ var errNotStarted = errors.New("stopped before the root step started; nothing ch
 
 // ErrBusy is returned by off and on while another off or on holds the
 // lock beside the record, in this process or another, and, as a
-// heldError, while the root step of one stopped earlier may still run.
+// heldError, while the root step of one that ended with no exit status
+// may still run.
 var ErrBusy = errors.New("another `regrow aerials off` or `on` is running; nothing changed")
 
-// heldError is ErrBusy for a stopped root step that may still run.
+// heldError is ErrBusy for a root step with no exit status that may
+// still run.
 type heldError struct{ until time.Time }
 
 func (e heldError) Error() string {
-	return "the root step of an off or on stopped earlier may still be running; nothing changed, try again after " + e.until.Local().Format(time.TimeOnly)
+	return "the root step of an earlier off or on, which ended with no exit status, may still be running; nothing changed, try again after " + e.until.Local().Format(time.TimeOnly)
 }
 
 func (e heldError) Is(target error) bool { return target == ErrBusy }
@@ -473,6 +475,10 @@ const (
 // for the database, then a downloader gets 5 s after SIGTERM and 2 s
 // after SIGKILL.
 const stepLife = 15 * time.Second
+
+// holdLayout is the hold's time, UTC, at one width, so a hold written
+// over another needs no truncate first.
+const holdLayout = "2006-01-02T15:04:05.000000000Z07:00"
 
 // exitStatus is the root step's exit status from its runner's error.
 func exitStatus(err error) int {
@@ -506,8 +512,9 @@ func (a *Aerials) begin(ctx context.Context, ready func(Status) (bool, error)) (
 	if release, err = a.lock(); err != nil {
 		return res, nil, err
 	}
-	// A hold further ahead than a step can run is from a clock set back.
-	if until := a.heldUntil(); a.now().Before(until) && until.Sub(a.now()) <= stepLife {
+	// A hold more than a minute ahead is from a clock set back; a hold
+	// is written stepLife ahead, and the clock may step back a little.
+	if now, until := a.now(), a.heldUntil(); now.Before(until) && until.Sub(now) <= time.Minute {
 		release()
 		return res, nil, heldError{until}
 	}
@@ -566,13 +573,22 @@ func (a *Aerials) lock() (func(), error) {
 // that runs the step, and the root shell or its sqlite3 may outlive it
 // (sudo passes SIGTERM to the shell alone) or regrow, so the next off or
 // on waits until the step has surely ended. Only the lock's holder
-// writes it.
+// writes it. A time is written over the one before, not after a
+// truncate, so a write that fails leaves the time before it.
 func (a *Aerials) hold(until time.Time) error {
-	var data []byte
-	if !until.IsZero() {
-		data = []byte(until.UTC().Format(time.RFC3339Nano) + "\n")
+	path := a.RecordPath + ".lock"
+	if until.IsZero() {
+		return os.Truncate(path, 0)
 	}
-	return os.WriteFile(a.RecordPath+".lock", data, 0o600)
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE, 0o600)
+	if err != nil {
+		return err
+	}
+	_, err = f.WriteAt([]byte(until.UTC().Format(holdLayout)+"\n"), 0)
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	return err
 }
 
 // heldUntil reads the time hold wrote; zero for none.
@@ -581,7 +597,7 @@ func (a *Aerials) heldUntil() time.Time {
 	if err != nil {
 		return time.Time{}
 	}
-	until, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(string(data)))
+	until, err := time.Parse(holdLayout, strings.TrimSpace(string(data)))
 	if err != nil {
 		return time.Time{}
 	}
