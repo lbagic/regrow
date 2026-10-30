@@ -46,6 +46,8 @@ final class StatusMenu: NSObject, NSMenuDelegate {
             scan: { shell.showWindow(scan: true) },
             setAutotrim: { shell.autotrim = $0 },
             chooseLoginItem: { shell.chooseLoginItem($0) },
+            setAerials: { shell.setAerials(off: $0) },
+            openAerialPane: { shell.openAerialPane(surface: $0) },
             copy: { shell.copy($0) },
             openFullDiskAccess: { shell.openFullDiskAccess() },
             relaunch: { shell.relaunch() },

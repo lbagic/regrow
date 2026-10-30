@@ -201,9 +201,9 @@ type Aerials struct {
 	// while the prompt is open is read. Nil asks nothing first: Root's
 	// command asks itself, after the picks were read.
 	Authorize func(ctx context.Context) error
-	// Root turns a shell script into the command that runs it as root,
-	// such as `sudo -n` once Authorize has the password. The journal
-	// records that command.
+	// Root turns a shell script into the command that runs it as root:
+	// `sudo -n` in a terminal once Authorize has the password,
+	// AdminPrompt in the app. The journal records that command.
 	Root func(script string) []string
 	// Run runs a command. Off and on read the root step's exit status
 	// from its error (ExitCode, as *exec.ExitError has it); a runner
@@ -837,3 +837,67 @@ func onScript(db, lock string, picks []Pick) string {
 			" || { echo 'regrow: could not put the aerial picks back; nothing changed' >&2; exit " + strconv.Itoa(exitNothing) + "; }",
 	}...), "\n")
 }
+
+// AdminPrompt runs a root step through macOS's administrator prompt,
+// for a caller with no terminal for sudo: osascript's `do shell script
+// … with administrator privileges` asks for the password in a system
+// dialog, prompt as its text, and runs the script with /bin/sh as root.
+func AdminPrompt(prompt string) func(script string) []string {
+	quote := func(s string) string {
+		r := strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`)
+		return `"` + r.Replace(s) + `"`
+	}
+	return func(script string) []string {
+		return []string{"/usr/bin/osascript", "-e", "do shell script " + quote(script) + " with prompt " + quote(prompt) + " with administrator privileges"}
+	}
+}
+
+// adminStatus is the root step's exit status in osascript's error text,
+// "execution error: <the script's stderr> (<status>)", its last number.
+var adminStatus = regexp.MustCompile(`\((-?\d+)\)\s*$`)
+
+// AdminRun runs AdminPrompt's command through run, and gives off and on
+// the root step's exit status, which osascript reports only in its
+// error text: osascript itself exits 1 whenever the step fails. Cancel
+// at the prompt, -128, did not run the step (ErrNotRun), nor did a
+// command whose error says, by a Started method, that it never started,
+// as protocol.RunNative's does. A status outside 0–255, such as 1000
+// and a signal's number for a step the signal ended, text with none, or
+// any other error, a stop included, gives no status.
+func AdminRun(run func(context.Context, []string) error) func(context.Context, []string) error {
+	return func(ctx context.Context, argv []string) error {
+		err := run(ctx, argv)
+		var exit *exec.ExitError
+		var start interface{ Started() bool }
+		switch {
+		case err == nil:
+			return nil
+		case errors.As(err, &start) && !start.Started():
+			return fmt.Errorf("%w: %v", ErrNotRun, err)
+		case !errors.As(err, &exit):
+			return adminError{code: exitUnknown, err: err}
+		}
+		code := exitUnknown
+		if m := adminStatus.FindStringSubmatch(err.Error()); m != nil {
+			n, _ := strconv.Atoi(m[1])
+			switch {
+			case n == -128:
+				return fmt.Errorf("%w: %v", ErrNotRun, err)
+			case n >= 0 && n <= 255:
+				code = n
+			}
+		}
+		return adminError{code: code, err: err}
+	}
+}
+
+// adminError is osascript's failure, carrying the root step's exit
+// status in place of osascript's own.
+type adminError struct {
+	code int
+	err  error
+}
+
+func (e adminError) Error() string { return e.err.Error() }
+func (e adminError) Unwrap() error { return e.err }
+func (e adminError) ExitCode() int { return e.code }

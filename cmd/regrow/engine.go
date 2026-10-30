@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/lbagic/regrow/internal/aerials"
 	"github.com/lbagic/regrow/internal/autopilot"
 	"github.com/lbagic/regrow/internal/engine"
 	"github.com/lbagic/regrow/internal/executor"
@@ -101,7 +102,40 @@ func newEngineServer(host engine.Host, catalog []engine.Rule, flags []string) *p
 			}
 			return runStagingDir(logPath, runID)
 		},
+		Aerials: func() *aerials.Aerials {
+			// An unreadable state dir leaves the record path empty: off
+			// then fails to record and changes nothing.
+			recordPath, _ := aerials.RecordPath()
+			return &aerials.Aerials{
+				Version:    host.Version,
+				RecordPath: recordPath,
+				Store:      aerials.WallpaperStorePath(host.Home),
+				Log:        oplogAppender{},
+				Root:       aerials.AdminPrompt("regrow needs your password to change macOS's aerial video downloads."),
+				Run:        aerials.AdminRun(protocol.RunNative),
+			}
+		},
 	}
+}
+
+// oplogAppender opens the oplog for each entry: an aerials switch
+// journals two lines, and a status read must not create the file.
+type oplogAppender struct{}
+
+func (oplogAppender) Append(e oplog.Entry) error {
+	path, err := oplog.DefaultPath()
+	if err != nil {
+		return err
+	}
+	log, err := oplog.Open(path)
+	if err != nil {
+		return err
+	}
+	err = log.Append(e)
+	if cerr := log.Close(); err == nil {
+		err = cerr
+	}
+	return err
 }
 
 // tickFor is the tick over the catalog as it stands when the tick starts.

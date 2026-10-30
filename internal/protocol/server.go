@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/lbagic/regrow/internal/aerials"
 	"github.com/lbagic/regrow/internal/autopilot"
 	"github.com/lbagic/regrow/internal/engine"
 	"github.com/lbagic/regrow/internal/executor"
@@ -33,7 +34,7 @@ const (
 	// defaultExitGrace bounds what shutdown waits for that cannot lose
 	// data: a canceled scan winding down and a history being read, from
 	// one deadline, and a reader that stopped draining events. An
-	// execute or a tick is always waited for in full.
+	// execute, a tick or an aerials switch is always waited for in full.
 	defaultExitGrace = 5 * time.Second
 )
 
@@ -79,6 +80,10 @@ type Server struct {
 	// StagingDir names the folder a run's staged moves and volume
 	// exports go to, for the run's done event; nil names none.
 	StagingDir func(runID string) string
+	// Aerials builds what reads and switches the aerial picks: its root
+	// step goes through macOS's administrator prompt, and its journal
+	// is the oplog. Nil refuses aerials requests.
+	Aerials func() *aerials.Aerials
 	// ProbeFDA answers hello's fda field; nil means ProbeFDA(Host).
 	ProbeFDA func() FDA
 	// Now is injectable for plan expiry in tests.
@@ -132,7 +137,7 @@ type heldPlan struct {
 	expired bool
 }
 
-// operation is the one scan, execute or tick in flight.
+// operation is the one scan, execute, tick or aerials switch in flight.
 type operation struct {
 	kind string
 	re   string
@@ -162,9 +167,10 @@ type session struct {
 
 // Serve runs the protocol until in ends or ctx is canceled, then shuts
 // down: a scan in flight is canceled, an execute finishes and journals
-// its current action and stops there, a tick runs to its end, and a
-// history being read is answered if it ends within the exit grace or
-// before the execute or tick. It returns in's read error, nil at EOF.
+// its current action and stops there, a tick runs to its end, an
+// aerials switch stops as a cancel stops it, and a history being read is
+// answered if it ends within the exit grace or before the execute, tick
+// or switch. It returns in's read error, nil at EOF.
 func (srv *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 	s := srv.newSession(out)
 
@@ -294,6 +300,10 @@ func (s *session) handle(l requestLine) {
 			defer s.answering.Done()
 			s.history(req)
 		}()
+	case reqAerials:
+		s.aerialsStatus(req)
+	case reqAerialsSwitch:
+		s.startAerialsSwitch(req)
 	case reqRules, reqSetRule:
 		s.rules(req)
 	default:
@@ -301,7 +311,8 @@ func (s *session) handle(l requestLine) {
 	}
 }
 
-// busy refuses req while a scan, execute or tick is in flight. The caller
+// busy refuses req while a scan, execute, tick or aerials switch is in
+// flight. The caller
 // holds s.mu.
 func (s *session) busy(req request) bool {
 	cur := s.inflight

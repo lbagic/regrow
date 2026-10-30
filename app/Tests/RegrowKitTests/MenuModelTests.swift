@@ -144,4 +144,157 @@ struct MenuModelTests {
         }
         #expect(rows.contains(.environment("Login environment not captured: the login shell gave no answer within 5 s")))
     }
+
+    private func aerials(_ line: String, pending: Bool = false, queued: Bool = false, failure: String? = nil) throws -> MenuState {
+        var state = state(tick: try tick())
+        let event = try #require(Wire.decode(Wire.Aerials.self, from: line))
+        state.aerials = AerialsSwitch(status: event.status, pending: pending, queued: queued, failure: failure)
+        return state
+    }
+
+    @Test("the aerial downloads' switch sits under autotrim while regrow can turn them off or on")
+    func aerialsSwitch() throws {
+        let on = MenuModel.rows(try aerials(#"{"event":"aerials","status":{"state":"on","counts":{"categories":4}}}"#))
+        #expect(on.contains(.aerials(state: "on", switchable: true)))
+        let index = try #require(on.firstIndex(of: .aerials(state: "on", switchable: true)))
+        #expect(on[index - 1] == .autotrim(on: false))
+
+        let waiting = #"{"event":"aerials","status":{"state":"off","recorded":{"cleared":"2026-10-29T12:00:00Z","picks":[{"table":"Z_2ACTIVEFORUSERS"}]}}}"#
+        #expect(MenuModel.rows(try aerials(waiting)).contains(.aerials(state: "off", switchable: true)))
+        let restored = #"{"event":"aerials","status":{"state":"off","recorded":{"picks":[{}],"restored":"2026-10-29T13:00:00Z"}}}"#
+        #expect(MenuModel.rows(try aerials(restored)).contains(.aerials(state: "off", switchable: false)))
+        #expect(MenuModel.rows(try aerials(#"{"event":"aerials","status":{"state":"off"}}"#)).contains(.aerials(state: "off", switchable: false)))
+
+        for state in ["absent", "unknown", "unmeasured"] {
+            let rows = MenuModel.rows(try aerials(#"{"event":"aerials","status":{"state":"\#(state)"}}"#))
+            #expect(!rows.contains { if case .aerials = $0 { return true } else { return false } })
+        }
+    }
+
+    @Test("a switch waiting for the password, a failed one, and an aerial still set")
+    func aerialsNotes() throws {
+        let pending = MenuModel.rows(try aerials(#"{"event":"aerials","status":{"state":"on"}}"#, pending: true))
+        #expect(pending.contains(.aerials(state: "asking…", switchable: false)))
+        let queued = MenuModel.rows(try aerials(#"{"event":"aerials","status":{"state":"on"}}"#, pending: true, queued: true))
+        #expect(queued.contains(.aerials(state: "waiting…", switchable: false)))
+
+        // A failed switch whose read afterwards failed too still says so.
+        let unread = MenuModel.rows(try aerials(#"{"event":"aerials","status":{"state":"unknown","set_for":["wallpaper"]}}"#, failure: "Aerial downloads did not switch: the root step failed"))
+        #expect(!unread.contains { if case .aerials = $0 { return true } else { return false } })
+        #expect(unread.contains(.note("Aerial downloads did not switch: the root step failed")))
+        #expect(unread.contains(.openAerialPane(surface: "wallpaper")))
+
+        let failed = MenuModel.rows(try aerials(#"{"event":"aerials","status":{"state":"on"}}"#, failure: "Aerial downloads did not switch: canceled"))
+        #expect(failed.contains(.note("Aerial downloads did not switch: canceled")))
+
+        let set = MenuModel.rows(try aerials(#"{"event":"aerials","status":{"state":"off","set_for":["wallpaper","screen saver"]}}"#))
+        let warning = try #require(set.firstIndex(of: .note("An aerial is still set as your wallpaper, so macOS may download for it again: choose another in System Settings ▸ Wallpaper.")))
+        #expect(set[warning + 1] == .openAerialPane(surface: "wallpaper"))
+        let saver = try #require(set.firstIndex(of: .note("An aerial is still set as your screen saver, so macOS may download for it again: choose another in System Settings ▸ Screen Saver.")))
+        #expect(set[saver + 1] == .openAerialPane(surface: "screen saver"))
+    }
+
+    private func switchEvent(_ line: String) throws -> Wire.Aerials {
+        try #require(Wire.decode(Wire.Aerials.self, from: line))
+    }
+
+    @Test("a failed switch's note stays through reads of the same state or none, and goes once the state changes")
+    func aerialsFailureKept() throws {
+        var aerials = AerialsSwitch(status: Wire.AerialsStatus(state: "on"))
+        aerials.start(queued: true)
+        #expect(aerials.pending && aerials.queued)
+        aerials.switched(try switchEvent(#"{"event":"aerials","status":{"state":"on"},"result":{"ran":true,"before":{"state":"on"},"after":{"state":"on"}}}"#))
+        aerials.failed("the root step failed")
+        #expect(!aerials.pending && !aerials.queued)
+        #expect(aerials.failure == "Aerial downloads are still on: the root step failed")
+        aerials.read(Wire.AerialsStatus(state: "on"))
+        aerials.read(Wire.AerialsStatus(state: "unknown"))
+        #expect(aerials.failure == "Aerial downloads are still on: the root step failed")
+        aerials.read(Wire.AerialsStatus(state: "off"))
+        #expect(aerials.failure == nil)
+        aerials.end(failure: "The engine stopped")
+        aerials.read(Wire.AerialsStatus(state: "off"))
+        #expect(aerials.failure == "The engine stopped")
+        aerials.start(queued: false)
+        #expect(aerials.failure == nil)
+    }
+
+    @Test("a failed switch's words follow the engine's reads around its root step, not the app's last read")
+    func aerialsFailedWords() throws {
+        // The picks changed in System Settings since the app last read them.
+        var outside = AerialsSwitch(status: Wire.AerialsStatus(state: "off"))
+        outside.start(queued: false)
+        outside.switched(try switchEvent(#"{"event":"aerials","status":{"state":"on"},"result":{"ran":false,"before":{"state":"on"},"after":{"state":"on"}}}"#))
+        outside.failed("canceled at the password prompt; nothing changed")
+        #expect(outside.failure == "Aerial downloads did not switch: canceled at the password prompt; nothing changed")
+
+        var changed = AerialsSwitch(status: Wire.AerialsStatus(state: "on"))
+        changed.start(queued: false)
+        changed.switched(try switchEvent(#"{"event":"aerials","status":{"state":"off"},"result":{"ran":true,"before":{"state":"on"},"after":{"state":"off"}}}"#))
+        changed.failed("oplog append failed after the root step: disk full")
+        #expect(changed.failure == "Aerial downloads are off now, but the switch ended with an error: oplog append failed after the root step: disk full")
+
+        var unread = AerialsSwitch(status: Wire.AerialsStatus(state: "off"))
+        unread.start(queued: false)
+        unread.switched(try switchEvent(#"{"event":"aerials","status":{"state":"unknown"},"result":{"ran":true,"before":{"state":"off"},"after":{"state":"unknown"}}}"#))
+        unread.failed("the picks are back, but could not be read afterwards to count any not put back: database is locked")
+        #expect(unread.failure == "Aerial downloads may have switched: the picks are back, but could not be read afterwards to count any not put back: database is locked")
+
+        // A step the stop may not have ended, the state as it was.
+        var stopped = AerialsSwitch(status: Wire.AerialsStatus(state: "on"))
+        stopped.start(queued: false)
+        stopped.switched(try switchEvent(#"{"event":"aerials","status":{"state":"on"},"result":{"ran":true,"before":{"state":"on"},"after":{"state":"on"}}}"#))
+        stopped.failed("stopped before the root step ended; it may still finish")
+        #expect(stopped.failure == "Aerial downloads are still on: stopped before the root step ended; it may still finish")
+
+        // An on stopped once its picks were back counts what it could not put back.
+        var back = AerialsSwitch(status: Wire.AerialsStatus(state: "off"))
+        back.start(queued: false)
+        back.switched(try switchEvent(#"{"event":"aerials","status":{"state":"on"},"result":{"ran":true,"before":{"state":"off"},"after":{"state":"on"},"missing":1}}"#))
+        back.failed("stopped before the root step ended; it may still finish")
+        #expect(back.failure == "Aerial downloads are on now, but the switch ended with an error: stopped before the root step ended; it may still finish. 1 recorded pick is no longer in macOS's aerial catalogue and was not put back.")
+
+        var alone = AerialsSwitch(status: Wire.AerialsStatus(state: "on"))
+        alone.start(queued: false)
+        alone.failed("busy")
+        #expect(alone.failure == "Aerial downloads did not switch: busy")
+    }
+
+    @Test("an on that could not put every recorded pick back says how many, as a note")
+    func aerialsMissing() throws {
+        let event = try switchEvent(#"{"event":"aerials","status":{"state":"off"},"result":{"ran":true,"missing":3}}"#)
+        #expect(event.result?.missing == 3)
+        #expect(try switchEvent(#"{"event":"aerials","status":{"state":"off"}}"#).result == nil)
+        var aerials = AerialsSwitch(status: Wire.AerialsStatus(state: "off"))
+        aerials.start(queued: false)
+        aerials.switched(event)
+        aerials.done()
+        #expect(aerials.failure == nil)
+        #expect(aerials.note == "3 recorded picks are no longer in macOS's aerial catalogue and were not put back.")
+        var state = state(tick: nil)
+        state.aerials = aerials
+        #expect(MenuModel.rows(state).contains(.note("3 recorded picks are no longer in macOS's aerial catalogue and were not put back.")))
+        aerials.read(Wire.AerialsStatus(state: "off"))
+        #expect(aerials.note != nil)
+        aerials.read(Wire.AerialsStatus(state: "on"))
+        #expect(aerials.note == nil)
+        #expect(MenuText.aerialsMissing(1) == "1 recorded pick is no longer in macOS's aerial catalogue and was not put back.")
+    }
+
+    @Test("with Start with Mac in the menu, the aerials switch sits under it")
+    func aerialsUnderLoginItem() throws {
+        var state = try aerials(#"{"event":"aerials","status":{"state":"on"}}"#)
+        state.loginItem = .on
+        let rows = MenuModel.rows(state)
+        let index = try #require(rows.firstIndex(of: .aerials(state: "on", switchable: true)))
+        #expect(rows[index - 1] == .loginItem(.on))
+    }
+
+    @Test("each surface's pane opens by its System Settings link")
+    func aerialPanes() {
+        #expect(MenuText.aerialPane("wallpaper") == "Wallpaper")
+        #expect(MenuText.aerialPaneURL("wallpaper").absoluteString == "x-apple.systempreferences:com.apple.Wallpaper-Settings.extension")
+        #expect(MenuText.aerialPane("screen saver") == "Screen Saver")
+        #expect(MenuText.aerialPaneURL("screen saver").absoluteString == "x-apple.systempreferences:com.apple.ScreenSaver-Settings.extension")
+    }
 }

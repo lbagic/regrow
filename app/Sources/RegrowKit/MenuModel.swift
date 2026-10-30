@@ -27,11 +27,13 @@ public struct MenuState {
     public var environmentFailure: String?
     /// The engine's path, which a copied `regrow` command starts.
     public var engine: String
+    public var aerials: AerialsSwitch
 
     public init(
         tick: Wire.Tick?, checkedAt: String?, tickFailure: TickFailure?, engineDown: String?,
         autotrim: Bool, fda: String?, environmentFailure: String?, engine: String,
-        loginItem: LoginItemState? = nil
+        loginItem: LoginItemState? = nil,
+        aerials: AerialsSwitch = AerialsSwitch()
     ) {
         self.tick = tick
         self.checkedAt = checkedAt
@@ -42,6 +44,95 @@ public struct MenuState {
         self.fda = fda
         self.environmentFailure = environmentFailure
         self.engine = engine
+        self.aerials = aerials
+    }
+}
+
+/// The aerial downloads as the shell last heard of them, and a switch
+/// it has asked for.
+public struct AerialsSwitch: Equatable {
+    public var status: Wire.AerialsStatus?
+    /// A switch waits for the owner's password, or for the engine.
+    public var pending: Bool
+    /// The pending switch waits behind a scan, execute or tick, or for
+    /// the engine to start: macOS has not asked yet.
+    public var queued: Bool
+    /// Why the last switch did not finish.
+    public var failure: String?
+    /// What the last switch could not do, though it finished.
+    public var note: String?
+    /// The state read when that switch ended.
+    public var failedAt: String?
+    /// The switch in flight's outcome, from its own `aerials` event.
+    public var result: Wire.AerialsResult?
+
+    public init(status: Wire.AerialsStatus? = nil, pending: Bool = false, queued: Bool = false, failure: String? = nil) {
+        self.status = status
+        self.pending = pending
+        self.queued = queued
+        self.failure = failure
+    }
+
+    /// A read no switch asked for. It keeps the last switch's words while
+    /// the state is the one they were read with, or could not be read.
+    public mutating func read(_ status: Wire.AerialsStatus) {
+        self.status = status
+        if failure != nil || note != nil, status.state != failedAt, status.state == "on" || status.state == "off" {
+            failure = nil
+            note = nil
+            failedAt = nil
+        }
+    }
+
+    /// A switch sent, or held until the engine can take it.
+    public mutating func start(queued: Bool) {
+        pending = true
+        self.queued = queued
+        failure = nil
+        note = nil
+        failedAt = nil
+        result = nil
+    }
+
+    /// The switch's own read: the state it left and its outcome.
+    public mutating func switched(_ event: Wire.Aerials) {
+        status = event.status
+        result = event.result
+    }
+
+    /// The switch in flight ended with an error. The engine's reads
+    /// around its root step say whether it changed the state.
+    public mutating func failed(_ message: String) {
+        let before = result?.before?.state, after = result?.after?.state
+        var why: String
+        if result?.ran != true {
+            why = "Aerial downloads did not switch: \(message)"
+        } else if let after, after == before, after == "on" || after == "off" {
+            why = "Aerial downloads are still \(after): \(message)"
+        } else if let after, after == "on" || after == "off" {
+            why = "Aerial downloads are \(after) now, but the switch ended with an error: \(message)"
+        } else {
+            why = "Aerial downloads may have switched: \(message)"
+        }
+        if let missing = result?.missing, missing > 0 {
+            why += (why.hasSuffix(".") ? " " : ". ") + MenuText.aerialsMissing(missing)
+        }
+        end(failure: why)
+    }
+
+    /// The switch in flight ended without an error.
+    public mutating func done() {
+        end(note: (result?.missing).flatMap { $0 > 0 ? MenuText.aerialsMissing($0) : nil })
+    }
+
+    /// The switch in flight ended, with what to say about it.
+    public mutating func end(failure: String? = nil, note: String? = nil) {
+        pending = false
+        queued = false
+        result = nil
+        self.failure = failure
+        self.note = note
+        failedAt = failure == nil && note == nil ? nil : status?.state
     }
 }
 
@@ -81,7 +172,16 @@ public enum MenuRow: Equatable {
     case scan
     case autotrim(on: Bool)
     case loginItem(LoginItemState)
-    /// The engine's words under the switch: why autotrim did not run.
+    /// The aerial downloads' switch: its state, and whether a click
+    /// turns them off or on; a line alone when off with nothing to put
+    /// back.
+    case aerials(state: String, switchable: Bool)
+    /// The pane in System Settings that chooses what the surface shows,
+    /// under the warning that an aerial is still set there.
+    case openAerialPane(surface: String)
+    /// A line in secondary under a switch: why autotrim did not run, or
+    /// why the aerials switch did not end and a warning for an aerial
+    /// still set.
     case note(String)
     /// The command the line above quotes, as Terminal takes it.
     case copy(String)
@@ -116,6 +216,7 @@ public enum MenuModel {
         if let loginItem = state.loginItem {
             rows.append(.loginItem(loginItem))
         }
+        rows += aerials(state.aerials)
         let off = state.fda.map { $0 != "granted" } ?? false
         rows += [.separator, .fullDiskAccess(MenuText.fullDiskAccess(state.fda), opensSettings: off)]
         if off {
@@ -151,6 +252,27 @@ public enum MenuModel {
             purgeable: Double(tick.purgeable) / total,
             details: "Purgeable \(humanBytes(tick.purgeable)) · Swap \(humanBytes(tick.swapUsed))",
             forecast: MenuText.forecast(tick), checked: checked, problems: problems)
+    }
+
+    /// The switch shows only where regrow can turn the downloads off or
+    /// on: macOS 15 and earlier, with the picks readable. Why a switch
+    /// did not end, and an aerial still set, show whatever the state.
+    static func aerials(_ aerials: AerialsSwitch) -> [MenuRow] {
+        guard let status = aerials.status else { return [] }
+        var rows: [MenuRow] = []
+        if status.state == "on" || status.state == "off" {
+            let on = status.state == "on"
+            let waiting = status.recorded?.waiting ?? false
+            let state = !aerials.pending ? status.state : aerials.queued ? "waiting…" : "asking…"
+            rows.append(.aerials(state: state, switchable: !aerials.pending && (on || waiting)))
+        }
+        for line in [aerials.failure, aerials.note].compactMap({ $0 }) {
+            rows.append(.note(line))
+        }
+        for surface in status.setFor ?? [] {
+            rows += [.note(MenuText.aerialSet(surface)), .openAerialPane(surface: surface)]
+        }
+        return rows
     }
 
     private static func copy(in line: String, _ state: MenuState) -> [MenuRow] {

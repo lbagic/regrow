@@ -53,6 +53,57 @@ public enum Wire {
         public let freeAfter: Int64?
     }
 
+    /// An `aerials` event: the picks macOS downloads aerial videos for.
+    public struct Aerials: Decodable, Equatable {
+        public let status: AerialsStatus
+        /// A switch's outcome; nil on a plain read.
+        public let result: AerialsResult?
+    }
+
+    public struct AerialsResult: Decodable, Equatable {
+        /// Whether the root step may have changed the picks: false for
+        /// one that never started or said it changed nothing.
+        public let ran: Bool?
+        /// The picks as the engine read them around the root step.
+        public let before: AerialsStatus?
+        public let after: AerialsStatus?
+        /// Recorded picks `on` could not put back: macOS no longer has
+        /// their category, subcategory or video.
+        public let missing: Int?
+    }
+
+    public struct AerialsStatus: Decodable, Equatable {
+        /// `on`, `off`, `absent`, `unknown` or `unmeasured`.
+        public let state: String
+        public let detail: String?
+        public let recorded: AerialsRecord?
+        /// The surfaces the wallpaper store still sets an aerial for.
+        public let setFor: [String]?
+
+        public init(state: String, detail: String? = nil, recorded: AerialsRecord? = nil, setFor: [String]? = nil) {
+            self.state = state
+            self.detail = detail
+            self.recorded = recorded
+            self.setFor = setFor
+        }
+    }
+
+    /// The last `regrow aerials off`'s record of the picks it cleared.
+    public struct AerialsRecord: Decodable, Equatable {
+        public let picks: [Pick]?
+        public let restored: String?
+
+        public struct Pick: Decodable, Equatable {}
+
+        public init(picks: Int, restored: String? = nil) {
+            self.picks = Array(repeating: Pick(), count: picks)
+            self.restored = restored
+        }
+
+        /// Whether `on` has picks to put back.
+        public var waiting: Bool { restored == nil && !(picks ?? []).isEmpty }
+    }
+
     public static func decode<T: Decodable>(_ type: T.Type, from line: Data) -> T? {
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
