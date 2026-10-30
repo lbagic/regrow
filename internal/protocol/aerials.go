@@ -32,7 +32,8 @@ func (s *session) aerialsStatus(req request) {
 
 // startAerialsSwitch turns the downloads off or on through macOS's
 // administrator prompt. It holds the slot, as a tick does, so shutdown
-// waits for its journal; a cancel or shutdown closes the prompt.
+// waits for its journal; a cancel or shutdown ends osascript, and
+// whether macOS then closes a prompt still open is not measured.
 func (s *session) startAerialsSwitch(req request) {
 	if s.srv.Aerials == nil {
 		s.emit(failure(req.ID, CodeAerialsFailed, "this engine cannot change the aerial picks"))

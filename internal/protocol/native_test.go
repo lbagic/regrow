@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/lbagic/regrow/internal/aerials"
 	"github.com/lbagic/regrow/internal/engine"
@@ -79,8 +80,7 @@ func TestRunNativeExitZeroUnderAStopSucceeds(t *testing.T) {
 	}
 }
 
-// An exit 0 is a success over an error only when a stop caused that
-// error: output that could not be copied still fails the command.
+// Output that could not be copied fails the command.
 func TestRunNativeToReportsAFailedCopy(t *testing.T) {
 	if err := RunNativeTo(context.Background(), sh("printf payload"), failingWriter{}); err == nil {
 		t.Error("a command whose output could not be written returned no error")
@@ -90,6 +90,27 @@ func TestRunNativeToReportsAFailedCopy(t *testing.T) {
 type failingWriter struct{}
 
 func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("no space left on device") }
+
+// An exit 0 is a success over an error only when the stop caused that
+// error: a copy that fails once the command has exited, the stop landing
+// meanwhile, still fails it.
+func TestRunNativeToReportsACopyThatFailsAfterAStop(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	w := stopThenFail{stop: cancel}
+	if err := RunNativeTo(ctx, sh("printf payload"), w); err == nil {
+		t.Error("a command whose output could not be written returned no error")
+	}
+}
+
+// stopThenFail gives the command time to exit, stops it, then fails.
+type stopThenFail struct{ stop func() }
+
+func (w stopThenFail) Write([]byte) (int, error) {
+	time.Sleep(200 * time.Millisecond)
+	w.stop()
+	return 0, errors.New("no space left on device")
+}
 
 func TestRunNativeStdinIsEmpty(t *testing.T) {
 	// cat copies stdin to stdout: nothing may arrive, and it must end.

@@ -152,7 +152,9 @@ func TestAerialsBesideATick(t *testing.T) {
 
 // A switch stopped while its root step runs ends saying the step may
 // still finish, and keeps the record. The test holds the root lock, so
-// the step waits in its first lines until the stop has ended its shell.
+// the step waits in its first lines until the stop has ended its shell;
+// in the app a stop ends osascript, and the step may run on, so what the
+// picks are afterwards is not checked.
 func TestAerialsSwitchStoppedMidStep(t *testing.T) {
 	srv, journal := aerialsServer(t, "15.7.7", nil)
 	dir := t.TempDir()
@@ -202,7 +204,7 @@ func TestAerialsSwitchStoppedMidStep(t *testing.T) {
 	p.expect("done/c")
 	p.send(`{"type":"aerials","id":"a2"}`)
 	got := p.expect("aerials/a2", "done/a2")[0]
-	for _, want := range []string{`"status":{"state":"on"`, `"recorded":{"cleared":`} {
+	for _, want := range []string{`"recorded":{"cleared":`} {
 		if !strings.Contains(got.raw, want) {
 			t.Errorf("status after the stop = %s, missing %s", got.raw, want)
 		}

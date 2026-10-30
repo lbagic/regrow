@@ -34,7 +34,7 @@ const (
 	// defaultExitGrace bounds what shutdown waits for that cannot lose
 	// data: a canceled scan winding down and a history being read, from
 	// one deadline, and a reader that stopped draining events. An
-	// execute or a tick is always waited for in full.
+	// execute, a tick or an aerials switch is always waited for in full.
 	defaultExitGrace = 5 * time.Second
 )
 
@@ -163,9 +163,10 @@ type session struct {
 
 // Serve runs the protocol until in ends or ctx is canceled, then shuts
 // down: a scan in flight is canceled, an execute finishes and journals
-// its current action and stops there, a tick runs to its end, and a
-// history being read is answered if it ends within the exit grace or
-// before the execute or tick. It returns in's read error, nil at EOF.
+// its current action and stops there, a tick runs to its end, an
+// aerials switch stops as a cancel stops it, and a history being read is
+// answered if it ends within the exit grace or before the execute, tick
+// or switch. It returns in's read error, nil at EOF.
 func (srv *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 	s := srv.newSession(out)
 
