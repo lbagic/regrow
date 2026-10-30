@@ -107,8 +107,9 @@ func newFixture(t *testing.T) *fixture {
 			}
 			return nil
 		},
-		Daemon: "regrow-test-none",
-		Now:    func() time.Time { return time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC) },
+		Daemon:   "regrow-test-none",
+		RootLock: filepath.Join(dir, "root.lock"),
+		Now:      func() time.Time { return time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC) },
 	}
 	return f
 }
@@ -517,8 +518,6 @@ func TestOffDecidesTheRecordByExitStatus(t *testing.T) {
 			continue
 		}
 		f.a.Root = func(script string) []string { return []string{"/bin/sh", "-c", script} }
-		later := f.a.now().Add(stepLife) // past the hold a step with no status leaves
-		f.a.Now = func() time.Time { return later }
 		if res, err := f.a.On(context.Background()); err != nil || len(res.After.Picks) != len(before) {
 			t.Errorf("%s: on: %+v, %v; want all %d picks", c.name, res.After.Picks, err, len(before))
 		}
@@ -574,117 +573,54 @@ func TestOffStoppedMidStep(t *testing.T) {
 	}
 }
 
-// A root step with no status may outlive the stop and regrow: the next
-// off or on refuses, asking nothing, until the step has surely ended,
-// so its sqlite3 cannot clear picks an on has just put back.
-func TestAStoppedStepHoldsTheNextRunBack(t *testing.T) {
-	f := newFixture(t)
-	before, run := f.a.Status(context.Background()).Picks, f.a.Run
-	ctx, cancel := context.WithCancel(context.Background())
-	f.a.Run = func(ctx context.Context, argv []string) error {
-		if out, err := exec.Command(argv[0], argv[1:]...).CombinedOutput(); err != nil {
-			t.Fatalf("the step: %v: %s", err, out)
-		}
-		cancel()
-		return errors.New("signal: terminated")
-	}
-	if _, err := f.a.Off(ctx); !errors.Is(err, ErrStopped) {
-		t.Fatalf("off stopped mid-step: %v, want ErrStopped", err)
-	}
-	f.a.Run = func(context.Context, []string) error {
-		t.Error("on ran a root step while the stopped one may still run")
-		return nil
-	}
-	f.asked = 0
-	if res, err := f.a.On(context.Background()); !errors.Is(err, ErrBusy) || !strings.Contains(err.Error(), "ended with no exit status, may still be running") || !strings.Contains(err.Error(), "try again after") || res.Ran || f.asked != 0 {
-		t.Errorf("on right after a stopped off: %+v, %v, asked %d; want ErrBusy until the step has ended, no password asked", res, err, f.asked)
-	}
-	f.a.Run = run
-	later := f.a.now().Add(stepLife)
-	f.a.Now = func() time.Time { return later }
-	if res, err := f.a.On(context.Background()); err != nil || !res.Ran || len(res.After.Picks) != len(before) {
-		t.Errorf("on once the step has ended: %+v, %v; want all %d picks back", res.After.Picks, err, len(before))
+// holdRootLock leaves what a stopped step may leave: its shell, which
+// took the root lock, gone, and a child of it holding the lock for d.
+func holdRootLock(t *testing.T, lock string, d time.Duration) {
+	t.Helper()
+	script := strings.Join(append(lockLines(lock), fmt.Sprintf("/bin/sleep %g </dev/null >/dev/null 2>&1 &", d.Seconds())), "\n")
+	if out, err := exec.Command("/bin/sh", "-c", script).CombinedOutput(); err != nil {
+		t.Fatalf("take the root lock: %v: %s", err, out)
 	}
 }
 
-// A command that asks for the password itself (Authorize nil, as the
-// app's osascript) may hold its prompt open longer than a step runs:
-// the hold counts from when it returned with no status, not from when
-// it started.
-func TestAHoldCountsFromTheStepsReturn(t *testing.T) {
+// A root step that outlives its shell, regrow or the app holds the root
+// lock for as long as any of its processes runs, and the next step waits
+// for it, so a stopped off's sqlite3 cannot clear picks an on has just
+// put back.
+func TestARootStepWaitsForAnEarlierOne(t *testing.T) {
 	f := newFixture(t)
-	f.a.Authorize = nil
-	now, run := f.a.now(), f.a.Run
-	f.a.Now = func() time.Time { return now }
-	ctx, cancel := context.WithCancel(context.Background())
-	f.a.Run = func(ctx context.Context, argv []string) error {
-		now = now.Add(20 * time.Second) // the prompt stayed open
-		if out, err := exec.Command(argv[0], argv[1:]...).CombinedOutput(); err != nil {
-			t.Fatalf("the step: %v: %s", err, out)
-		}
-		now = now.Add(time.Second)
-		cancel()
-		return errors.New("signal: killed")
+	before := f.a.Status(context.Background()).Picks
+	if _, err := f.a.Off(context.Background()); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := f.a.Off(ctx); !errors.Is(err, ErrStopped) {
-		t.Fatalf("off stopped after a long prompt: %v, want ErrStopped", err)
+	holdRootLock(t, f.a.RootLock, 2*time.Second)
+	start := time.Now()
+	res, err := f.a.On(context.Background())
+	if err != nil || !res.Ran || len(res.After.Picks) != len(before) {
+		t.Fatalf("on while an earlier step holds the root lock: %+v, %v; want all %d picks back once it ends", res.After.Picks, err, len(before))
 	}
-	now = now.Add(stepLife - time.Second)
-	if res, err := f.a.On(context.Background()); !errors.Is(err, ErrBusy) || res.Ran {
-		t.Errorf("on %v after the stopped step returned: %+v, %v; want ErrBusy", stepLife-time.Second, res, err)
-	}
-	f.a.Run = run
-	now = now.Add(time.Second)
-	if res, err := f.a.On(context.Background()); err != nil || !res.Ran {
-		t.Errorf("on %v after the stopped step returned: %+v, %v; want it run", stepLife, res, err)
+	if waited := time.Since(start); waited < time.Second {
+		t.Errorf("on's step ran %v after the earlier one took the root lock, want it to wait for it", waited)
 	}
 }
 
-// A hold written again over the one before keeps a time when the write
-// fails: a file-size limit of 4 bytes stands in for a full disk.
-func TestAHoldSurvivesAFailedWrite(t *testing.T) {
-	f := newFixture(t)
-	if err := os.MkdirAll(filepath.Dir(f.a.RecordPath), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.a.hold(f.a.now().Add(stepLife)); err != nil {
-		t.Fatal(err)
-	}
-	var limit syscall.Rlimit
-	if err := syscall.Getrlimit(syscall.RLIMIT_FSIZE, &limit); err != nil {
-		t.Fatal(err)
-	}
-	if err := syscall.Setrlimit(syscall.RLIMIT_FSIZE, &syscall.Rlimit{Cur: 4, Max: limit.Max}); err != nil {
-		t.Fatal(err)
-	}
-	err := f.a.hold(f.a.now().Add(stepLife + time.Second))
-	if rerr := syscall.Setrlimit(syscall.RLIMIT_FSIZE, &limit); rerr != nil {
-		t.Fatal(rerr)
-	}
-	if until := f.a.heldUntil(); until.Before(f.a.now().Add(stepLife)) {
-		t.Errorf("hold after a write under a 4-byte limit (%v) = %v, want the time before or the new one", err, until)
-	}
-}
-
-// A hold more than a minute ahead, left by a clock set back, holds
-// nothing back; one a little further ahead than a step runs, as a clock
-// stepped back a moment leaves it, still holds.
-func TestAHoldFromAClockSetBackIsStale(t *testing.T) {
+// A step that cannot take the root lock within rootLockWait changes
+// nothing, and on keeps the record for the next on.
+func TestARootStepGivesUpOnALockStillHeld(t *testing.T) {
 	f := newFixture(t)
 	if _, err := f.a.Off(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.a.hold(f.a.now().Add(stepLife + 2*time.Second)); err != nil {
-		t.Fatal(err)
+	wait := rootLockWait
+	rootLockWait = 1
+	defer func() { rootLockWait = wait }()
+	holdRootLock(t, f.a.RootLock, 3*time.Second)
+	res, err := f.a.On(context.Background())
+	if err == nil || res.Ran || !strings.Contains(err.Error(), "could not take the lock") {
+		t.Errorf("on while the root lock stays held: %+v, %v; want nothing changed", res, err)
 	}
-	if res, err := f.a.On(context.Background()); !errors.Is(err, ErrBusy) || res.Ran {
-		t.Errorf("on under a hold %v ahead: %+v, %v; want ErrBusy", stepLife+2*time.Second, res, err)
-	}
-	if err := f.a.hold(f.a.now().Add(365 * 24 * time.Hour)); err != nil {
-		t.Fatal(err)
-	}
-	if res, err := f.a.On(context.Background()); err != nil || !res.Ran {
-		t.Errorf("on under a hold a year ahead: %+v, %v; want it run", res, err)
+	if r := f.record(t); !r.Waiting() {
+		t.Errorf("record = %+v, want it still waiting for on", r)
 	}
 }
 

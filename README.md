@@ -145,7 +145,8 @@ Flags go before ids: `regrow clean --yes go-build-cache`. `--rules-dir DIR` load
 | `~/.local/state/regrow/headroom.jsonl` | free-space samples from `regrow tick` and the app, 30 days |
 | `~/.local/state/regrow/prune.state` | the lock and the build-deferral clock of the Go build cache prune |
 | `~/.local/state/regrow/aerials.json` | the aerial picks `regrow aerials off` cleared, which `regrow aerials on` puts back |
-| `~/.local/state/regrow/aerials.json.lock` | the lock that keeps a second `regrow aerials off` or `on` out while one runs, and after a stopped one until its root step has surely ended |
+| `~/.local/state/regrow/aerials.json.lock` | the lock that keeps a second `regrow aerials off` or `on` out while one runs |
+| `/var/run/regrow-aerials.lock` | an empty file, the lock the root step of `regrow aerials off` or `on` holds for as long as it runs |
 | `~/.config/regrow/config.yaml` | optional settings (below); regrow never writes it |
 
 `XDG_STATE_HOME` moves `~/.local/state/regrow`, and `XDG_CONFIG_HOME` moves `~/.config/regrow`. regrow never empties its staging folder: what lands there stays until you remove it. [docs/SCAN.md](docs/SCAN.md) lists every file regrow writes; the app's own files are in [docs/APP.md](docs/APP.md).

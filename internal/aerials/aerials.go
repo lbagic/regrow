@@ -213,6 +213,9 @@ type Aerials struct {
 	// Daemon is the downloader's process name; empty means Daemon.
 	// Tests name a process of their own.
 	Daemon string
+	// RootLock is the lock file every root step holds; empty means
+	// RootLock. Tests name a file of their own.
+	RootLock string
 	// Now is injectable for tests.
 	Now func() time.Time
 }
@@ -238,6 +241,13 @@ func (a *Aerials) daemon() string {
 		return Daemon
 	}
 	return a.Daemon
+}
+
+func (a *Aerials) rootLock() string {
+	if a.RootLock == "" {
+		return RootLock
+	}
+	return a.RootLock
 }
 
 func (a *Aerials) now() time.Time {
@@ -448,20 +458,8 @@ var ErrNotRun = errors.New("the root step did not run; nothing changed")
 var errNotStarted = errors.New("stopped before the root step started; nothing changed")
 
 // ErrBusy is returned by off and on while another off or on holds the
-// lock beside the record, in this process or another, and, as a
-// heldError, while the root step of one that ended with no exit status
-// may still run.
+// lock beside the record, in this process or another.
 var ErrBusy = errors.New("another `regrow aerials off` or `on` is running; nothing changed")
-
-// heldError is ErrBusy for a root step with no exit status that may
-// still run.
-type heldError struct{ until time.Time }
-
-func (e heldError) Error() string {
-	return "the root step of an earlier off or on, which ended with no exit status, may still be running; nothing changed, try again after " + e.until.Local().Format(time.TimeOnly)
-}
-
-func (e heldError) Is(target error) bool { return target == ErrBusy }
 
 // The root scripts' exit statuses, which decide the record.
 const (
@@ -471,14 +469,13 @@ const (
 	exitUnknown = -1 // no status: a signal, or a runner that cannot say
 )
 
-// stepLife bounds a root step from its start: sqlite3 waits at most 5 s
-// for the database, then a downloader gets 5 s after SIGTERM and 2 s
-// after SIGKILL.
-const stepLife = 15 * time.Second
+// RootLock is the file each root step locks first and holds for as long
+// as any of its processes runs; only root can write in /var/run.
+const RootLock = "/var/run/regrow-aerials.lock"
 
-// holdLayout is the hold's time, UTC, at one width, so a hold written
-// over another needs no truncate first.
-const holdLayout = "2006-01-02T15:04:05.000000000Z07:00"
+// rootLockWait is how long a root step waits, in seconds, for an earlier
+// one to end; an off step lives about 13 s at most.
+var rootLockWait = 30
 
 // exitStatus is the root step's exit status from its runner's error.
 func exitStatus(err error) int {
@@ -511,12 +508,6 @@ func (a *Aerials) begin(ctx context.Context, ready func(Status) (bool, error)) (
 	}
 	if release, err = a.lock(); err != nil {
 		return res, nil, err
-	}
-	// A hold more than a minute ahead is from a clock set back; a hold
-	// is written stepLife ahead, and the clock may step back a little.
-	if now, until := a.now(), a.heldUntil(); now.Before(until) && until.Sub(now) <= time.Minute {
-		release()
-		return res, nil, heldError{until}
 	}
 	if a.Authorize != nil {
 		aerr := a.Authorize(ctx)
@@ -568,42 +559,6 @@ func (a *Aerials) lock() (func(), error) {
 	return func() { _ = f.Close() }, nil
 }
 
-// hold writes into the lock file the time until which a root step may
-// still run, or clears it for the zero time. A stop ends the command
-// that runs the step, and the root shell or its sqlite3 may outlive it
-// (sudo passes SIGTERM to the shell alone) or regrow, so the next off or
-// on waits until the step has surely ended. Only the lock's holder
-// writes it. A time is written over the one before, not after a
-// truncate, so a write that fails leaves the time before it.
-func (a *Aerials) hold(until time.Time) error {
-	path := a.RecordPath + ".lock"
-	if until.IsZero() {
-		return os.Truncate(path, 0)
-	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE, 0o600)
-	if err != nil {
-		return err
-	}
-	_, err = f.WriteAt([]byte(until.UTC().Format(holdLayout)+"\n"), 0)
-	if cerr := f.Close(); err == nil {
-		err = cerr
-	}
-	return err
-}
-
-// heldUntil reads the time hold wrote; zero for none.
-func (a *Aerials) heldUntil() time.Time {
-	data, err := os.ReadFile(a.RecordPath + ".lock")
-	if err != nil {
-		return time.Time{}
-	}
-	until, err := time.Parse(holdLayout, strings.TrimSpace(string(data)))
-	if err != nil {
-		return time.Time{}
-	}
-	return until
-}
-
 // Off takes the lock, asks for the password, records the picks,
 // journals the root step, clears the picks as root and stops the
 // downloaders running then. With nothing picked it asks for nothing,
@@ -640,7 +595,7 @@ func (a *Aerials) Off(ctx context.Context) (Result, error) {
 	if err := a.writeRecord(rec); err != nil {
 		return res, fmt.Errorf("record the picks before clearing them, nothing changed: %w", err)
 	}
-	res, status, err := a.act(ctx, res, KindOff, offScript(a.db(), a.daemon(), picks))
+	res, status, err := a.act(ctx, res, KindOff, offScript(a.db(), a.daemon(), a.rootLock(), picks))
 	if status == exitNothing {
 		if rerr := a.putRecordBack(prev); rerr != nil {
 			err = errors.Join(err, fmt.Errorf("the record could not be put back as it was before this off: %w", rerr))
@@ -707,7 +662,7 @@ func (a *Aerials) On(ctx context.Context) (Result, error) {
 	}
 	defer release()
 	rec := res.Before.Recorded
-	res, status, err := a.act(ctx, res, KindOn, onScript(a.db(), rec.Picks))
+	res, status, err := a.act(ctx, res, KindOn, onScript(a.db(), a.rootLock(), rec.Picks))
 	read := res.After.State == StateOn || res.After.State == StateOff
 	carried := slices.DeleteFunc(slices.Clone(rec.Picks), func(p Pick) bool { return !carryable(p) })
 	if status != exitDone && (status == exitNothing || !read || missing(carried, res.After.Picks) > 0) {
@@ -736,11 +691,7 @@ func (a *Aerials) act(ctx context.Context, res Result, kind, script string) (Res
 		Time: a.now(), Run: runID, Seq: 1, Event: oplog.EventStart,
 		RuleID: RuleID, Kind: kind, Command: argv, Path: a.db(),
 	}
-	if err := a.hold(a.now().Add(stepLife)); err != nil {
-		return res, exitNothing, fmt.Errorf("hold the lock for the root step, refusing to act: %w", err)
-	}
 	if err := a.Log.Append(start); err != nil {
-		_ = a.hold(time.Time{})
 		return res, exitNothing, fmt.Errorf("oplog append failed, refusing to act: %w", err)
 	}
 	res.Run = runID
@@ -750,16 +701,6 @@ func (a *Aerials) act(ctx context.Context, res Result, kind, script string) (Res
 		runErr = a.run(ctx, argv)
 	}
 	status := exitStatus(runErr)
-	if status != exitUnknown {
-		// The step has ended. A clear that fails only keeps the next run
-		// waiting until the hold ends.
-		_ = a.hold(time.Time{})
-	} else {
-		// One with no status may still run. It started before its command
-		// returned, after any password prompt that command showed, so it
-		// ends within stepLife of now.
-		_ = a.hold(a.now().Add(stepLife))
-	}
 	notRun := errors.Is(runErr, ErrNotRun) || errors.Is(runErr, errNotStarted)
 	if status == exitUnknown && ctx.Err() != nil {
 		runErr = fmt.Errorf("%w (%v)", ErrStopped, runErr)
@@ -807,6 +748,24 @@ func gone(recorded, now []Pick) []Pick {
 	return out
 }
 
+// lockLines start a root script: they hold an exclusive flock on lock
+// through descriptor 9, which sqlite3 and every other process the
+// script starts inherit, so a step that outlives its shell (sudo passes
+// a stop to the shell alone), regrow or the app holds it for as long as
+// it runs, and the next step waits for it. macOS has no flock command;
+// perl's flock on the inherited descriptor locks the shell's open file.
+// Past rootLockWait, or when the lock cannot be taken, the script exits
+// exitNothing: a failed exec redirection ends macOS's /bin/sh with 1,
+// and `command exec` is not used, since that sh then hangs at exit.
+func lockLines(lock string) []string {
+	fail := " || { echo 'regrow: could not take the lock of the aerials root step, which an earlier one may still hold; nothing changed' >&2; exit " + strconv.Itoa(exitNothing) + "; }"
+	return []string{
+		"set -u",
+		"exec 9>>" + engine.ShellQuote(lock) + fail,
+		"/usr/bin/perl -MFcntl=:flock -e " + engine.ShellQuote(`open(my $f, ">&=", 9) or exit 1; $SIG{ALRM} = sub { exit 1 }; alarm(`+strconv.Itoa(rootLockWait)+`); flock($f, LOCK_EX) or exit 1`) + fail,
+	}
+}
+
 // offScript is the root step of off: one transaction deletes exactly
 // the recorded picks, so a pick made since they were read stays and the
 // next status shows it; then the downloaders running at that moment are
@@ -814,7 +773,7 @@ func gone(recorded, now []Pick) []Pick {
 // starts a new one on the next request, which reads the cleared picks.
 // A downloader lives on briefly after SIGTERM, and one that outlives
 // 5 s is killed. It exits exitDone, exitNothing or exitLived.
-func offScript(db, daemon string, picks []Pick) string {
+func offScript(db, daemon, lock string, picks []Pick) string {
 	var sql strings.Builder
 	sql.WriteString("BEGIN IMMEDIATE;")
 	for _, p := range picks {
@@ -822,8 +781,7 @@ func offScript(db, daemon string, picks []Pick) string {
 		fmt.Fprintf(&sql, " DELETE FROM %s WHERE %s = %d AND %s = %d;", t.name, t.itemCol, p.Item, t.userCol, p.User)
 	}
 	sql.WriteString(" COMMIT;")
-	return strings.Join([]string{
-		"set -u",
+	return strings.Join(append(lockLines(lock), []string{
 		"/usr/bin/sqlite3 -bail -cmd '.timeout 5000' " + engine.ShellQuote(db) + " " + engine.ShellQuote(sql.String()) +
 			" || { echo 'regrow: could not clear the aerial picks; nothing changed' >&2; exit " + strconv.Itoa(exitNothing) + "; }",
 		"old=$(/usr/bin/pgrep -x " + engine.ShellQuote(daemon) + ")",
@@ -836,7 +794,7 @@ func offScript(db, daemon string, picks []Pick) string {
 		`wait_gone 20 && exit 0`,
 		`echo "regrow: the picks are cleared, but the downloader ($old) did not exit; it may download for the old picks until it ends, at the latest when the Mac restarts" >&2`,
 		"exit " + strconv.Itoa(exitLived),
-	}, "\n")
+	}...), "\n")
 }
 
 // carryable says whether on's SQL can carry a recorded pick: a table it
@@ -851,7 +809,7 @@ func carryable(p Pick) bool {
 // subcategory, video or user is gone inserts nothing, and one the
 // record names in a form the SQL cannot carry is left out; on counts
 // both as missing. It exits exitDone or exitNothing.
-func onScript(db string, picks []Pick) string {
+func onScript(db, lock string, picks []Pick) string {
 	var sql strings.Builder
 	sql.WriteString("BEGIN IMMEDIATE;")
 	for _, p := range picks {
@@ -863,9 +821,8 @@ func onScript(db string, picks []Pick) string {
 			t.name, t.itemCol, t.userCol, t.itemTable, p.ItemID, p.UserID)
 	}
 	sql.WriteString(" COMMIT;")
-	return strings.Join([]string{
-		"set -u",
+	return strings.Join(append(lockLines(lock), []string{
 		"/usr/bin/sqlite3 -bail -cmd '.timeout 5000' " + engine.ShellQuote(db) + " " + engine.ShellQuote(sql.String()) +
 			" || { echo 'regrow: could not put the aerial picks back; nothing changed' >&2; exit " + strconv.Itoa(exitNothing) + "; }",
-	}, "\n")
+	}...), "\n")
 }
