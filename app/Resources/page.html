@@ -487,6 +487,8 @@ const on = {
     }
   },
   error(e, role) {
+    // The rules as they stand now, for the sidebar's count; not for a rules request's own error, which would ask forever.
+    if (e.code === 'rules_failed' && role !== 'rules') askRules();
     if (OUT_OF_DATE[e.code] && (role === 'first' || role === 'count' || role === 'review')) {
       S.scan.phase = 'stale';
       Object.assign(S.scan, { why: e.message || '', whyCode: e.code });
@@ -1013,7 +1015,7 @@ function drawTop() {
   } else if (S.screen === 'findings') {
     const failed = sc ? sc.rows.filter((r) => r.error).length : 0;
     status = !sc ? '' : sc.phase === 'canceled' ? `stopped after ${sc.rows.length} of ${num(sc.rules, 'rule')}`
-      : `${num(sc.rules, 'rule')} scanned` + (failed ? `, ${failed} ended with an error` : '') + (sc.phase === 'stale' ? ', now out of date' : '');
+      : `${num(sc.rules, 'rule')} scanned` + (failed ? `, ${failed} ended with an error` : '') + (sc.phase === 'stale' ? (sc.whyCode === 'rules_failed' ? ', the config file does not load' : ', now out of date') : '');
     right = S.hello && sc ? h`<button class="link" data-do="scan">Scan again</button>` : '';
   }
   if (S.pane !== 'scan') return h`<h1>${PANES[S.pane]}</h1>`;

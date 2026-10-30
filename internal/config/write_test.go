@@ -200,7 +200,7 @@ func TestSetRulesRefusesALinkToNoFile(t *testing.T) {
 	if err := os.Symlink(filepath.Join("dotfiles", "regrow.yaml"), link); err != nil {
 		t.Fatal(err)
 	}
-	if err := SetRules(link, Rules{Off: []string{"npm-cache"}}); err == nil || !strings.Contains(err.Error(), "a link to nothing") {
+	if err := SetRules(link, Rules{Off: []string{"npm-cache"}}); err == nil || !strings.Contains(err.Error(), "which is not there") {
 		t.Errorf("SetRules = %v, want the link refused", err)
 	}
 	if info, err := os.Lstat(link); err != nil || info.Mode()&os.ModeSymlink == 0 {
@@ -262,11 +262,11 @@ func TestLoadFileRefusesALinkToNothing(t *testing.T) {
 		}
 	}
 	mustLink(filepath.Join(dir, "moved.yaml"), filepath.Join(dir, "config.yaml"))
-	if _, err := LoadFile(filepath.Join(dir, "config.yaml")); err == nil || !strings.Contains(err.Error(), "a link to nothing") {
+	if _, err := LoadFile(filepath.Join(dir, "config.yaml")); err == nil || !strings.Contains(err.Error(), "which is not there") {
 		t.Errorf("a link to no file: %v", err)
 	}
 	mustLink(filepath.Join(dir, "unmounted"), filepath.Join(dir, "regrow"))
-	if _, err := LoadFile(filepath.Join(dir, "regrow", "config.yaml")); err == nil || !strings.Contains(err.Error(), "a link to nothing") {
+	if _, err := LoadFile(filepath.Join(dir, "regrow", "config.yaml")); err == nil || !strings.Contains(err.Error(), "which is not there") {
 		t.Errorf("a linked folder that is gone: %v", err)
 	}
 	if err := os.Mkdir(filepath.Join(dir, "dotfiles"), 0o700); err != nil {
@@ -275,5 +275,33 @@ func TestLoadFileRefusesALinkToNothing(t *testing.T) {
 	mustLink(filepath.Join(dir, "dotfiles"), filepath.Join(dir, "linked"))
 	if c, err := LoadFile(filepath.Join(dir, "linked", "config.yaml")); err != nil || len(c.Rules.Off) != 0 {
 		t.Errorf("a linked folder with no file yet is the defaults: %+v, %v", c.Rules, err)
+	}
+	if _, err := LoadFile(filepath.Join(dir, "config.yaml")); err == nil || !strings.Contains(err.Error(), "moved.yaml") {
+		t.Errorf("the error names the link's missing target: %v", err)
+	}
+}
+
+// SetRules writes nothing through a link that names nothing, a folder
+// link included, nor through a loop of links.
+func TestSetRulesWritesNothingThroughABrokenLink(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Symlink(filepath.Join(dir, "unmounted"), filepath.Join(dir, "regrow")); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetRules(filepath.Join(dir, "regrow", "config.yaml"), Rules{Off: []string{"npm-cache"}}); err == nil || !strings.Contains(err.Error(), "which is not there") {
+		t.Errorf("a linked folder that is gone: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(dir, "unmounted")); err == nil {
+		t.Error("the folder the link names was made")
+	}
+	loop := filepath.Join(dir, "loop.yaml")
+	if err := os.Symlink(loop, loop); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetRules(loop, Rules{Off: []string{"npm-cache"}}); err == nil {
+		t.Error("a loop of links took a write")
+	}
+	if info, err := os.Lstat(loop); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("the loop was replaced: %v, %v", info, err)
 	}
 }

@@ -1641,10 +1641,13 @@ struct Scenario {
             await r.shoot()
         },
         Scenario(name: "execute-rules-unloaded") { r in
-            // config.yaml broke between the plan and the confirm: nothing runs, and the scan is out of date, said once.
+            // config.yaml broke between the plan and the confirm: nothing runs, the tray says why, once, and the sidebar
+            // counts the rules as they now stand.
             let broken = "/Users/dev/.config/regrow/config.yaml: yaml: unmarshal errors: line 3: field bta not found in type config.Rules"
             await toConfirm(r)
             await r.click("#read")
+            let asked = r.sent("rules").count
+            r.play.rulesUnloaded = broken
             r.play.executeError = ("rules_failed", broken)
             r.play.planError = ("rules_failed", broken)
             await r.click("#go")
@@ -1654,6 +1657,9 @@ struct Scenario {
             r.has(await r.text(".tray .say"), "The config file does not load.", "the tray's headline")
             r.same(await r.text(".tray .say").contains("out of date"), false, "a scan called out of date for a file that does not load")
             r.has(await r.text(".tray .say"), "field bta not found", "the engine's reason in the tray")
+            r.same(await r.text(".top .status").contains("out of date"), false, "the top bar for a file that does not load")
+            r.same(r.sent("rules").count > asked, true, "the rules asked again after a refusal for a file that does not load")
+            r.same(await r.text("#nav-rules .fig"), "0 on", "the sidebar's count of rules on")
             r.same(await r.text(".tray .btn"), "Scan again", "the tray's action")
             await r.shoot()
         },

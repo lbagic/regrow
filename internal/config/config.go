@@ -156,12 +156,16 @@ func Load() (Config, error) {
 
 // LoadFile reads one config file. Unknown keys are an error; an empty
 // file is the defaults, and so is no file, unless a link on its path
-// names nothing: what that file turned off would run.
+// names nothing.
 func LoadFile(path string) (Config, error) {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		if link := danglingLink(path); link != "" {
-			return Config{}, fmt.Errorf("%s: %s is a link to nothing, so the config cannot be read", path, link)
+			target, _ := os.Readlink(link)
+			if link == path {
+				return Config{}, fmt.Errorf("%s links to %s, which is not there, so the config cannot be read", path, target)
+			}
+			return Config{}, fmt.Errorf("%s: %s links to %s, which is not there, so the config cannot be read", path, link, target)
 		}
 		return Config{}, nil
 	}
