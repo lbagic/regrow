@@ -260,6 +260,30 @@ func TestAerialVideosSplitByLinks(t *testing.T) {
 	}
 }
 
+// The row's last use is its newest video's, not the catalogue's, which
+// macOS rewrites without a download.
+func TestAerialVideosLastUsedIsTheNewestVideo(t *testing.T) {
+	host := engine.Host{OS: "darwin", Version: "15.7.7", Root: t.TempDir()}
+	customer := filepath.Join(host.Root, "Library/Application Support/com.apple.idleassetsd/Customer")
+	older, newer := filepath.Join(customer, "4KSDR", "a.mov"), filepath.Join(customer, "4KSDR240FPS", "b.mov")
+	writeFile(t, older, 1<<20)
+	writeFile(t, newer, 1<<20)
+	writeFile(t, filepath.Join(customer, "entries.json"), 130_000)
+	written := time.Now().Add(-90 * 24 * time.Hour).Truncate(time.Second)
+	for path, at := range map[string]time.Time{older: written.Add(-time.Hour), newer: written, filepath.Dir(newer): written} {
+		if err := os.Chtimes(path, at, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	items, err := (&aerialVideos{w: testWalker(), host: host}).Items(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 1 || !items[0].LastUsed.Equal(written) {
+		t.Errorf("items %+v, want the folder last used at %v, when b.mov was written", items, written)
+	}
+}
+
 // aerialConflicts mirrors the catalog's one-owner fence for the aerial
 // folders, which live in the aerial-videos query rather than in a
 // rule's paths: and so escape the fence. No rule may name one or reach

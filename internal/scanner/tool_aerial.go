@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/lbagic/regrow/internal/engine"
 )
@@ -68,8 +69,9 @@ type linkedFile struct {
 }
 
 // aerialFolder measures one folder by its videos: an item for what
-// deleting them frees, and one for the videos a link outside the folder
-// also holds, when there are any and the walk read the whole folder. A
+// deleting them frees, last used when the newest video was written, and
+// one for the videos a link outside the folder also holds, when there
+// are any and the walk read the whole folder. A
 // folder that refuses is an item with Partial set; an absent one, or
 // one the walk read in full and found no video in, is nothing.
 func aerialFolder(ctx context.Context, w *walker, dir string) ([]engine.Item, error) {
@@ -78,6 +80,7 @@ func aerialFolder(ctx context.Context, w *walker, dir string) ([]engine.Item, er
 		closed bool
 		videos int
 		single int64
+		newest time.Time
 		linked = map[uint64]*linkedFile{}
 	)
 	u, found, err := w.usageSeeing(ctx, dir, func(_ string, e fs.DirEntry) {
@@ -95,6 +98,9 @@ func aerialFolder(ctx context.Context, w *walker, dir string) ([]engine.Item, er
 			return
 		}
 		videos++
+		if fi.ModTime().After(newest) {
+			newest = fi.ModTime()
+		}
 		if !ok || st.Nlink < 2 {
 			single += physicalSize(fi)
 			return
@@ -130,7 +136,7 @@ func aerialFolder(ctx context.Context, w *walker, dir string) ([]engine.Item, er
 			files++
 		}
 	}
-	items := []engine.Item{{Path: dir, Bytes: frees, LastUsed: u.Newest, Partial: u.Partial}}
+	items := []engine.Item{{Path: dir, Bytes: frees, LastUsed: newest, Partial: u.Partial}}
 	if files > 0 {
 		label := fmt.Sprintf("%d files a link outside the folder also holds, such as the downloader's temp copies: each frees its space only once that link goes too", files)
 		if files == 1 {
