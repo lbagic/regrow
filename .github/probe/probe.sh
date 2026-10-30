@@ -1,8 +1,27 @@
 #!/bin/bash
-# Throwaway CI probe: which update test, or which step under it, hangs on the runner.
-# Each step runs in its own process group and is killed after $LIMIT seconds.
-LIMIT=300
+# Throwaway CI probe: where the full app suite hangs on the runner.
+# Each step runs in its own process group and is killed after $LIMIT seconds;
+# a hung step first prints its processes, their stacks and its output so far.
+LIMIT=150
 set -m
+descendants() {
+	local p
+	echo "$1"
+	for p in $(ps -axo pid=,ppid= | awk -v p="$1" '$2==p{print $1}'); do descendants "$p"; done
+}
+diagnose() {
+	local name=$1 root=$2 p
+	echo "DIAG $name: processes"
+	for p in $(descendants "$root"); do ps -o pid=,ppid=,pgid=,etime=,command= -p "$p"; done
+	for p in $(descendants "$root"); do
+		echo "DIAG $name: sample of $p $(ps -o comm= -p "$p")"
+		sample "$p" 2 -file "$RUNNER_TEMP/sample-$p.txt" >/dev/null 2>&1 ||
+			sudo -n sample "$p" 2 -file "$RUNNER_TEMP/sample-$p.txt" >/dev/null 2>&1
+		sed -n '/^Call graph:/,/^Total number in stack/p' "$RUNNER_TEMP/sample-$p.txt" 2>/dev/null | cut -c1-220
+	done
+	echo "DIAG $name: output so far"
+	tail -60 "$RUNNER_TEMP/probe-$name.log"
+}
 step() {
 	local name=$1; shift
 	local start=$(date +%s)
@@ -11,6 +30,7 @@ step() {
 	while kill -0 "$pid" 2>/dev/null; do
 		if [ $(( $(date +%s) - start )) -ge "$LIMIT" ]; then
 			result=HUNG
+			diagnose "$name" "$pid"
 			kill -TERM -- "-$pid" 2>/dev/null; sleep 2; kill -KILL -- "-$pid" 2>/dev/null
 			break
 		fi
@@ -18,25 +38,13 @@ step() {
 	done
 	wait "$pid"; local rc=$?
 	echo "PROBE $name: $result exit $rc after $(( $(date +%s) - start ))s"
-	[ "$result" = ok ] && [ "$rc" -ne 0 ] && tail -5 "$RUNNER_TEMP/probe-$name.log" | sed 's/^/    /'
+	[ "$result" = ok ] && tail -3 "$RUNNER_TEMP/probe-$name.log" | sed 's/^/    /'
 }
 sw_vers; swift --version 2>&1 | head -2; sysctl -n hw.ncpu
-work=$RUNNER_TEMP/probe; mkdir -p "$work"
-cp /bin/echo "$work/echo"; lipo -archs "$work/echo"
-step codesign codesign --force --sign - "$work/echo"
-mkdir -p "$work/zip" && ln -s "$work" "$work/zip/link"
-step zip sh -c 'cd "$1/zip" && /usr/bin/zip -y -q "$1/x.zip" link' sh "$work"
-step ditto-c ditto -c -k --keepParent "$work/zip" "$work/y.zip"
-step ditto-x ditto -x -k --noqtn "$work/y.zip" "$work/out"
-cat >"$work/ird.swift" <<'SWIFT'
-import Foundation
-let parent = URL(fileURLWithPath: CommandLine.arguments[1])
-let url = try FileManager.default.url(for: .itemReplacementDirectory, in: .userDomainMask, appropriateFor: parent, create: true)
-print(url.path)
-SWIFT
-step ird swift "$work/ird.swift" "$work"
 cd app || exit 1
 swift build --build-tests 2>&1 | tail -1
-for n in 1 2 3; do
-	step "full-suite-$n" swift test --skip-build
-done
+step full swift test --skip-build
+step no-parallel swift test --skip-build --no-parallel
+step skip-update swift test --skip-build --skip AppUpdateTests
+step only-update swift test --skip-build --filter AppUpdateTests
+step skip-real-engine swift test --skip-build --skip RealEngineTests
