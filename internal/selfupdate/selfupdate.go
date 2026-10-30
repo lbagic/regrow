@@ -200,7 +200,7 @@ func (u Updater) Inspect(ctx context.Context) Install {
 		in.Why = fmt.Sprintf("it is a development build (%s); only a release installed with the install line updates itself", in.Version)
 		return in
 	}
-	// 0.1.0 shipped before the self-update.
+	// Releases below 0.2.0 have no self-update.
 	if v.compare(version{0, 2, 0}) < 0 {
 		in.Why = fmt.Sprintf("%s came before regrow updated itself; run the install line once more", in.Version)
 		return in
