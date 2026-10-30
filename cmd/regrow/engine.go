@@ -19,6 +19,7 @@ import (
 	"github.com/lbagic/regrow/internal/oplog"
 	"github.com/lbagic/regrow/internal/protocol"
 	"github.com/lbagic/regrow/internal/scanner"
+	"github.com/lbagic/regrow/internal/selfupdate"
 )
 
 // runEngine serves the engine protocol on the process's stdin and
@@ -92,6 +93,13 @@ func newEngineServer(host engine.Host, catalog []engine.Rule, flags []string) *p
 		Tick:       tickFor(host, func() ([]engine.Rule, error) { return catalog, nil }),
 		Staged:     stagedBytes,
 		History:    engineHistory,
+		Updates: func(ctx context.Context) (selfupdate.Install, error) {
+			u, err := selfupdate.FromEnv(version)
+			if err != nil {
+				return selfupdate.Install{}, err
+			}
+			return u.Inspect(ctx), nil
+		},
 		NewExecutor: func(runID string) (*executor.Executor, func(), error) {
 			return newRunExecutor(host, catalog, runID, dockerStream)
 		},

@@ -9,6 +9,7 @@ import (
 	"github.com/lbagic/regrow/internal/executor"
 	"github.com/lbagic/regrow/internal/headroom"
 	"github.com/lbagic/regrow/internal/oplog"
+	"github.com/lbagic/regrow/internal/selfupdate"
 )
 
 // Version is the protocol version hello announces.
@@ -29,6 +30,7 @@ const (
 	reqAerials       = "aerials"
 	reqAerialsSwitch = "aerials_switch"
 	reqRules         = "rules"
+	reqUpdates       = "updates"
 	reqSetRule       = "set_rules"
 )
 
@@ -53,6 +55,7 @@ const (
 	CodeAerialsFailed  = "aerials_failed"
 	CodeRulesFailed    = "rules_failed"
 	CodeRulesChanged   = "rules_changed"
+	CodeUpdatesFailed  = "updates_failed"
 )
 
 type request struct {
@@ -238,6 +241,31 @@ type rulesEvent struct {
 type historyEvent struct {
 	head
 	History
+}
+
+// updatesEvent answers an updates request: the regrow the install line
+// put in ~/.local/bin, which updates itself. The app's own update is not
+// the engine's to know.
+type updatesEvent struct {
+	head
+	CLI updatesCLI `json:"cli"`
+}
+
+type updatesCLI struct {
+	Path      string     `json:"path,omitempty"`
+	Version   string     `json:"version,omitempty"`
+	Why       string     `json:"why,omitempty"`
+	Off       bool       `json:"off"`
+	CheckedAt *time.Time `json:"checked_at,omitempty"`
+}
+
+func newUpdatesCLI(in selfupdate.Install) updatesCLI {
+	cli := updatesCLI{Path: in.Path, Version: in.Version, Why: in.Why, Off: in.Off}
+	if !in.CheckedAt.IsZero() {
+		at := in.CheckedAt.UTC()
+		cli.CheckedAt = &at
+	}
+	return cli
 }
 
 type doneEvent struct {

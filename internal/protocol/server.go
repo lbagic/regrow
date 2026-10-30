@@ -22,6 +22,7 @@ import (
 	"github.com/lbagic/regrow/internal/executor"
 	"github.com/lbagic/regrow/internal/headroom"
 	"github.com/lbagic/regrow/internal/oplog"
+	"github.com/lbagic/regrow/internal/selfupdate"
 	"github.com/lbagic/regrow/internal/trash"
 )
 
@@ -68,6 +69,9 @@ type Server struct {
 	// History reads the oplog and the headroom history for a history
 	// request. Nil refuses history requests.
 	History func() (History, error)
+	// Updates reads the install line's regrow for an updates request,
+	// running its `version`. Nil refuses updates requests.
+	Updates func(ctx context.Context) (selfupdate.Install, error)
 	// Staged measures what regrow's staging directory holds, for a
 	// tick's staged_bytes: a lower bound where part of it cannot be
 	// read. Nil omits the field.
@@ -306,6 +310,12 @@ func (s *session) handle(l requestLine) {
 		s.startAerialsSwitch(req)
 	case reqRules, reqSetRule:
 		s.rules(req)
+	case reqUpdates:
+		s.answering.Add(1)
+		go func() {
+			defer s.answering.Done()
+			s.updates(req)
+		}()
 	default:
 		s.emit(failure(req.ID, CodeUnknownRequest, fmt.Sprintf("unknown request type %q", req.Type)))
 	}
@@ -538,6 +548,22 @@ func (s *session) history(req request) {
 		}
 	}
 	s.emit(historyEvent{head{"history", req.ID}, h})
+	s.emit(done(req.ID))
+}
+
+// updates answers beside whatever is in flight, off the read loop: it
+// runs the installed regrow's `version`, which may take seconds.
+func (s *session) updates(req request) {
+	if s.srv.Updates == nil {
+		s.emit(failure(req.ID, CodeUpdatesFailed, "this engine reads no update state"))
+		return
+	}
+	in, err := s.srv.Updates(context.Background())
+	if err != nil {
+		s.emit(failure(req.ID, CodeUpdatesFailed, err.Error()))
+		return
+	}
+	s.emit(updatesEvent{head{"updates", req.ID}, newUpdatesCLI(in)})
 	s.emit(done(req.ID))
 }
 

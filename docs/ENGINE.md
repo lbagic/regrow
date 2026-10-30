@@ -22,8 +22,8 @@ Protocol version: **1**.
 
 1. The engine starts and writes `hello` before it reads anything.
 2. The peer sends requests. Each request gets exactly one terminal event: `done` or `error`, with `re` set to the request's `id`.
-3. Only one **scan, execute, tick or aerials switch** is in flight at a time. Another one sent meanwhile is refused with `error{code:"busy"}` and changes nothing. `plan`, `cancel`, `history`, `aerials`, `rules` and `set_rules` are answered at any time.
-4. When stdin ends, or the process gets SIGINT or SIGTERM, the engine shuts down: a scan in flight is canceled, an execute finishes the action it is running, journals it and stops there, a tick runs to its end, and an aerials switch stops as a cancel stops it (below): a root step the password has already started may still run to its end. It waits for the execute, the tick or the aerials switch however long it takes, and for a canceled scan up to 5 s from the start of the shutdown; for a `history` being read it waits as long, or until the execute, the tick or the aerials switch ends if that is later. Each that ends in that time writes its terminal event; a scan still going, a `cancel` waiting on it, or a `history` still going gets none. A peer that stopped reading is given 5 s more to read what is queued, and what is left then is dropped. Then the engine exits 0. A peer that cannot wait out a hung steward command sends SIGTERM twice: the first signal asks for the clean stop, the second kills the engine at once.
+3. Only one **scan, execute, tick or aerials switch** is in flight at a time. Another one sent meanwhile is refused with `error{code:"busy"}` and changes nothing. `plan`, `cancel`, `history`, `aerials`, `rules`, `set_rules` and `updates` are answered at any time.
+4. When stdin ends, or the process gets SIGINT or SIGTERM, the engine shuts down: a scan in flight is canceled, an execute finishes the action it is running, journals it and stops there, a tick runs to its end, and an aerials switch stops as a cancel stops it (below): a root step the password has already started may still run to its end. It waits for the execute, the tick or the aerials switch however long it takes, and for a canceled scan up to 5 s from the start of the shutdown; for a `history` or `updates` being read it waits as long, or until the execute, the tick or the aerials switch ends if that is later. Each that ends in that time writes its terminal event; a scan still going, a `cancel` waiting on it, or a `history` or `updates` still going gets none. A peer that stopped reading is given 5 s more to read what is queued, and what is left then is dropped. Then the engine exits 0. A peer that cannot wait out a hung steward command sends SIGTERM twice: the first signal asks for the clean stop, the second kills the engine at once.
 
 Request ids are the peer's own; the engine echoes them and does not check that they are unique.
 
@@ -41,6 +41,7 @@ Request ids are the peer's own; the engine echoes them and does not check that t
 | `aerials_switch` | `id`, `to` (`off` or `on`) | `aerials`, then `done`; or `aerials`, then `error`; or `error` alone when it is refused: a `to` that is neither, busy, or an engine that cannot change the picks |
 | `rules` | `id` | `rules`, then `done`; or `error` |
 | `set_rules` | `id`, and `rule` with `off`, or `beta` | `rules`, then `done`; or `error` |
+| `updates` | `id` | `updates`, then `done`; or `error` |
 
 ### scan
 
@@ -225,6 +226,21 @@ The engine runs the whole catalog as `~/.config/regrow/config.yaml`'s `rules:` s
 
 `set_rules` carries `rule` with `off`, or `beta`, never both: anything else is `bad_request`. A rule the catalog lacks, or a file that does not load, fails it with `rules_failed`, and the file is left as it was.
 
+### updates
+
+```json
+{"type":"updates","id":"u1"}
+```
+
+The `regrow` the install line put in `~/.local/bin`, the one that updates itself, as the engine finds it: answered beside whatever is in flight and off the request loop, since the engine runs that binary's `version`, with `REGROW_NO_AUTO_UPDATE` set so the run checks for nothing, stops it after 5 s and waits 1 s more for its output to close. The app's own update is not the engine's to know.
+
+| Event | Fields |
+|---|---|
+| `updates` | `cli`: `path`, the binary, the folder's links resolved, absent when there is none; `version`, what its `version` says, absent when it said none; `why`, why it does not update itself (a development build, 0.1.0, which came before the self-update, not a plain file, another user's, a folder it cannot write, a binary that does not run or is not regrow), absent when it does or there is none; `off`, true when `REGROW_NO_AUTO_UPDATE` is set in the engine's environment, which the app takes from the login shell once, as it starts; `checked_at`, when its last daily check began, absent when none is recorded |
+| `done` | — |
+
+An engine that cannot name its own path, the home folder or its state folder fails it with `updates_failed`. An engine older than this request answers `unknown_request`.
+
 ## hello
 
 ```json
@@ -254,6 +270,7 @@ The engine runs the whole catalog as `~/.config/regrow/config.yaml`'s `rules:` s
 | `aerials_failed` | see aerials |
 | `rules_failed` | see rules and set_rules; also a scan, plan or execute while the rules file does not load |
 | `rules_changed` | a plan or execute against a scan holding findings of a rule that no longer runs; see rules and set_rules |
+| `updates_failed` | see updates |
 
 `message` is for people; peers branch on `code`. An `unmatched` error also lists the selectors in `unmatched`, and an `execute_failed` that ran something carries its `result`.
 
