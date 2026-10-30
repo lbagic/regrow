@@ -346,18 +346,15 @@ private func present(_ url: URL) -> Bool {
     (try? FileManager.default.attributesOfItem(atPath: url.path)) != nil
 }
 
-/// Waits with `waitpid`, not `Process.waitUntilExit`: this suite's parallel
-/// tests waiting in the latter hung `swift test` on a 3-core macOS 26 runner.
 private func run(_ executable: String, _ arguments: [String]) throws {
-    let null = open("/dev/null", O_RDWR | O_CLOEXEC)
-    guard null >= 0 else { throw CocoaError(.fileNoSuchFile) }
-    defer { close(null) }
-    let pid = try Spawn.start(
-        executable, arguments: arguments, environment: ProcessInfo.processInfo.environment,
-        stdin: null, stdout: null, stderr: null)
-    var status: Int32 = 0
-    while waitpid(pid, &status, 0) == -1 && errno == EINTR {}
-    guard status == 0 else {
-        throw CocoaError(.executableLoad, userInfo: [NSLocalizedDescriptionKey: "\(executable) exited with status \(status)"])
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: executable)
+    process.arguments = arguments
+    process.standardOutput = FileHandle.nullDevice
+    process.standardError = FileHandle.nullDevice
+    try process.run()
+    process.waitUntilExit()
+    guard process.terminationStatus == 0 else {
+        throw CocoaError(.executableLoad, userInfo: [NSLocalizedDescriptionKey: "\(executable) exited \(process.terminationStatus)"])
     }
 }
