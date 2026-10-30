@@ -71,9 +71,9 @@ type linkedFile struct {
 // aerialFolder measures one folder by its videos: an item for what
 // deleting them frees, last used when the newest video was written, and
 // one for the videos a link outside the folder also holds, when there
-// are any and the walk read the whole folder. A
-// folder that refuses is an item with Partial set; an absent one, or
-// one the walk read in full and found no video in, is nothing.
+// are any and the walk read the whole folder. A folder that refuses is
+// an item with Partial set; an absent one, or one the walk read in full
+// and found no video in, is nothing.
 func aerialFolder(ctx context.Context, w *walker, dir string) ([]engine.Item, error) {
 	var (
 		mu     sync.Mutex
