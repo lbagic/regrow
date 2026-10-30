@@ -43,8 +43,6 @@ step() {
 sw_vers; swift --version 2>&1 | head -2; sysctl -n hw.ncpu
 cd app || exit 1
 swift build --build-tests 2>&1 | tail -1
-step full swift test --skip-build
-step no-parallel swift test --skip-build --no-parallel
-step skip-update swift test --skip-build --skip AppUpdateTests
-step only-update swift test --skip-build --filter AppUpdateTests
-step skip-real-engine swift test --skip-build --skip RealEngineTests
+for n in 1 2 3; do
+	step "full-suite-$n" swift test --skip-build
+done
