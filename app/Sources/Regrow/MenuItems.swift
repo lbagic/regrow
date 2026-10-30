@@ -8,6 +8,8 @@ struct MenuActions {
     var scan: () -> Void
     var setAutotrim: (Bool) -> Void
     var chooseLoginItem: (LoginItemChoice) -> Void
+    var setAerials: (_ off: Bool) -> Void
+    var openAerialPane: (_ surface: String) -> Void
     var copy: (String) -> Void
     var openFullDiskAccess: () -> Void
     var relaunch: () -> Void
@@ -45,6 +47,20 @@ enum MenuItems {
                 let item = ActionItem(title) { actions.chooseLoginItem(state.choice) }
                 item.attributedTitle = paired(title, state.figure)
                 return item
+            case .aerials(let state, let switchable):
+                let title = "Aerial video downloads"
+                guard switchable else {
+                    return hosted(HStack {
+                        Text(title)
+                        Spacer()
+                        Text(state).foregroundStyle(.secondary)
+                    }.font(Font(NSFont.menuFont(ofSize: 0))).padding(.vertical, 3))
+                }
+                let item = ActionItem(title) { actions.setAerials(state == "on") }
+                item.attributedTitle = paired(title, state)
+                return item
+            case .openAerialPane(let surface):
+                return ActionItem("Open \(MenuText.aerialPane(surface)) settings") { actions.openAerialPane(surface) }
             case .note(let text), .environment(let text):
                 return hosted(Text(quoted(text)).font(.system(size: 12)).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true).padding(.vertical, 2))

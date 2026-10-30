@@ -24,8 +24,12 @@ const (
 	reqCancel  = "cancel"
 	reqTick    = "tick"
 	reqHistory = "history"
-	reqRules   = "rules"
-	reqSetRule = "set_rules"
+	// reqAerials reads the aerial picks; reqAerialsSwitch turns the
+	// downloads off or on.
+	reqAerials       = "aerials"
+	reqAerialsSwitch = "aerials_switch"
+	reqRules         = "rules"
+	reqSetRule       = "set_rules"
 )
 
 // Error codes, the `code` of an error event.
@@ -46,6 +50,7 @@ const (
 	CodePlanExpired    = "plan_expired"
 	CodeExecuteFailed  = "execute_failed"
 	CodeHistoryFailed  = "history_failed"
+	CodeAerialsFailed  = "aerials_failed"
 	CodeRulesFailed    = "rules_failed"
 	CodeRulesChanged   = "rules_changed"
 )
@@ -60,6 +65,8 @@ type request struct {
 	PlanID   string    `json:"plan_id"`
 	Target   string    `json:"target"`
 	Autotrim bool      `json:"autotrim"`
+	// To is an aerials_switch's "off" or "on".
+	To string `json:"to"`
 	// Rule and Off turn one rule off or on; Beta turns the beta rules
 	// on or off. A set_rules request carries one or the other.
 	Rule string `json:"rule"`

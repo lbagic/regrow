@@ -22,8 +22,8 @@ Protocol version: **1**.
 
 1. The engine starts and writes `hello` before it reads anything.
 2. The peer sends requests. Each request gets exactly one terminal event: `done` or `error`, with `re` set to the request's `id`.
-3. Only one **scan, execute or tick** is in flight at a time. Another one sent meanwhile is refused with `error{code:"busy"}` and changes nothing. `plan`, `cancel`, `history`, `rules` and `set_rules` are answered at any time.
-4. When stdin ends, or the process gets SIGINT or SIGTERM, the engine shuts down: a scan in flight is canceled, an execute finishes the action it is running, journals it and stops there, and a tick runs to its end. It waits for the execute or the tick however long it takes, and for a canceled scan up to 5 s from the start of the shutdown; for a `history` being read it waits as long, or until the execute or tick ends if that is later. Each that ends in that time writes its terminal event; a scan still going, a `cancel` waiting on it, or a `history` still going gets none. A peer that stopped reading is given 5 s more to read what is queued, and what is left then is dropped. Then the engine exits 0. A peer that cannot wait out a hung steward command sends SIGTERM twice: the first signal asks for the clean stop, the second kills the engine at once.
+3. Only one **scan, execute, tick or aerials switch** is in flight at a time. Another one sent meanwhile is refused with `error{code:"busy"}` and changes nothing. `plan`, `cancel`, `history`, `aerials`, `rules` and `set_rules` are answered at any time.
+4. When stdin ends, or the process gets SIGINT or SIGTERM, the engine shuts down: a scan in flight is canceled, an execute finishes the action it is running, journals it and stops there, a tick runs to its end, and an aerials switch stops as a cancel stops it (below): a root step the password has already started may still run to its end. It waits for the execute, the tick or the aerials switch however long it takes, and for a canceled scan up to 5 s from the start of the shutdown; for a `history` being read it waits as long, or until the execute, the tick or the aerials switch ends if that is later. Each that ends in that time writes its terminal event; a scan still going, a `cancel` waiting on it, or a `history` still going gets none. A peer that stopped reading is given 5 s more to read what is queued, and what is left then is dropped. Then the engine exits 0. A peer that cannot wait out a hung steward command sends SIGTERM twice: the first signal asks for the clean stop, the second kills the engine at once.
 
 Request ids are the peer's own; the engine echoes them and does not check that they are unique.
 
@@ -37,6 +37,8 @@ Request ids are the peer's own; the engine echoes them and does not check that t
 | `cancel` | `id`, `target` | `done`, once `target` has ended |
 | `tick` | `id`, `autotrim` (optional, default `false`) | `tick`, then `done`; or `error` |
 | `history` | `id` | `history`, then `done`; or `error` |
+| `aerials` | `id` | `aerials`, then `done`; or `error` |
+| `aerials_switch` | `id`, `to` (`off` or `on`) | `aerials`, then `done`; or `aerials`, then `error`; or `error` alone when it is refused: a `to` that is neither, busy, or an engine that cannot change the picks |
 | `rules` | `id` | `rules`, then `done`; or `error` |
 | `set_rules` | `id`, and `rule` with `off`, or `beta` | `rules`, then `done`; or `error` |
 
@@ -148,7 +150,7 @@ Errors: `bad_request` (no `plan_id`); `busy`; `unknown_plan` (never issued, alre
 {"type":"cancel","id":"c1","target":"s1"}
 ```
 
-`target` is the `id` of a scan, execute or tick. A scan stops at once. A tick is never cut short. An execute finishes the action it is running, journals it, and runs nothing after it. The target then ends with its `done`, and only after that does the cancel get its own `done`, so a `scan` sent after the cancel's `done` is never refused as busy. A target that is not in flight has nothing left to do: the cancel gets `done` at once.
+`target` is the `id` of a scan, execute, tick or aerials switch. A scan stops at once. A tick is never cut short. An aerials switch ends the `osascript` that shows macOS's password prompt and runs the root step; whether that closes a prompt still open is not measured. Stopped while `osascript` runs, with the prompt open or the root step running, which its end cannot tell apart, it ends with `error` (`aerials_failed`) saying it was stopped and may still finish, and keeps the record of the picks: a root step the password has already started may still run to its end, so the status it carries may be from before it. That step holds the root lock for as long as any of its processes runs, so the root step of the next switch, or of an `off` or `on` in a terminal, waits for it once the password is given, up to 30 s; one still held then ends that step with exit status 1, changing nothing, and the switch with `error` (`aerials_failed`) saying the root step changed nothing and could not take the lock. Stopped before `osascript` started, its reads of the picks included, it ends with `error` saying nothing changed; stopped as or after `osascript` ended, it ends as the step did. An execute finishes the action it is running, journals it, and runs nothing after it. The target then ends with its terminal event, and only after that does the cancel get its own `done`, so a `scan` sent after the cancel's `done` is never refused as busy. A target that is not in flight has nothing left to do: the cancel gets `done` at once.
 
 The target's `done` says whether the cancel cut it short. Peers read `canceled`; an execute's `result.stopped` carries the same value. A cancel that lands as the target finishes (during an execute's last action, or as a scan wraps up after its last finding) can come too late to change anything: the target then ends `canceled:false` with its full results, and a scan that ends that way can be planned.
 
@@ -188,6 +190,24 @@ What regrow has done on this Mac, read from the oplog and the headroom history, 
 
 A run counts as `regrow history` counts it: an action once its done line is in the journal, a prune or a measured command (the aerial videos' delete) at what it deleted, any other action at its planned size; a failed or cut-short action, and a move `regrow undo` put back, counts nothing. Its fields: `id`; `start`; `done`, `failed` and `undone`, counts of actions; `restorable`, the moves `regrow undo` can still put back; `prune`, true when every action was a prune (autotrim's or `regrow prune`'s); its bytes split by where the space went, as the run's summary splits them: `frees_now` (commands and prunes), `after_trash` (moved to the Trash), `staged` (moved to regrow staging, Finder being unavailable) and `exported` (a docker volume removed after its export); and `rules`, rule id → bytes. A journal that cannot be read fails the request with `history_failed`, since the journal is never read past a bad line.
 
+### aerials and aerials_switch
+
+```json
+{"type":"aerials","id":"a1"}
+{"type":"aerials_switch","id":"a2","to":"off"}
+```
+
+macOS's aerial video downloads, as `regrow aerials` reads and switches them. `aerials` reads the picks idleassetsd downloads for, without root. `aerials_switch` with `to: "off"` records them, journals the root step and clears them, then stops the downloader; with `to: "on"` it puts back what the last off cleared. Its root step goes through macOS's administrator prompt, a system dialog that asks for the owner's password. A switch that has nothing to do (`off` with nothing picked, `on` with nothing recorded) asks for no password, journals nothing and ends with `done`.
+
+| Event | Fields |
+|---|---|
+| `aerials` | `status`: `{state, version, picks, counts: {categories, subcategories, videos}, detail, recorded: {cleared, picks, restored}, record_error, set_for, set_for_error}`; a switch adds `result`: `{ran, run, before, after, missing}` |
+| `done` | — |
+
+`state` is `on` (something is picked), `off`, `absent` (no aerial database on this Mac), `unknown` (it could not be read; `detail` says why) or `unmeasured` (macOS 26 or later, where the picks were not measured, or a macOS version the engine could not read; `detail` says which). `recorded` is the last off's record, and `on` puts its picks back unless `restored` is set. `set_for` names the surfaces the wallpaper store still sets an aerial for, `wallpaper` or `screen saver`. In a switch's `result`, `ran` says whether the root step may have changed the picks (false for one that never started, as at the prompt's Cancel, or that said it changed nothing), `run` is its journal run id, and `missing` counts the recorded picks `on` could not put back because macOS no longer has their category, subcategory or video. The switch's `aerials` event carries the status as it stands after the switch, also when the switch then fails.
+
+Errors: `aerials_failed`, with `message` saying why: the state is not `on` or `off`, the password prompt was canceled (nothing changed), the switch was stopped before its root step started (nothing changed) or before it ended, the root step changed nothing or failed (its exit status, which `osascript` gives only in its error text, decides the record as in a terminal), the record of the picks could not be read or written, the record names no pick regrow can put back, the picks could not be read after `on` put them back, another `regrow aerials off` or `on` is running (nothing changed), the root step could not take the root lock within 30 s, which an earlier one may still hold (the root step changed nothing), the journal could not be written, or this engine cannot read or change the picks.
+
 ### rules and set_rules
 
 ```json
@@ -226,11 +246,12 @@ The engine runs the whole catalog as `~/.config/regrow/config.yaml`'s `rules:` s
 | `bad_request` | not a JSON object of the documented shape, no `id`, or a required field missing; `re` is absent when the line is not JSON or has no string `id` |
 | `line_too_long` | the request line was over 1 MiB; no `re` |
 | `unknown_request` | unknown `type` |
-| `busy` | a scan, execute or tick is in flight |
+| `busy` | a scan, execute, tick or aerials switch is in flight |
 | `unknown_scan`, `scan_running`, `scan_canceled`, `scan_superseded`, `scan_spent`, `unmatched` | see plan |
 | `unknown_plan`, `plan_expired`, `execute_failed` | see execute |
 | `autotrim_locked`, `tick_failed` | see tick |
 | `history_failed` | see history |
+| `aerials_failed` | see aerials |
 | `rules_failed` | see rules and set_rules; also a scan, plan or execute while the rules file does not load |
 | `rules_changed` | a plan or execute against a scan holding findings of a rule that no longer runs; see rules and set_rules |
 
