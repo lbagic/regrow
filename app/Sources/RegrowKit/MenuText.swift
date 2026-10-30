@@ -44,6 +44,30 @@ public enum MenuText {
         return "'" + word.replacingOccurrences(of: "'", with: #"'\''"#) + "'"
     }
 
+    /// The warning for a surface that still shows an aerial: with the
+    /// picks cleared it has no videos to play, and macOS may pick it
+    /// again.
+    public static func aerialSet(_ surface: String) -> String {
+        "An aerial is still set as your \(surface), so macOS may download for it again: choose another in System Settings ▸ \(aerialPane(surface))."
+    }
+
+    /// What an `on` could not put back.
+    public static func aerialsMissing(_ n: Int) -> String {
+        "\(n) recorded \(n == 1 ? "pick is" : "picks are") no longer in macOS's aerial catalogue and \(n == 1 ? "was" : "were") not put back."
+    }
+
+    /// The System Settings pane that chooses what a surface shows.
+    public static func aerialPane(_ surface: String) -> String {
+        surface == "screen saver" ? "Screen Saver" : "Wallpaper"
+    }
+
+    /// The link that opens that pane.
+    public static func aerialPaneURL(_ surface: String) -> URL {
+        URL(string: surface == "screen saver"
+            ? "x-apple.systempreferences:com.apple.ScreenSaver-Settings.extension"
+            : "x-apple.systempreferences:com.apple.Wallpaper-Settings.extension")!
+    }
+
     /// Full Disk Access as the engine's `hello` found it.
     public static func fullDiskAccess(_ fda: String?) -> String {
         switch fda {

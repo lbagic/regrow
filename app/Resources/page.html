@@ -114,6 +114,11 @@ input[type="checkbox"] { accent-color: var(--accent); margin: 0; width: 15px; he
 .note { display: flex; gap: 8px; align-items: flex-start; margin-top: 12px; padding: 6px 11px; border-radius: 8px; background: var(--panel); font-size: 12.5px; line-height: 1.45; }
 .note svg { color: var(--caution); margin-top: 2px; }
 .note .link { margin-left: auto; padding-left: 12px; }
+.link.wait { color: var(--ink-2); font-weight: 400; }
+.cost.aerials .link { margin-left: 8px; }
+.note .line { display: block; }
+.note .line:not(:first-child) { margin-top: 4px; }
+.note .link.pane { margin-left: 8px; padding-left: 0; }
 
 .sec { margin-top: 18px; }
 .sec > header { display: flex; align-items: baseline; gap: 10px; padding-bottom: 7px; border-bottom: 1px solid var(--line-strong); }
@@ -352,6 +357,7 @@ const S = {
   safeOpen: false,    // "Safe to clear" shows each finding
   open: new Set(),    // findings and plan groups opened to their lines
   copied: '',         // the text the last copy control handed to the shell
+  aerials: null,      // the shell's word on macOS's aerial downloads: {status, pending, queued, error, note}
 };
 
 const newScan = () => ({ req: '', id: '', rules: 0, headroom: null, rows: [], totals: null, exclusive: null,
@@ -444,6 +450,7 @@ const on = {
     // The menu's Scan, or a relaunch to apply Full Disk Access.
     if (e.state === 'scan') { S.pane = 'scan'; if (S.hello && !S.down) act.scan(); else S.wantScan = true; }
     if (e.state === 'reloaded') S.reloaded = { running: e.running === true };
+    if (e.state === 'aerials') S.aerials = { status: e.status || {}, pending: e.pending === true, queued: e.queued === true, error: e.error || '', note: e.note || '' };
     if (e.state !== 'engine_down') return;
     if (S.run && !S.run.result) S.cut = { id: S.plan.id, done: S.plan.actions.filter((a) => stateOf(a).state === 'done').length, of: S.plan.actions.length, moves: S.plan.actions.length > S.plan.commands };
     asked.clear();
@@ -477,7 +484,8 @@ const on = {
   done(e, role) {
     if (role === 'scan') {
       S.scan.phase = e.canceled ? 'canceled' : 'done';
-      if (!e.canceled) ask('plan', 'first', { scan_id: S.scan.id });
+      // The aerial row's state is read again, so it is not older than the scan's hold.
+      if (!e.canceled) { ask('plan', 'first', { scan_id: S.scan.id }); post({ shell: 'aerials-read' }); }
     } else if (role === 'run') {
       S.run.staging = e.staging_dir || '';
       ended(e.result, e.canceled, '');
@@ -632,7 +640,22 @@ const act = {
   noticeSettings() { post({ shell: 'notification-settings' }); },
   showLog() { post({ shell: 'show-log' }); },
   showStaging() { post({ shell: 'show-staging' }); },
+  aerialsOff() { if (aerialsSwitch() === 'off') { S.aerials.pending = true; post({ shell: 'aerials-off' }); } },
+  aerialsOn() { if (aerialsSwitch() === 'on') { S.aerials.pending = true; post({ shell: 'aerials-on' }); } },
+  pane(el) { post({ shell: el.dataset.surface === 'screen saver' ? 'open-screen-saver-settings' : 'open-wallpaper-settings' }); },
 };
+
+// Which way the aerial downloads' switch goes now, or '' where there is none: off while something is picked, on
+// while the last `regrow aerials off` has picks to put back. The shell has the last word on both.
+function aerialsSwitch() {
+  const a = S.aerials, st = a && a.status, rec = st && st.recorded;
+  if (!st || a.pending) return '';
+  if (st.state === 'on') return 'off';
+  return st.state === 'off' && rec && !rec.restored && (rec.picks || []).length ? 'on' : '';
+}
+// The picks in words, as `regrow aerials status` writes them.
+const picked = (c) => [['categories', 'category'], ['subcategories', 'subcategory'], ['videos', 'video']]
+  .filter(([k]) => c && c[k]).map(([k, one]) => c[k] + ' ' + (c[k] === 1 ? one : k)).join(', ') || 'nothing';
 
 // ---------- words and figures ----------
 
@@ -794,6 +817,18 @@ const section = (title, count, right, rows, bad) => h`<section class="sec ${bad 
 
 function notices(all) {
   const rows = [];
+  // The aerial downloads keep filling the disk while anything is picked: said where the findings are, or would be.
+  const a = S.aerials, st = a && a.status;
+  if ((all || !S.scan) && st && (st.state === 'on' || a.error || a.note || (st.set_for || []).length)) {
+    const words = st.state !== 'on' ? '' : h`<span class="line">macOS downloads aerial videos for what is picked for the wallpaper or screen saver (${picked(st.counts)}): at least 4 videos for each category, about 0.5 GB each, and more every day or two, also after a still wallpaper replaced the aerial.</span>`;
+    const set = (st.set_for || []).map((s) => {
+      const pane = s === 'screen saver' ? 'Screen Saver' : 'Wallpaper';
+      return h`<span class="line">An aerial is still set as your ${s}, so macOS may download for it again: choose another in System Settings ▸ ${pane}.<button class="link pane" data-do="pane" data-surface="${s}">Open ${pane} settings</button></span>`;
+    });
+    const failed = a.error ? h`<span class="err mono">${a.error}</span>` : '';
+    const noted = a.note ? h`<span class="line">${a.note}</span>` : '';
+    rows.push(h`<div class="note">${ICON.caution}<span>${words}${set}${failed}${noted}</span>${aerialsButton(a)}</div>`);
+  }
   if (S.error) {
     rows.push(h`<div class="note">${ICON.caution}<span>regrow's engine answered with an error: <span class="err mono">${S.error.message || S.error.code}</span></span></div>`);
   }
@@ -812,6 +847,28 @@ function notices(all) {
       <button class="link" data-do="${S.opened ? 'relaunch' : 'fda'}">${S.opened ? 'Relaunch regrow to apply' : 'Open Full Disk Access settings'}</button></div>`);
   }
   return rows;
+}
+
+// The aerial downloads' switch, as a link at the end of a line: what it would do, or that macOS is asking, or
+// will once the engine has started or ended the scan, run or check in flight.
+function aerialsButton(a) {
+  if (a.pending) return h`<span class="link wait">${a.queued ? 'Waiting for the engine…' : 'Waiting for your password…'}</span>`;
+  const to = aerialsSwitch();
+  return to === 'off' ? h`<button class="link" data-do="aerialsOff">Turn off aerial downloads</button>`
+    : to === 'on' ? h`<button class="link" data-do="aerialsOn">Turn them back on</button>` : '';
+}
+
+// The aerial row says where the downloads stand: its videos come back while anything is picked. A row the scan
+// kept keeps its note until the next scan, which offers the videos once nothing is picked.
+function aerialsState(kept) {
+  const a = S.aerials, st = a && a.status;
+  if (!st || (st.state !== 'on' && st.state !== 'off')) return '';
+  const said = st.state === 'on' ? `Aerial downloads are on: ${picked(st.counts)} picked.`
+    : aerialsSwitch() === 'on' ? 'Aerial downloads are off; regrow keeps what it cleared.' : 'Aerial downloads are off: nothing is picked.';
+  // Deleting the videos needs sudo, which the app leaves to Terminal; the clean checks the picks again first.
+  const clean = st.state === 'off' ? h`<p class="cost">${sentence('To delete the videos, which asks for your password, run in Terminal: `regrow clean aerial-wallpapers`')}</p>` : '';
+  const stale = kept && st.state === 'off' ? h`<p class="cost">The note above is from the last scan; scan again to see the videos offered.</p>` : '';
+  return h`<p class="cost aerials">${said}${aerialsButton(a)}</p>${clean}${stale}`;
 }
 
 // ---------- the screens ----------
@@ -899,7 +956,8 @@ function entry(v, scale, fresh, small) {
     ${row.select ? h`<span class="chk"><input type="checkbox" id="t${row.n}" data-tick="${row.n}" aria-label="Add ${rule.title} to the plan" ${v.picked === row.select.length ? 'checked' : v.picked ? 'data-some' : ''} ${canTick() ? '' : 'disabled'}></span>` : ''}
     <div class="text"><h4>${rule.title}${count}</h4>
       ${small ? h`<p class="story">${sentence(regen.story || '')}${v.used ? ` Last used ${ago(v.used)}.` : ''}</p>`
-        : h`<p class="story">${sentence(regen.story || '')}</p><p class="cost">${kept ? sentence(rule.note || '') : h`Costs: ${regen.cost}. ${runs}`}</p>`}</div>
+        : h`<p class="story">${sentence(regen.story || '')}</p><p class="cost">${kept ? sentence(rule.note || '') : h`Costs: ${regen.cost}. ${runs}`}</p>`}
+      ${row.id === 'aerial-wallpapers' ? aerialsState(kept) : ''}</div>
     ${side(v, row.bucket, scale, small)}
     ${open ? h`<div class="items">${v.items.map((it) => item(row, it, each, scale))}</div>` : ''}</div>`;
 }
