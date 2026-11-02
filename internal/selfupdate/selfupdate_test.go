@@ -492,3 +492,128 @@ func TestParseVersion(t *testing.T) {
 		t.Fatal("0.10.0 must sort after 0.9.9")
 	}
 }
+
+func TestInspect(t *testing.T) {
+	cases := map[string]struct {
+		setup func(t *testing.T, u *Updater, bin string)
+		want  func(bin string) Install
+	}{
+		"a release": {
+			want: func(bin string) Install { return Install{Path: bin, Version: "0.2.0"} },
+		},
+		"a release, checked and off": {
+			setup: func(t *testing.T, u *Updater, _ string) {
+				if err := u.markChecked(); err != nil {
+					t.Fatal(err)
+				}
+				u.Off = true
+			},
+			want: func(bin string) Install {
+				return Install{Path: bin, Version: "0.2.0", Off: true, CheckedAt: time.Date(2026, 10, 29, 14, 0, 0, 0, time.UTC)}
+			},
+		},
+		"none": {
+			setup: func(t *testing.T, _ *Updater, bin string) {
+				if err := os.Remove(bin); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: func(string) Install { return Install{} },
+		},
+		"no ~/.local/bin": {
+			setup: func(t *testing.T, _ *Updater, bin string) {
+				if err := os.RemoveAll(filepath.Dir(bin)); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: func(string) Install { return Install{} },
+		},
+		"a dev build": {
+			setup: func(t *testing.T, _ *Updater, bin string) {
+				if err := os.WriteFile(bin, script("0.0.0-dev"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: func(bin string) Install {
+				return Install{Path: bin, Version: "0.0.0-dev", Why: "it is a development build (0.0.0-dev); only a release installed with the install line updates itself"}
+			},
+		},
+		"a release from before the self-update": {
+			setup: func(t *testing.T, _ *Updater, bin string) {
+				if err := os.WriteFile(bin, script("0.1.0"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: func(bin string) Install {
+				return Install{Path: bin, Version: "0.1.0", Why: "0.1.0 came before regrow updated itself; run the install line once more"}
+			},
+		},
+		"a symlink": {
+			setup: func(t *testing.T, u *Updater, bin string) {
+				real := filepath.Join(u.Home, "elsewhere")
+				if err := os.Rename(bin, real); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(real, bin); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: func(bin string) Install {
+				return Install{Path: bin, Version: "0.2.0", Why: bin + " is not a plain file; it is left as it is"}
+			},
+		},
+		"another user's file": {
+			setup: func(_ *testing.T, u *Updater, _ string) { u.UID = os.Geteuid() + 1 },
+			want: func(bin string) Install {
+				return Install{Path: bin, Version: "0.2.0", Why: bin + " belongs to another user; it is left as it is"}
+			},
+		},
+		"a binary that is not regrow": {
+			setup: func(t *testing.T, _ *Updater, bin string) {
+				if err := os.WriteFile(bin, []byte("#!/bin/sh\necho hello\n"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: func(bin string) Install {
+				return Install{Path: bin, Why: bin + ` says "hello", not a regrow version`}
+			},
+		},
+		"its version run checks for nothing": {
+			setup: func(t *testing.T, _ *Updater, bin string) {
+				body := "#!/bin/sh\n[ -n \"$" + OffEnv + "\" ] && echo \"regrow 0.2.0\"\n"
+				if err := os.WriteFile(bin, []byte(body), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: func(bin string) Install { return Install{Path: bin, Version: "0.2.0"} },
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			rel := newRelease(t, "v0.2.1", script("0.2.1"))
+			u := installed(t, "0.2.0", rel.serve(t))
+			bin := u.Exe
+			// The engine inspecting it is another binary, of another version.
+			u.Exe, u.Current = filepath.Join(u.Home, "Applications", "Regrow.app", "Contents", "MacOS", "regrow-engine"), "0.0.0-dev"
+			if tc.setup != nil {
+				tc.setup(t, &u, bin)
+			}
+			had, _ := os.ReadFile(filepath.Join(u.StateDir, stateFile))
+			got := u.Inspect(context.Background())
+			// Inspect names the binary as Owned does, its folder's links resolved.
+			resolved := bin
+			if dir, err := filepath.EvalSymlinks(filepath.Dir(bin)); err == nil {
+				resolved = filepath.Join(dir, "regrow")
+			}
+			if want := tc.want(resolved); got != want {
+				t.Fatalf("got %+v\nwant %+v", got, want)
+			}
+			if n := rel.hits.Load(); n != 0 {
+				t.Fatalf("%d requests, want none", n)
+			}
+			if now, _ := os.ReadFile(filepath.Join(u.StateDir, stateFile)); string(now) != string(had) {
+				t.Fatalf("the state file went from %q to %q", had, now)
+			}
+		})
+	}
+}

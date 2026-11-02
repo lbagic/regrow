@@ -20,6 +20,7 @@ import (
 	"github.com/lbagic/regrow/internal/executor"
 	"github.com/lbagic/regrow/internal/headroom"
 	"github.com/lbagic/regrow/internal/oplog"
+	"github.com/lbagic/regrow/internal/selfupdate"
 	"github.com/lbagic/regrow/internal/trash"
 )
 
@@ -50,7 +51,7 @@ const (
 // pageSections are the transcript's sections, in file order.
 var pageSections = []string{
 	"hello", "scan", "scan-errors", "plan-default", "plan-all", "execute", "execute-trash-failed",
-	"tick", "tick-short", "tick-steady", "tick-locked", "history", "rules",
+	"tick", "tick-short", "tick-steady", "tick-locked", "history", "rules", "updates",
 }
 
 var (
@@ -512,9 +513,12 @@ func recordPage(t *testing.T) []string {
 		StagingDir: func(runID string) string { return filepath.Join(pageStaging, runID) },
 		History:    func() (History, error) { return ReadHistory(logPath, samplesPath) },
 		Switch:     pageSwitch{catalog},
-		ProbeFDA:   func() FDA { return FDAGranted },
-		Now:        clock.Now,
-		Self:       pageSelf,
+		Updates: func(context.Context) (selfupdate.Install, error) {
+			return selfupdate.Install{Path: pageHome + "/.local/bin/regrow", Version: "0.5.0", CheckedAt: pageScanAt.Add(-3 * time.Hour)}, nil
+		},
+		ProbeFDA: func() FDA { return FDAGranted },
+		Now:      clock.Now,
+		Self:     pageSelf,
 		LookPath: func(file string) (string, error) {
 			if file == "pnpm" {
 				return "", fmt.Errorf("exec: %q: executable file not found in $PATH", file)
@@ -607,6 +611,8 @@ func recordPage(t *testing.T) []string {
 	rec.add("history", p.until("REQ"))
 	p.send(`{"type":"rules","id":"REQ"}`)
 	rec.add("rules", p.until("REQ"))
+	p.send(`{"type":"updates","id":"REQ"}`)
+	rec.add("updates", p.until("REQ"))
 
 	history := func(step time.Duration, freeGiB ...float64) []headroom.Sample {
 		samples := make([]headroom.Sample, len(freeGiB))
@@ -1115,6 +1121,7 @@ func checkPageTranscript(t *testing.T, lines []string) {
 	}
 	need("history", "a history and its done", names("history") == "history done")
 	need("rules", "the rules and their done", names("rules") == "rules done")
+	need("updates", "the install line's regrow and its done", names("updates") == "updates done")
 	need("history", "two runs that freed space, one with a Trash move and one with a failure", len(h.Runs) == 2 && freed == 2 && moved >= 1 && broke >= 1)
 	need("history", "a run id of its own for each run", len(h.Runs) == 2 && h.Runs[0].ID != h.Runs[1].ID)
 	need("history", "samples from before the runs to after them", len(h.Samples) > 100 && h.Samples[0].At.Before(h.Runs[0].Start) && h.Samples[len(h.Samples)-1].At.After(h.Runs[1].Start))

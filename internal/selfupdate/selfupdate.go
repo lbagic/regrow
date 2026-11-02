@@ -141,20 +141,101 @@ func (u Updater) Owned() (string, error) {
 	if err != nil || exe != target {
 		return "", fmt.Errorf("this regrow (%s) is not ~/.local/bin/regrow, where the install line puts it; update it the way it was installed", u.Exe)
 	}
-	info, err := os.Lstat(target)
-	if err != nil {
+	if err := u.replaceable(dir, target); err != nil {
 		return "", err
 	}
+	return target, nil
+}
+
+// replaceable says why this user cannot replace target, in dir, by a
+// rename, or nil when they can.
+func (u Updater) replaceable(dir, target string) error {
+	info, err := os.Lstat(target)
+	if err != nil {
+		return err
+	}
 	if !info.Mode().IsRegular() {
-		return "", fmt.Errorf("%s is not a plain file; it is left as it is", target)
+		return fmt.Errorf("%s is not a plain file; it is left as it is", target)
 	}
 	if st, ok := info.Sys().(*syscall.Stat_t); !ok || int(st.Uid) != u.UID {
-		return "", fmt.Errorf("%s belongs to another user; it is left as it is", target)
+		return fmt.Errorf("%s belongs to another user; it is left as it is", target)
 	}
 	if err := unix.Access(dir, unix.W_OK); err != nil {
-		return "", fmt.Errorf("%s is not writable, so regrow cannot replace itself there", dir)
+		return fmt.Errorf("%s is not writable, so regrow cannot replace itself there", dir)
 	}
-	return target, nil
+	return nil
+}
+
+// Install is the install line's regrow as another program sees it.
+type Install struct {
+	Path      string    // the binary at ~/.local/bin/regrow; empty when there is none
+	Version   string    // what its `version` says; empty when it did not say
+	Why       string    // why it does not update itself; empty when it does
+	Off       bool      // OffEnv is set, so its automatic check is off
+	CheckedAt time.Time // when its last automatic check began; zero when none is recorded
+}
+
+// Inspect reads the install line's regrow for another program, the
+// app's engine: the binary at ~/.local/bin/regrow, the version it says,
+// Owned's tests held to it, and the state its checks keep. It runs the
+// binary's `version` with OffEnv set, so that run checks for nothing.
+func (u Updater) Inspect(ctx context.Context) Install {
+	in := Install{Off: u.Off, CheckedAt: u.checkedAt()}
+	dir, err := filepath.EvalSymlinks(filepath.Join(u.Home, ".local", "bin"))
+	if err != nil {
+		return in
+	}
+	target := filepath.Join(dir, binaryName)
+	if _, err := os.Lstat(target); err != nil {
+		return in
+	}
+	in.Path = target
+	in.Version, err = versionOf(ctx, target)
+	if err != nil {
+		in.Why = err.Error()
+		return in
+	}
+	v, ok := parseVersion(in.Version)
+	if !ok {
+		in.Why = fmt.Sprintf("it is a development build (%s); only a release installed with the install line updates itself", in.Version)
+		return in
+	}
+	// Releases below 0.2.0 have no self-update.
+	if v.compare(version{0, 2, 0}) < 0 {
+		in.Why = fmt.Sprintf("%s came before regrow updated itself; run the install line once more", in.Version)
+		return in
+	}
+	if err := u.replaceable(dir, target); err != nil {
+		in.Why = err.Error()
+	}
+	return in
+}
+
+// versionOf runs bin's `version`, with OffEnv set, and returns the
+// version its first line names after "regrow".
+func versionOf(ctx context.Context, bin string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, runTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, "version")
+	cmd.Env = append(os.Environ(), OffEnv+"=1")
+	cmd.WaitDelay = time.Second
+	out, err := cmd.Output()
+	if errors.Is(err, exec.ErrWaitDelay) {
+		// It exited 0; a child of its kept the output open.
+		err = nil
+	}
+	if err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return "", fmt.Errorf("%s did not answer `version` within %v", bin, runTimeout)
+		}
+		return "", fmt.Errorf("%s does not run (%v)", bin, err)
+	}
+	line, _, _ := strings.Cut(string(out), "\n")
+	words := strings.Fields(line)
+	if len(words) < 2 || words[0] != binaryName {
+		return "", fmt.Errorf("%s says %q, not a regrow version", bin, strings.TrimSpace(line))
+	}
+	return words[1], nil
 }
 
 // Update replaces the binary with the latest release when that release
@@ -445,16 +526,22 @@ type checkState struct {
 }
 
 func (u Updater) due() bool {
+	last, now := u.checkedAt(), u.Now()
+	return last.IsZero() || now.Before(last) || now.Sub(last) >= Interval
+}
+
+// checkedAt is when the last automatic check began, zero when the
+// state file holds none.
+func (u Updater) checkedAt() time.Time {
 	data, err := os.ReadFile(filepath.Join(u.StateDir, stateFile))
 	if err != nil {
-		return true
+		return time.Time{}
 	}
 	var s checkState
 	if json.Unmarshal(data, &s) != nil {
-		return true
+		return time.Time{}
 	}
-	now := u.Now()
-	return now.Before(s.CheckedAt) || now.Sub(s.CheckedAt) >= Interval
+	return s.CheckedAt
 }
 
 func (u Updater) markChecked() error {
